@@ -1,0 +1,16 @@
+{
+	email admin@yourdomain.com
+}
+
+{$API_DOMAIN} {
+	encode gzip zstd
+
+	@large_uploads {
+		path /api/evidence/upload
+	}
+	request_body @large_uploads {
+		max_size 25MB
+	}
+
+	reverse_proxy api:8000
+}

@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local credentials and tokens
+token.json
+credentials.json
+credentials.previous.json
+
+# Backend secrets and runtime data
+backend/.env
+backend/storage/
+backend/data/
+
+# Build artifacts
+build/
+dist/
+*.spec.bak

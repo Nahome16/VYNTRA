@@ -18,45 +18,175 @@ import tkinter as tk
 
 import customtkinter as ctk
 
+import local_auth
 from config import Config
 from outbox import append_event, count_pending
 from screenshots import ScreenshotEngine
 from shift import ShiftManager, fmt_hms
 
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"  # subio de 1.0.0: se reescribio el aviso de consentimiento
 
 
-# Paleta VYNTRA aprobada
-NAV_BG = "#001D39"
-NAV_HEAD = "#001D39"
-NAV_CARD = "#0A4174"
-NAV_CARD2 = "#0E3358"
-NAV_BORDER = "#14375C"
-NAV_BORDER2 = "#1C4C7A"
-NAV_ACCENT = "#7BBDE8"
-NAV_ACCENT_D = "#49769F"
-NAV_TX = "#EAF6FF"
-NAV_TX2 = "#9FBCD1"
-NAV_LIGHT = "#7BBDE8"
-NAV_GREEN = "#77D8AE"
-NAV_AMBER = "#F2C96D"
-NAV_PILL = "#0A3A63"
-NAV_DANGER_TX = "#F3B5C0"
-NAV_MODAL_ENTRY = "#07345D"
+# ==========================================================================
+# Paleta VYNTRA - Blanco y Azul (minimalista / profesional)
+# ==========================================================================
+APP_BG = "#F4F7FC"          # Fondo general de la app
+SURFACE = "#FFFFFF"         # Tarjetas y paneles
+SURFACE_ALT = "#F0F5FC"     # Relleno secundario (metricas, inputs, chips)
+BORDER = "#E2E8F3"          # Bordes suaves
+BORDER_STRONG = "#CBD8EA"   # Bordes con mas contraste
 
-CONSENT_BG = "#F4F7FA"
-CONSENT_PANEL = "#FFFFFF"
-CONSENT_TEXT = "#122033"
-CONSENT_MUTED = "#64748B"
+PRIMARY = "#2563EB"         # Azul principal (marca, botones, acentos)
+PRIMARY_DARK = "#1D4ED8"    # Hover / enfasis
+PRIMARY_DEEP = "#1E3A8A"    # Barra superior / marca
+PRIMARY_LIGHT = "#EFF6FF"   # Fondo azul claro (chips, hover suave)
+PRIMARY_LIGHT2 = "#DBEAFE"  # Fondo azul claro, un poco mas intenso
 
+TEXT_DARK = "#0F172A"       # Titulos
+TEXT_BODY = "#334155"       # Texto de cuerpo
+TEXT_MUTED = "#64748B"      # Texto secundario / etiquetas
+TEXT_FAINT = "#94A3B8"      # Texto deshabilitado / placeholders
+TEXT_ON_PRIMARY = "#FFFFFF"
+
+SUCCESS = "#16A34A"
+SUCCESS_BG = "#DCFCE7"
+WARNING = "#D97706"
+WARNING_BG = "#FEF3C7"
+DANGER = "#DC2626"
+DANGER_BG = "#FEE2E2"
+NEUTRAL_BG = "#EEF2F8"
+NEUTRAL_TEXT = "#94A3B8"
+
+CONSENT_BG = APP_BG
+CONSENT_PANEL = SURFACE
+CONSENT_TEXT = TEXT_DARK
+CONSENT_MUTED = TEXT_MUTED
+
+# texto, color de texto del chip, color de fondo del chip
 ESTADO_INFO = {
-    "FUERA": ("Fuera de jornada", "#9FBCD1"),
-    "TRABAJANDO": ("Jornada activa", NAV_GREEN),
-    "BREAK": ("En break", NAV_AMBER),
-    "LUNCH": ("En almuerzo", NAV_AMBER),
-    "TERMINADO": ("Jornada finalizada", "#9FBCD1"),
+    "FUERA": ("Fuera de jornada", NEUTRAL_TEXT, NEUTRAL_BG),
+    "TRABAJANDO": ("Jornada activa", SUCCESS, SUCCESS_BG),
+    "BREAK": ("En break", WARNING, WARNING_BG),
+    "LUNCH": ("En almuerzo", WARNING, WARNING_BG),
+    "TERMINADO": ("Jornada finalizada", TEXT_MUTED, NEUTRAL_BG),
 }
+
+
+# ==========================================================================
+# Verificacion de usuario (login)
+# ==========================================================================
+class LoginWindow(ctk.CTk):
+    """
+    Primer paso al abrir VYNTRA: pide correo y contrasena para verificar
+    quien esta operando el equipo. El agente de escritorio NO crea ni
+    administra usuarios (eso se hara desde la plataforma web mas adelante);
+    aqui solo se VERIFICAN credenciales. Mientras esa integracion no exista,
+    se valida contra un usuario de pruebas fijo (ver local_auth.py). Esto es
+    independiente del aviso de privacidad (que se muestra despues) y de la
+    sincronizacion con el backend.
+    """
+
+    def __init__(self, cfg: Config):
+        super().__init__()
+        self.cfg = cfg
+        self.decision = None  # True si quedo autenticado, False si cancelo/salio
+
+        self.title("VYNTRA - Verificacion de usuario")
+        self.geometry("480x480")
+        self.minsize(440, 460)
+        self.configure(fg_color=APP_BG)
+        self.resizable(False, True)
+
+        self._build()
+
+    def _build(self):
+        header = ctk.CTkFrame(self, fg_color=PRIMARY_DEEP, corner_radius=0, height=110)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        h = ctk.CTkFrame(header, fg_color="transparent")
+        h.pack(expand=True)
+        ctk.CTkLabel(
+            h, text="V",
+            font=ctk.CTkFont(size=20, weight="bold"),
+            text_color=PRIMARY_DEEP, fg_color="#FFFFFF",
+            corner_radius=10, width=44, height=44,
+        ).pack(pady=(18, 8))
+        ctk.CTkLabel(h, text="VYNTRA",
+                    font=ctk.CTkFont(size=18, weight="bold"),
+                    text_color="#FFFFFF").pack()
+
+        body = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=12,
+                            border_width=1, border_color=BORDER)
+        body.pack(fill="both", expand=True, padx=24, pady=22)
+        cont = ctk.CTkFrame(body, fg_color="transparent")
+        cont.pack(fill="both", expand=True, padx=26, pady=24)
+
+        ctk.CTkLabel(cont, text="Inicia sesion",
+                    font=ctk.CTkFont(size=19, weight="bold"),
+                    text_color=TEXT_DARK).pack(anchor="w")
+        ctk.CTkLabel(
+            cont,
+            text="Verifica tu identidad para continuar con tu jornada en este equipo.",
+            font=ctk.CTkFont(size=12),
+            text_color=TEXT_MUTED,
+            wraplength=380,
+            justify="left",
+        ).pack(anchor="w", pady=(6, 18))
+
+        self.entry_correo = self._campo(cont, "Correo electronico", "tu.correo@empresa.com")
+        self.entry_pass = self._campo(cont, "Contrasena", "Tu contrasena", show="*")
+
+        self.error_lbl = ctk.CTkLabel(cont, text="", font=ctk.CTkFont(size=12),
+                                      text_color=DANGER, wraplength=380, justify="left")
+        self.error_lbl.pack(anchor="w", pady=(4, 0))
+
+        ctk.CTkButton(
+            cont, text="Iniciar sesion", command=self._iniciar_sesion,
+            fg_color=PRIMARY, hover_color=PRIMARY_DARK, text_color="#FFFFFF",
+            height=44, corner_radius=8, font=ctk.CTkFont(size=13, weight="bold"),
+        ).pack(fill="x", pady=(16, 8))
+
+        ctk.CTkButton(
+            cont, text="Salir", command=self._salir,
+            fg_color=SURFACE, hover_color=APP_BG, text_color=TEXT_BODY,
+            border_width=1, border_color=BORDER_STRONG,
+            height=40, corner_radius=8,
+        ).pack(fill="x")
+
+        ctk.CTkLabel(
+            cont,
+            text=f"¿Problemas para entrar? Contacta a {self.cfg.correo_contacto}",
+            font=ctk.CTkFont(size=11),
+            text_color=TEXT_FAINT,
+        ).pack(anchor="w", pady=(14, 0))
+
+    def _campo(self, parent, etiqueta, placeholder, show=None):
+        ctk.CTkLabel(parent, text=etiqueta, font=ctk.CTkFont(size=12, weight="bold"),
+                    text_color=TEXT_BODY).pack(anchor="w", pady=(10, 4))
+        entry = ctk.CTkEntry(
+            parent, placeholder_text=placeholder, show=show,
+            fg_color=SURFACE_ALT, border_color=BORDER_STRONG, text_color=TEXT_DARK,
+            height=38,
+        )
+        entry.pack(fill="x")
+        return entry
+
+    def _iniciar_sesion(self):
+        correo = self.entry_correo.get().strip()
+        pw = self.entry_pass.get()
+        if not correo or not pw:
+            self.error_lbl.configure(text="Ingresa tu correo y tu contrasena.")
+            return
+        if local_auth.verificar_credenciales(correo, pw):
+            self.decision = True
+            self.destroy()
+        else:
+            self.error_lbl.configure(text="Correo o contrasena incorrectos.")
+
+    def _salir(self):
+        self.decision = False
+        self.destroy()
 
 
 # ==========================================================================
@@ -101,31 +231,42 @@ class ConsentWindow(ctk.CTk):
         self.req_vars = []
 
         self.title("VYNTRA - Consentimiento")
-        self.geometry("860x620")
-        self.minsize(800, 560)
+        self.geometry("900x680")
+        self.minsize(820, 600)
         self.configure(fg_color=CONSENT_BG)
 
         self._build()
 
     def _build(self):
-        header = ctk.CTkFrame(self, fg_color=NAV_BG, corner_radius=0, height=86)
+        header = ctk.CTkFrame(self, fg_color=PRIMARY_DEEP, corner_radius=0, height=88)
         header.pack(fill="x")
         header.pack_propagate(False)
         h = ctk.CTkFrame(header, fg_color="transparent")
-        h.pack(fill="both", expand=True, padx=26, pady=16)
+        h.pack(fill="both", expand=True, padx=28, pady=16)
 
-        ctk.CTkLabel(h, text="VYNTRA",
-                    font=ctk.CTkFont(size=23, weight="bold"),
+        marca = ctk.CTkFrame(h, fg_color="transparent")
+        marca.pack(anchor="w")
+        ctk.CTkLabel(
+            marca, text="V",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=PRIMARY_DEEP, fg_color="#FFFFFF",
+            corner_radius=8, width=34, height=34,
+        ).pack(side="left", padx=(0, 10))
+        textos = ctk.CTkFrame(marca, fg_color="transparent")
+        textos.pack(side="left")
+        ctk.CTkLabel(textos, text="VYNTRA",
+                    font=ctk.CTkFont(size=21, weight="bold"),
                     text_color="#FFFFFF").pack(anchor="w")
-        ctk.CTkLabel(h, text="Autorizacion para participar en programa piloto",
-                    font=ctk.CTkFont(size=13),
-                    text_color=NAV_TX2).pack(anchor="w", pady=(4, 0))
+        ctk.CTkLabel(textos, text="Autorizacion para participar en programa piloto",
+                    font=ctk.CTkFont(size=12),
+                    text_color="#C7D9FB").pack(anchor="w")
 
-        body = ctk.CTkFrame(self, fg_color=CONSENT_PANEL, corner_radius=8)
+        body = ctk.CTkFrame(self, fg_color=CONSENT_PANEL, corner_radius=12,
+                            border_width=1, border_color=BORDER)
         body.pack(fill="both", expand=True, padx=24, pady=22)
 
         content = ctk.CTkScrollableFrame(body, fg_color="transparent")
-        content.pack(fill="both", expand=True, padx=20, pady=18)
+        content.pack(fill="both", expand=True, padx=22, pady=18)
 
         ctk.CTkLabel(content, text="Antes de continuar",
                     font=ctk.CTkFont(size=20, weight="bold"),
@@ -135,42 +276,91 @@ class ConsentWindow(ctk.CTk):
             text=(
                 f"{self.cfg.empresa} usara VYNTRA para registrar jornada, pausas, "
                 "capturas durante horario laboral, estado de actividad y solicitudes "
-                "relacionadas con asistencia. La app permanece visible."
+                "relacionadas con asistencia. La app permanece visible en todo momento y "
+                "este aviso se basa en la legislacion vigente de Nicaragua."
             ),
             font=ctk.CTkFont(size=13),
             text_color=CONSENT_MUTED,
-            wraplength=760,
+            wraplength=790,
             justify="left",
-        ).pack(anchor="w", pady=(8, 16))
+        ).pack(anchor="w", pady=(8, 18))
 
-        self._section(content, "Que registra")
+        self._section(content, "Base legal de este aviso")
         for text in [
-            "Inicio, break, almuerzo y finalizacion de jornada.",
-            "Capturas de pantalla durante jornada activa.",
-            "Aplicacion o ventana activa para fines administrativos.",
-            "Solicitudes de incidencia enviadas por el usuario.",
+            "Constitucion Politica de Nicaragua, articulo 26: derecho a la vida privada "
+            "y a conocer que informacion se registra sobre la persona, por que y con "
+            "que finalidad.",
+            "Ley No. 787, Ley de Proteccion de Datos Personales (La Gaceta No. 61 del "
+            "29 de marzo de 2012) y su Reglamento, Decreto No. 36-2012: exige "
+            "consentimiento libre, especifico e informado para tratar datos personales, "
+            "y establece los derechos del titular.",
+            "Codigo del Trabajo, Ley No. 185: articulo 17 (obligacion del empleador de "
+            "tratar al trabajador con respeto y de certificar el tiempo trabajado) y "
+            "articulo 49 (limites de la jornada laboral).",
+            "Nicaragua no cuenta con una ley especial de teletrabajo; el trabajo "
+            "supervisado a distancia se rige por el Codigo del Trabajo y por la Ley 787 "
+            "en lo relativo al tratamiento de datos.",
         ]:
             self._bullet(content, text)
 
-        self._section(content, "Limites")
+        self._section(content, "Que datos recopila y por que")
+        for text in [
+            "Inicio, break, almuerzo y finalizacion de jornada, para llevar el registro "
+            "de asistencia que exige el Codigo del Trabajo.",
+            "Capturas de pantalla durante jornada activa, para verificar continuidad de "
+            "la operacion durante el horario laboral.",
+            "Aplicacion o ventana activa, tiempo de inactividad y clics, solo con fines "
+            "administrativos de control de asistencia.",
+            "Solicitudes de incidencia (permisos, correcciones, horas extra) enviadas "
+            "por el propio usuario.",
+        ]:
+            self._bullet(content, text)
+
+        self._section(content, "Principios con los que se tratan tus datos (Ley 787)")
+        for text in [
+            "Los datos se usan unicamente para los fines descritos en este aviso, de "
+            "forma adecuada, proporcional y necesaria.",
+            "Se protegen con medidas tecnicas, organizativas y fisicas razonables.",
+            "No se comparten con terceros ajenos a la relacion laboral.",
+        ]:
+            self._bullet(content, text)
+
+        self._section(content, "Tus derechos como titular de los datos")
+        for text in [
+            "Acceso: pedir una copia de los datos que VYNTRA ha registrado sobre ti.",
+            "Rectificacion: pedir que se corrijan datos inexactos.",
+            "Cancelacion: pedir la eliminacion de datos cuando ya no sean necesarios "
+            "para el fin que motivo su recoleccion.",
+            "Oposicion y revocacion: puedes revocar este consentimiento en cualquier "
+            "momento y sin costo, escribiendo a "
+            f"{self.cfg.correo_contacto}. Revocarlo detiene el monitoreo, pero no "
+            "borra retroactivamente los registros ya generados mientras estuvo activo.",
+        ]:
+            self._bullet(content, text)
+
+        self._section(content, "Limites (lo que VYNTRA no hace)")
         for text in [
             "No registra contrasenas.",
             "No captura contenido escrito con el teclado.",
             "No activa camara ni microfono.",
-            "No funciona de forma oculta.",
+            "No funciona de forma oculta: la app permanece visible en todo momento.",
         ]:
             self._bullet(content, text)
 
         self._section(content, "Autorizaciones requeridas")
         for text in [
-            "Confirmo que lei y comprendo este aviso.",
-            "Confirmo que mi empleador me informo las finalidades de uso.",
-            "Autorizo el registro de mi jornada laboral.",
-            "Autorizo capturas de pantalla durante mi jornada.",
+            "Confirmo que lei y comprendo este aviso, incluida la base legal citada.",
+            "Autorizo el tratamiento de mis datos personales conforme a la Ley No. 787 "
+            "y su Reglamento (Decreto No. 36-2012).",
+            "Autorizo el registro de mi jornada laboral conforme al Codigo del Trabajo "
+            "(Ley No. 185).",
+            "Autorizo las capturas de pantalla durante mi jornada laboral activa.",
+            "Entiendo que puedo revocar este consentimiento en cualquier momento, sin "
+            "costo, contactando a RR. HH.",
         ]:
             self._checkbox(content, text)
 
-        footer = ctk.CTkFrame(self, fg_color=CONSENT_BG, corner_radius=0, height=70)
+        footer = ctk.CTkFrame(self, fg_color=CONSENT_BG, corner_radius=0, height=74)
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
         row = ctk.CTkFrame(footer, fg_color="transparent")
@@ -180,20 +370,20 @@ class ConsentWindow(ctk.CTk):
                     text_color=CONSENT_MUTED).pack(side="left")
 
         ctk.CTkButton(row, text="No aceptar y salir", command=self._rechazar,
-                     fg_color="#FFFFFF", text_color=CONSENT_TEXT,
-                     hover_color="#E8EEF5", border_width=1,
-                     border_color="#CBD5E1", width=150, height=40,
+                     fg_color=SURFACE, text_color=CONSENT_TEXT,
+                     hover_color=APP_BG, border_width=1,
+                     border_color=BORDER_STRONG, width=155, height=42,
                      corner_radius=8).pack(side="right")
         self.btn_aceptar = ctk.CTkButton(
             row,
             text="Aceptar y continuar",
             command=self._aceptar,
             state="disabled",
-            fg_color="#CBD5E1",
-            text_color="#94A3B8",
-            hover_color=NAV_ACCENT_D,
-            width=170,
-            height=40,
+            fg_color=BORDER_STRONG,
+            text_color="#FFFFFF",
+            hover_color=PRIMARY_DARK,
+            width=180,
+            height=42,
             corner_radius=8,
             font=ctk.CTkFont(size=13, weight="bold"),
         )
@@ -202,12 +392,12 @@ class ConsentWindow(ctk.CTk):
     def _section(self, parent, title):
         ctk.CTkLabel(parent, text=title,
                     font=ctk.CTkFont(size=14, weight="bold"),
-                    text_color=CONSENT_TEXT).pack(anchor="w", pady=(12, 6))
+                    text_color=CONSENT_TEXT).pack(anchor="w", pady=(14, 6))
 
     def _bullet(self, parent, text):
         row = ctk.CTkFrame(parent, fg_color="transparent")
         row.pack(fill="x", pady=2)
-        ctk.CTkLabel(row, text="-", width=16, text_color=NAV_ACCENT,
+        ctk.CTkLabel(row, text="•", width=16, text_color=PRIMARY,
                     font=ctk.CTkFont(size=14, weight="bold")).pack(side="left")
         ctk.CTkLabel(row, text=text, text_color=CONSENT_MUTED,
                     font=ctk.CTkFont(size=12), justify="left",
@@ -220,7 +410,8 @@ class ConsentWindow(ctk.CTk):
         row.pack(fill="x", pady=4)
         ctk.CTkCheckBox(row, text="", variable=var, command=self._validar,
                        width=26, checkbox_width=18, checkbox_height=18,
-                       fg_color=NAV_ACCENT, hover_color=NAV_ACCENT_D).pack(
+                       fg_color=PRIMARY, hover_color=PRIMARY_DARK,
+                       border_color=BORDER_STRONG).pack(
             side="left", anchor="n", pady=2)
         ctk.CTkLabel(row, text=text, text_color=CONSENT_TEXT,
                     font=ctk.CTkFont(size=12), justify="left",
@@ -230,20 +421,22 @@ class ConsentWindow(ctk.CTk):
         listo = all(v.get() for v in self.req_vars)
         if listo:
             self.btn_aceptar.configure(
-                state="normal", fg_color=NAV_ACCENT, text_color=NAV_BG
+                state="normal", fg_color=PRIMARY, text_color="#FFFFFF"
             )
         else:
             self.btn_aceptar.configure(
-                state="disabled", fg_color="#CBD5E1", text_color="#94A3B8"
+                state="disabled", fg_color=BORDER_STRONG, text_color="#FFFFFF"
             )
 
     def _aceptar(self):
         self.decision = True
         self.detalles = {
             "leido_aviso": True,
-            "empleador_informo": True,
-            "registro_jornada": True,
+            "tratamiento_datos_ley_787": True,
+            "registro_jornada_codigo_trabajo": True,
             "capturas_pantalla": True,
+            "conoce_derecho_revocacion": True,
+            "base_legal": "Constitucion Art. 26; Ley 787 y Decreto 36-2012; Codigo del Trabajo (Ley 185) Art. 17 y 49",
         }
         self.destroy()
 
@@ -270,9 +463,9 @@ class StationWindow(ctk.CTk):
         self._ui_error = None
 
         self.title("VYNTRA - Estacion de marcaje")
-        self.geometry("1040x700")
-        self.minsize(980, 640)
-        self.configure(fg_color=NAV_BG)
+        self.geometry("1080x720")
+        self.minsize(1000, 660)
+        self.configure(fg_color=APP_BG)
 
         try:
             self._build()
@@ -291,22 +484,22 @@ class StationWindow(ctk.CTk):
         self._barra_superior()
 
         shell = ctk.CTkFrame(self, fg_color="transparent")
-        shell.pack(fill="both", expand=True, padx=18, pady=18)
+        shell.pack(fill="both", expand=True, padx=20, pady=20)
         shell.grid_columnconfigure(0, weight=58, uniform="main")
         shell.grid_columnconfigure(1, weight=42, uniform="main")
         shell.grid_rowconfigure(0, weight=1)
 
         left = ctk.CTkFrame(
             shell,
-            fg_color=NAV_CARD,
-            corner_radius=8,
+            fg_color=SURFACE,
+            corner_radius=12,
             border_width=1,
-            border_color=NAV_BORDER,
+            border_color=BORDER,
         )
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 9))
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
 
         right = ctk.CTkFrame(shell, fg_color="transparent")
-        right.grid(row=0, column=1, sticky="nsew", padx=(9, 0))
+        right.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
 
         self._panel_reloj(left)
         self._panel_logo(right)
@@ -314,11 +507,11 @@ class StationWindow(ctk.CTk):
         self._panel_soporte(right)
 
     def _barra_superior(self):
-        bar = ctk.CTkFrame(self, fg_color=NAV_HEAD, corner_radius=0, height=64)
+        bar = ctk.CTkFrame(self, fg_color=PRIMARY_DEEP, corner_radius=0, height=64)
         bar.pack(fill="x")
         bar.pack_propagate(False)
         cont = ctk.CTkFrame(bar, fg_color="transparent")
-        cont.pack(fill="both", expand=True, padx=22)
+        cont.pack(fill="both", expand=True, padx=24)
 
         marca = ctk.CTkFrame(cont, fg_color="transparent")
         marca.pack(side="left", anchor="center")
@@ -326,9 +519,9 @@ class StationWindow(ctk.CTk):
             marca,
             text="V",
             font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="#FFFFFF",
-            fg_color=NAV_ACCENT_D,
-            corner_radius=7,
+            text_color=PRIMARY_DEEP,
+            fg_color="#FFFFFF",
+            corner_radius=8,
             width=34,
             height=34,
         ).pack(side="left", padx=(0, 10))
@@ -339,13 +532,13 @@ class StationWindow(ctk.CTk):
             textos,
             text="VYNTRA",
             font=ctk.CTkFont(size=17, weight="bold"),
-            text_color=NAV_TX,
+            text_color="#FFFFFF",
         ).pack(anchor="w")
         ctk.CTkLabel(
             textos,
             text="Estacion de marcaje",
             font=ctk.CTkFont(size=11),
-            text_color=NAV_TX2,
+            text_color="#C7D9FB",
         ).pack(anchor="w")
 
         der = ctk.CTkFrame(cont, fg_color="transparent")
@@ -354,31 +547,31 @@ class StationWindow(ctk.CTk):
             der,
             text="  Jornada inactiva  ",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=NAV_TX,
-            fg_color=NAV_PILL,
+            text_color=NEUTRAL_TEXT,
+            fg_color="#FFFFFF",
             corner_radius=14,
             height=34,
         )
         self.badge.pack(side="left", padx=(0, 8))
         ctk.CTkLabel(
             der,
-            text=f"  {getpass.getuser()} - {socket.gethostname()}  ",
+            text=f"  {getpass.getuser()} · {socket.gethostname()}  ",
             font=ctk.CTkFont(size=12),
-            text_color=NAV_TX,
-            fg_color=NAV_PILL,
+            text_color="#FFFFFF",
+            fg_color="#2F5AC7",
             corner_radius=14,
             height=34,
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             der,
-            text="!",
+            text="?",
             width=34,
             height=34,
             corner_radius=17,
-            fg_color=NAV_PILL,
-            hover_color=NAV_CARD2,
+            fg_color="#2F5AC7",
+            hover_color=PRIMARY,
             command=self._modal_incidencia,
-            font=ctk.CTkFont(size=13, weight="bold"),
+            font=ctk.CTkFont(size=14, weight="bold"),
         ).pack(side="left")
 
     def _panel_reloj(self, parent):
@@ -386,52 +579,59 @@ class StationWindow(ctk.CTk):
         parent.grid_rowconfigure(1, weight=1)
 
         head = ctk.CTkFrame(parent, fg_color="transparent")
-        head.grid(row=0, column=0, sticky="ew", padx=22, pady=(22, 0))
+        head.grid(row=0, column=0, sticky="ew", padx=24, pady=(24, 0))
         head.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
             head,
             text="TURNO ACTUAL",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=NAV_TX2,
+            text_color=TEXT_MUTED,
         ).grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(
             head,
             text="Operacion BPO - Managua",
             font=ctk.CTkFont(size=24, weight="bold"),
-            text_color=NAV_TX,
+            text_color=TEXT_DARK,
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
 
         self.lbl_captura_estado = ctk.CTkLabel(
             head,
             text=" Captura detenida ",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=NAV_TX,
-            fg_color=NAV_PILL,
+            text_color=NEUTRAL_TEXT,
+            fg_color=NEUTRAL_BG,
             corner_radius=14,
             height=34,
         )
         self.lbl_captura_estado.grid(row=0, column=1, rowspan=2, sticky="e")
 
         clock_box = ctk.CTkFrame(parent, fg_color="transparent")
-        clock_box.grid(row=1, column=0, sticky="nsew", padx=22, pady=(8, 0))
+        clock_box.grid(row=1, column=0, sticky="nsew", padx=24, pady=(10, 0))
         clock_box.grid_columnconfigure(0, weight=1)
         clock_box.grid_rowconfigure(0, weight=1)
 
         self.clock_canvas = tk.Canvas(
             clock_box,
-            width=340,
-            height=340,
-            bg=NAV_CARD,
+            width=320,
+            height=320,
+            bg=SURFACE,
             highlightthickness=0,
         )
         self.clock_canvas.grid(row=0, column=0)
 
+        ctk.CTkLabel(
+            parent,
+            text="Selecciona una accion para tu jornada actual.",
+            font=ctk.CTkFont(size=12),
+            text_color=TEXT_FAINT,
+        ).grid(row=1, column=0, sticky="sw", padx=24, pady=(0, 4))
+
         self.ctrl_inner = ctk.CTkFrame(parent, fg_color="transparent")
-        self.ctrl_inner.grid(row=2, column=0, sticky="ew", padx=22, pady=(6, 0))
+        self.ctrl_inner.grid(row=2, column=0, sticky="ew", padx=24, pady=(6, 0))
 
         metrics = ctk.CTkFrame(parent, fg_color="transparent")
-        metrics.grid(row=3, column=0, sticky="ew", padx=22, pady=(12, 22))
+        metrics.grid(row=3, column=0, sticky="ew", padx=24, pady=(14, 24))
         for i in range(4):
             metrics.grid_columnconfigure(i, weight=1, uniform="m")
 
@@ -443,23 +643,23 @@ class StationWindow(ctk.CTk):
     def _metric_card(self, parent, col, title, value):
         card = ctk.CTkFrame(
             parent,
-            fg_color=NAV_MODAL_ENTRY,
-            corner_radius=8,
+            fg_color=SURFACE_ALT,
+            corner_radius=10,
             border_width=1,
-            border_color=NAV_BORDER,
+            border_color=BORDER,
         )
         card.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 6, 0))
         ctk.CTkLabel(
             card,
             text=title,
             font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=NAV_TX2,
+            text_color=TEXT_MUTED,
         ).pack(anchor="w", padx=14, pady=(12, 2))
         lbl = ctk.CTkLabel(
             card,
             text=value,
             font=ctk.CTkFont(size=20, weight="bold"),
-            text_color=NAV_TX,
+            text_color=TEXT_DARK,
         )
         lbl.pack(anchor="w", padx=14, pady=(0, 12))
         return lbl
@@ -467,11 +667,11 @@ class StationWindow(ctk.CTk):
     def _panel_logo(self, parent):
         card = ctk.CTkFrame(
             parent,
-            fg_color=NAV_CARD,
-            corner_radius=8,
+            fg_color=SURFACE,
+            corner_radius=12,
             border_width=1,
-            border_color=NAV_BORDER,
-            height=164,
+            border_color=BORDER,
+            height=160,
         )
         card.pack(fill="x", pady=(0, 14))
         card.pack_propagate(False)
@@ -482,12 +682,12 @@ class StationWindow(ctk.CTk):
         ctk.CTkLabel(
             inner,
             text="V",
-            font=ctk.CTkFont(size=38, weight="bold"),
+            font=ctk.CTkFont(size=34, weight="bold"),
             text_color="#FFFFFF",
-            fg_color=NAV_ACCENT_D,
+            fg_color=PRIMARY,
             corner_radius=16,
-            width=78,
-            height=78,
+            width=74,
+            height=74,
         ).pack(side="left", padx=(0, 18))
 
         copy = ctk.CTkFrame(inner, fg_color="transparent")
@@ -495,35 +695,35 @@ class StationWindow(ctk.CTk):
         ctk.CTkLabel(
             copy,
             text="VYNTRA",
-            font=ctk.CTkFont(size=28, weight="bold"),
-            text_color=NAV_TX,
-        ).pack(anchor="w", pady=(10, 0))
+            font=ctk.CTkFont(size=26, weight="bold"),
+            text_color=TEXT_DARK,
+        ).pack(anchor="w", pady=(8, 0))
         ctk.CTkLabel(
             copy,
             text="Agente empresarial",
-            font=ctk.CTkFont(size=17, weight="bold"),
-            text_color=NAV_LIGHT,
+            font=ctk.CTkFont(size=15, weight="bold"),
+            text_color=PRIMARY,
         ).pack(anchor="w")
         ctk.CTkLabel(
             copy,
             text="Agente de marcaje laboral instalado en este equipo.",
             font=ctk.CTkFont(size=12),
-            text_color=NAV_TX2,
-            wraplength=330,
+            text_color=TEXT_MUTED,
+            wraplength=320,
             justify="left",
-        ).pack(anchor="w", pady=(12, 0))
+        ).pack(anchor="w", pady=(10, 0))
 
     def _panel_estado(self, parent):
         card = ctk.CTkFrame(
             parent,
-            fg_color=NAV_CARD,
-            corner_radius=8,
+            fg_color=SURFACE,
+            corner_radius=12,
             border_width=1,
-            border_color=NAV_BORDER,
+            border_color=BORDER,
         )
         card.pack(fill="x", pady=(0, 14))
         inner = ctk.CTkFrame(card, fg_color="transparent")
-        inner.pack(fill="x", padx=16, pady=16)
+        inner.pack(fill="x", padx=18, pady=16)
 
         head = ctk.CTkFrame(inner, fg_color="transparent")
         head.pack(fill="x", pady=(0, 10))
@@ -531,13 +731,13 @@ class StationWindow(ctk.CTk):
             head,
             text="Estado de jornada",
             font=ctk.CTkFont(size=15, weight="bold"),
-            text_color=NAV_TX,
+            text_color=TEXT_DARK,
         ).pack(side="left")
         ctk.CTkLabel(
             head,
             text="Registro visible",
             font=ctk.CTkFont(size=12),
-            text_color=NAV_TX2,
+            text_color=TEXT_FAINT,
         ).pack(side="right")
 
         self.estado_items = ctk.CTkFrame(inner, fg_color="transparent")
@@ -546,14 +746,14 @@ class StationWindow(ctk.CTk):
     def _panel_soporte(self, parent):
         card = ctk.CTkFrame(
             parent,
-            fg_color=NAV_CARD,
-            corner_radius=8,
+            fg_color=SURFACE,
+            corner_radius=12,
             border_width=1,
-            border_color=NAV_BORDER,
+            border_color=BORDER,
         )
         card.pack(fill="both", expand=True)
         inner = ctk.CTkFrame(card, fg_color="transparent")
-        inner.pack(fill="both", expand=True, padx=16, pady=16)
+        inner.pack(fill="both", expand=True, padx=18, pady=16)
 
         head = ctk.CTkFrame(inner, fg_color="transparent")
         head.pack(fill="x", pady=(0, 12))
@@ -561,13 +761,13 @@ class StationWindow(ctk.CTk):
             head,
             text="Incidencias y ajustes",
             font=ctk.CTkFont(size=15, weight="bold"),
-            text_color=NAV_TX,
+            text_color=TEXT_DARK,
         ).pack(side="left")
         ctk.CTkLabel(
             head,
             text="Solicitudes",
             font=ctk.CTkFont(size=12),
-            text_color=NAV_TX2,
+            text_color=TEXT_FAINT,
         ).pack(side="right")
 
         row = ctk.CTkFrame(inner, fg_color="transparent")
@@ -583,8 +783,8 @@ class StationWindow(ctk.CTk):
             inner,
             text="Abrir incidencias",
             command=self._modal_incidencia,
-            fg_color=NAV_ACCENT_D,
-            hover_color=NAV_ACCENT,
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_DARK,
             text_color="#FFFFFF",
             corner_radius=8,
             height=46,
@@ -594,10 +794,10 @@ class StationWindow(ctk.CTk):
     def _support_card(self, parent, col, icon, title, detail):
         card = ctk.CTkFrame(
             parent,
-            fg_color=NAV_MODAL_ENTRY,
-            corner_radius=8,
+            fg_color=SURFACE_ALT,
+            corner_radius=10,
             border_width=1,
-            border_color=NAV_BORDER,
+            border_color=BORDER,
         )
         card.grid(row=0, column=col, sticky="ew", padx=(0 if col == 0 else 6, 0))
 
@@ -605,8 +805,8 @@ class StationWindow(ctk.CTk):
             card,
             text=icon,
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=NAV_LIGHT,
-            fg_color=NAV_CARD2,
+            text_color=PRIMARY,
+            fg_color=PRIMARY_LIGHT2,
             corner_radius=7,
             width=30,
             height=30,
@@ -618,13 +818,13 @@ class StationWindow(ctk.CTk):
             texts,
             text=title,
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=NAV_TX,
+            text_color=TEXT_DARK,
         ).pack(anchor="w")
         lbl = ctk.CTkLabel(
             texts,
             text=detail,
             font=ctk.CTkFont(size=11),
-            text_color=NAV_TX2,
+            text_color=TEXT_MUTED,
         )
         lbl.pack(anchor="w")
         return lbl
@@ -635,54 +835,50 @@ class StationWindow(ctk.CTk):
             if c is None or not c.winfo_exists():
                 return
             c.delete("all")
-            w = int(c["width"]) or 340
-            h = int(c["height"]) or 340
-            pad = 32
+            w = int(c["width"]) or 320
+            h = int(c["height"]) or 320
+            pad = 30
             box = (pad, pad, w - pad, h - pad)
             progress = min(max(segundos / (8 * 3600), 0), 1)
-            break_progress = min(max(self.shift.seg_break / 3600, 0), 1)
 
-            c.create_oval(box, outline="#173E66", width=28)
-            c.create_arc(
-                box,
-                start=130,
-                extent=-360 * progress,
-                style="arc",
-                outline=NAV_LIGHT,
-                width=28,
-            )
-
-            inner = (pad + 22, pad + 22, w - pad - 22, h - pad - 22)
-            c.create_oval(inner, outline="#244F75", width=18)
-            c.create_arc(
-                inner,
-                start=210,
-                extent=-220 * break_progress,
-                style="arc",
-                outline=NAV_GREEN,
-                width=18,
-            )
+            c.create_oval(box, outline=SURFACE_ALT, width=22)
+            if progress > 0:
+                c.create_arc(
+                    box,
+                    start=90,
+                    extent=-360 * progress,
+                    style="arc",
+                    outline=PRIMARY,
+                    width=22,
+                )
 
             c.create_text(
                 w / 2,
-                h / 2 - 16,
+                h / 2 - 14,
                 text=fmt_hms(segundos),
-                fill=NAV_TX,
-                font=("Segoe UI", 48, "bold"),
+                fill=TEXT_DARK,
+                font=("Segoe UI", 46, "bold"),
             )
             c.create_text(
                 w / 2,
-                h / 2 + 42,
+                h / 2 + 40,
                 text="Tiempo trabajado hoy",
-                fill=NAV_TX2,
+                fill=TEXT_MUTED,
                 font=("Segoe UI", 12, "bold"),
+            )
+            c.create_text(
+                w / 2,
+                h / 2 + 62,
+                text="Meta diaria: 8h",
+                fill=TEXT_FAINT,
+                font=("Segoe UI", 10),
             )
         except Exception:
             try:
                 c = getattr(self, "clock_canvas", None)
                 if c is not None:
                     c.delete("all")
-                    c.create_text(10, 10, anchor="nw", text="Reloj no disponible", fill=NAV_TX)
+                    c.create_text(10, 10, anchor="nw", text="Reloj no disponible", fill=TEXT_MUTED)
             except Exception:
                 pass
 
@@ -707,8 +903,8 @@ class StationWindow(ctk.CTk):
             for num, label, detail, active in items:
                 row = ctk.CTkFrame(self.estado_items, fg_color="transparent")
                 row.pack(fill="x", pady=4)
-                bg = NAV_LIGHT if active else NAV_CARD2
-                tx = NAV_BG if active else NAV_LIGHT
+                bg = PRIMARY if active else NEUTRAL_BG
+                tx = "#FFFFFF" if active else TEXT_FAINT
                 ctk.CTkLabel(
                     row,
                     text=num,
@@ -723,13 +919,13 @@ class StationWindow(ctk.CTk):
                     row,
                     text=label,
                     font=ctk.CTkFont(size=13, weight="bold"),
-                    text_color=NAV_TX,
+                    text_color=TEXT_DARK if active else TEXT_BODY,
                 ).pack(side="left", padx=(12, 0))
                 ctk.CTkLabel(
                     row,
                     text=detail,
                     font=ctk.CTkFont(size=12),
-                    text_color=NAV_TX2,
+                    text_color=PRIMARY if active else TEXT_MUTED,
                 ).pack(side="right")
         except Exception:
             if hasattr(self, "estado_items") and self.estado_items.winfo_exists():
@@ -739,7 +935,7 @@ class StationWindow(ctk.CTk):
                     self.estado_items,
                     text="No fue posible mostrar el estado de la jornada.",
                     font=ctk.CTkFont(size=12),
-                    text_color=NAV_TX2,
+                    text_color=TEXT_MUTED,
                     wraplength=320,
                 ).pack(anchor="w")
 
@@ -771,8 +967,10 @@ class StationWindow(ctk.CTk):
             fila.pack(fill="x")
 
             def btn(parent, texto, cmd, primary=False):
-                color = NAV_ACCENT_D if primary else NAV_MODAL_ENTRY
-                hover = NAV_ACCENT if primary else NAV_CARD2
+                if primary:
+                    color, hover, tx, bw, bc = PRIMARY, PRIMARY_DARK, "#FFFFFF", 0, PRIMARY
+                else:
+                    color, hover, tx, bw, bc = SURFACE, PRIMARY_LIGHT, PRIMARY, 1, PRIMARY
                 ctk.CTkButton(
                     parent,
                     text=texto,
@@ -781,9 +979,9 @@ class StationWindow(ctk.CTk):
                     corner_radius=8,
                     fg_color=color,
                     hover_color=hover,
-                    text_color="#FFFFFF",
-                    border_width=0 if primary else 1,
-                    border_color=NAV_BORDER2,
+                    text_color=tx,
+                    border_width=bw,
+                    border_color=bc,
                     font=ctk.CTkFont(size=13, weight="bold"),
                 ).pack(side="left", expand=True, fill="x", padx=5)
 
@@ -856,7 +1054,7 @@ class StationWindow(ctk.CTk):
                     self.ctrl_inner,
                     text="Jornada finalizada. El monitoreo y las capturas se detuvieron.",
                     font=ctk.CTkFont(size=13),
-                    text_color=NAV_TX2,
+                    text_color=TEXT_MUTED,
                     wraplength=540,
                     justify="left",
                 ).pack(anchor="w", pady=8)
@@ -868,7 +1066,7 @@ class StationWindow(ctk.CTk):
                 self.ctrl_inner,
                 text="No fue posible cargar los botones de marcaje.",
                 font=ctk.CTkFont(size=13),
-                text_color=NAV_TX2,
+                text_color=TEXT_MUTED,
                 wraplength=540,
             ).pack(anchor="w", pady=8)
 
@@ -876,7 +1074,7 @@ class StationWindow(ctk.CTk):
         top = ctk.CTkToplevel(self)
         top.title(titulo)
         top.geometry(f"{ancho}x{alto}")
-        top.configure(fg_color=NAV_BG)
+        top.configure(fg_color=APP_BG)
         top.transient(self)
         top.after(80, top.grab_set)
         top.update_idletasks()
@@ -891,7 +1089,7 @@ class StationWindow(ctk.CTk):
             top,
             text=titulo,
             font=ctk.CTkFont(size=16, weight="bold"),
-            text_color=NAV_TX,
+            text_color=TEXT_DARK,
             wraplength=360,
         ).pack(padx=24, pady=(28, 6))
         if detalle:
@@ -899,7 +1097,7 @@ class StationWindow(ctk.CTk):
                 top,
                 text=detalle,
                 font=ctk.CTkFont(size=12),
-                text_color=NAV_TX2,
+                text_color=TEXT_MUTED,
                 wraplength=360,
             ).pack(padx=24)
 
@@ -909,10 +1107,11 @@ class StationWindow(ctk.CTk):
             fila,
             text="Cancelar",
             command=top.destroy,
-            fg_color=NAV_MODAL_ENTRY,
-            hover_color=NAV_CARD2,
+            fg_color=SURFACE,
+            hover_color=APP_BG,
+            text_color=TEXT_BODY,
             border_width=1,
-            border_color=NAV_BORDER2,
+            border_color=BORDER_STRONG,
             width=130,
             height=40,
             corner_radius=8,
@@ -926,8 +1125,9 @@ class StationWindow(ctk.CTk):
             fila,
             text="Confirmar",
             command=si,
-            fg_color=NAV_ACCENT_D,
-            hover_color=NAV_ACCENT,
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_DARK,
+            text_color="#FFFFFF",
             width=150,
             height=40,
             corner_radius=8,
@@ -942,13 +1142,13 @@ class StationWindow(ctk.CTk):
             cont,
             text="Incidencias y ajustes",
             font=ctk.CTkFont(size=17, weight="bold"),
-            text_color=NAV_TX,
+            text_color=TEXT_DARK,
         ).pack(anchor="w")
         ctk.CTkLabel(
             cont,
             text="Selecciona el tipo de solicitud o correccion.",
             font=ctk.CTkFont(size=12),
-            text_color=NAV_TX2,
+            text_color=TEXT_MUTED,
         ).pack(anchor="w", pady=(4, 14))
 
         opciones = [
@@ -973,12 +1173,14 @@ class StationWindow(ctk.CTk):
                 text=texto,
                 command=abrir,
                 height=42,
-                fg_color=NAV_MODAL_ENTRY,
-                hover_color=NAV_CARD2,
+                fg_color=SURFACE,
+                hover_color=PRIMARY_LIGHT,
+                text_color=TEXT_DARK,
                 border_width=1,
-                border_color=NAV_BORDER2,
+                border_color=BORDER_STRONG,
                 corner_radius=8,
                 font=ctk.CTkFont(size=13, weight="bold"),
+                anchor="w",
             ).pack(fill="x", pady=4)
 
     def _modal_horas_extra(self):
@@ -993,7 +1195,7 @@ class StationWindow(ctk.CTk):
             cont,
             text="Horas extra",
             font=ctk.CTkFont(size=17, weight="bold"),
-            text_color=NAV_TX,
+            text_color=TEXT_DARK,
         ).pack(anchor="w")
         ctk.CTkLabel(
             cont,
@@ -1002,22 +1204,22 @@ class StationWindow(ctk.CTk):
                 "El cronometro solo marcara el tiempo autorizado."
             ),
             font=ctk.CTkFont(size=12),
-            text_color=NAV_TX2,
+            text_color=TEXT_MUTED,
             wraplength=440,
             justify="left",
         ).pack(anchor="w", pady=(4, 14))
 
-        ctk.CTkLabel(cont, text="Codigo de autorizacion", text_color="#CFE0F0").pack(anchor="w")
+        ctk.CTkLabel(cont, text="Codigo de autorizacion", text_color=TEXT_BODY).pack(anchor="w")
         codigo = ctk.CTkEntry(
             cont,
             placeholder_text="Ej: HE-120-X7K2",
-            fg_color=NAV_MODAL_ENTRY,
-            border_color=NAV_BORDER2,
-            text_color=NAV_TX,
+            fg_color=SURFACE_ALT,
+            border_color=BORDER_STRONG,
+            text_color=TEXT_DARK,
         )
         codigo.pack(fill="x", pady=(4, 8))
 
-        error = ctk.CTkLabel(cont, text="", text_color=NAV_DANGER_TX)
+        error = ctk.CTkLabel(cont, text="", text_color=DANGER)
         error.pack(anchor="w")
 
         def activar():
@@ -1035,9 +1237,9 @@ class StationWindow(ctk.CTk):
             cont,
             text="Activar horas extra",
             command=activar,
-            fg_color=NAV_GREEN,
-            hover_color="#5DBF96",
-            text_color=NAV_BG,
+            fg_color=SUCCESS,
+            hover_color="#15803D",
+            text_color="#FFFFFF",
             height=44,
             corner_radius=8,
             font=ctk.CTkFont(size=13, weight="bold"),
@@ -1051,27 +1253,27 @@ class StationWindow(ctk.CTk):
             cont,
             text="Horas extra activas",
             font=ctk.CTkFont(size=18, weight="bold"),
-            text_color=NAV_GREEN,
+            text_color=SUCCESS,
         ).pack(anchor="w")
         asignadas = getattr(self.shift, "horas_extra_asignadas_segundos", 0)
         ctk.CTkLabel(
             cont,
             text=f"Tiempo asignado: {fmt_hms(asignadas)}",
             font=ctk.CTkFont(size=12),
-            text_color=NAV_TX2,
+            text_color=TEXT_MUTED,
         ).pack(anchor="w", pady=(4, 0))
         timer = ctk.CTkLabel(
             cont,
             text=fmt_hms(self.shift.seg_horas_extra),
             font=ctk.CTkFont(size=54, weight="bold"),
-            text_color=NAV_TX,
+            text_color=TEXT_DARK,
         )
         timer.pack(expand=True)
         restante = ctk.CTkLabel(
             cont,
             text="",
             font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=NAV_AMBER,
+            text_color=WARNING,
         )
         restante.pack(pady=(0, 12))
 
@@ -1095,10 +1297,11 @@ class StationWindow(ctk.CTk):
             cont,
             text="Finalizar horas extra",
             command=finalizar,
-            fg_color=NAV_MODAL_ENTRY,
-            hover_color=NAV_CARD2,
+            fg_color=SURFACE,
+            hover_color=APP_BG,
+            text_color=TEXT_BODY,
             border_width=1,
-            border_color=NAV_BORDER2,
+            border_color=BORDER_STRONG,
             height=42,
             corner_radius=8,
         ).pack(fill="x")
@@ -1110,27 +1313,27 @@ class StationWindow(ctk.CTk):
             top,
             text=titulo,
             font=ctk.CTkFont(size=16, weight="bold"),
-            text_color=NAV_TX,
+            text_color=TEXT_DARK,
         ).pack(anchor="w", padx=20, pady=(20, 4))
         ctk.CTkLabel(
             top,
             text="Esta solicitud se registra para revision de RR. HH.",
             font=ctk.CTkFont(size=12),
-            text_color=NAV_TX2,
+            text_color=TEXT_MUTED,
         ).pack(anchor="w", padx=20)
 
         ctk.CTkLabel(
             top,
             text="Horas (si aplica)",
             font=ctk.CTkFont(size=12),
-            text_color="#CFE0F0",
+            text_color=TEXT_BODY,
         ).pack(anchor="w", padx=20, pady=(14, 2))
         entry_horas = ctk.CTkEntry(
             top,
             placeholder_text="Ej: 2",
-            fg_color=NAV_MODAL_ENTRY,
-            border_color=NAV_BORDER2,
-            text_color=NAV_TX,
+            fg_color=SURFACE_ALT,
+            border_color=BORDER_STRONG,
+            text_color=TEXT_DARK,
         )
         entry_horas.pack(fill="x", padx=20)
 
@@ -1138,10 +1341,11 @@ class StationWindow(ctk.CTk):
             top,
             text="Motivo",
             font=ctk.CTkFont(size=12),
-            text_color="#CFE0F0",
+            text_color=TEXT_BODY,
         ).pack(anchor="w", padx=20, pady=(12, 2))
         motivo = ctk.CTkTextbox(
-            top, height=80, fg_color=NAV_MODAL_ENTRY, text_color=NAV_TX
+            top, height=80, fg_color=SURFACE_ALT, text_color=TEXT_DARK,
+            border_width=1, border_color=BORDER_STRONG,
         )
         motivo.pack(fill="x", padx=20)
 
@@ -1159,8 +1363,8 @@ class StationWindow(ctk.CTk):
             top,
             text="Enviar solicitud",
             command=enviar,
-            fg_color=NAV_ACCENT_D,
-            hover_color=NAV_ACCENT,
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_DARK,
             height=40,
             corner_radius=8,
             text_color="#FFFFFF",
@@ -1175,13 +1379,13 @@ class StationWindow(ctk.CTk):
             cont,
             text="Restauracion de administrador",
             font=ctk.CTkFont(size=16, weight="bold"),
-            text_color=NAV_TX,
+            text_color=TEXT_DARK,
         ).pack(anchor="w")
         ctk.CTkLabel(
             cont,
             text="Ingresa el PIN para reabrir o restaurar marcajes.",
             font=ctk.CTkFont(size=12),
-            text_color=NAV_TX2,
+            text_color=TEXT_MUTED,
             wraplength=380,
             justify="left",
         ).pack(anchor="w", pady=(6, 12))
@@ -1190,14 +1394,14 @@ class StationWindow(ctk.CTk):
             cont,
             show="*",
             placeholder_text="PIN de administrador",
-            fg_color=NAV_MODAL_ENTRY,
-            border_color=NAV_BORDER2,
-            text_color=NAV_TX,
+            fg_color=SURFACE_ALT,
+            border_color=BORDER_STRONG,
+            text_color=TEXT_DARK,
         )
         pin.pack(fill="x")
 
         error = ctk.CTkLabel(
-            cont, text="", font=ctk.CTkFont(size=12), text_color=NAV_DANGER_TX
+            cont, text="", font=ctk.CTkFont(size=12), text_color=DANGER
         )
         error.pack(anchor="w", pady=(6, 0))
 
@@ -1228,7 +1432,7 @@ class StationWindow(ctk.CTk):
                     opciones,
                     text="No hay marcajes que restaurar.",
                     font=ctk.CTkFont(size=12),
-                    text_color=NAV_TX2,
+                    text_color=TEXT_MUTED,
                 ).pack(anchor="w")
 
         def validar():
@@ -1243,8 +1447,8 @@ class StationWindow(ctk.CTk):
             cont,
             text="Validar",
             command=validar,
-            fg_color=NAV_ACCENT_D,
-            hover_color=NAV_ACCENT,
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_DARK,
             height=38,
             corner_radius=8,
             text_color="#FFFFFF",
@@ -1262,8 +1466,8 @@ class StationWindow(ctk.CTk):
             command=hacer,
             height=38,
             corner_radius=8,
-            fg_color=NAV_ACCENT_D,
-            hover_color=NAV_ACCENT,
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_DARK,
             text_color="#FFFFFF",
             font=ctk.CTkFont(size=13, weight="bold"),
         ).pack(fill="x", pady=4)
@@ -1274,13 +1478,14 @@ class StationWindow(ctk.CTk):
 
     def _build_fallback_ui(self, error_text):
         self._clear_window_contents()
-        frame = ctk.CTkFrame(self, fg_color=NAV_CARD, corner_radius=10)
+        frame = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=12,
+                             border_width=1, border_color=BORDER)
         frame.pack(fill="both", expand=True, padx=24, pady=24)
         ctk.CTkLabel(
             frame,
             text="No fue posible cargar la estación de marcaje",
             font=ctk.CTkFont(size=20, weight="bold"),
-            text_color=NAV_TX,
+            text_color=TEXT_DARK,
         ).pack(anchor="w", padx=24, pady=(24, 8))
         ctk.CTkLabel(
             frame,
@@ -1289,7 +1494,7 @@ class StationWindow(ctk.CTk):
                 "y podrás seguir usando la app."
             ),
             font=ctk.CTkFont(size=13),
-            text_color=NAV_TX2,
+            text_color=TEXT_MUTED,
             wraplength=720,
             justify="left",
         ).pack(anchor="w", padx=24, pady=(0, 12))
@@ -1297,7 +1502,7 @@ class StationWindow(ctk.CTk):
             frame,
             text=error_text,
             font=ctk.CTkFont(size=11),
-            text_color=NAV_DANGER_TX,
+            text_color=DANGER,
             wraplength=720,
             justify="left",
         ).pack(anchor="w", padx=24, pady=(0, 18))
@@ -1305,8 +1510,8 @@ class StationWindow(ctk.CTk):
             frame,
             text="Reintentar",
             command=self._retry_initialization,
-            fg_color=NAV_ACCENT_D,
-            hover_color=NAV_ACCENT,
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_DARK,
             height=42,
             corner_radius=8,
             text_color="#FFFFFF",
@@ -1333,15 +1538,28 @@ class StationWindow(ctk.CTk):
 
     def _on_state(self, estado):
         def _apply():
-            texto, color = ESTADO_INFO.get(estado, (estado, NAV_TX2))
-            self.badge.configure(text=f"  {texto}  ", text_color=color)
-            self.lbl_captura_estado.configure(
-                text=" Captura activa " if self.screens.activo else " Captura detenida "
-            )
+            texto, color, bg = ESTADO_INFO.get(estado, (estado, NEUTRAL_TEXT, NEUTRAL_BG))
+            self.badge.configure(text=f"  {texto}  ", text_color=color, fg_color=bg)
+            if self.screens.activo:
+                self.lbl_captura_estado.configure(
+                    text=" Captura activa ", text_color=SUCCESS, fg_color=SUCCESS_BG
+                )
+            else:
+                self.lbl_captura_estado.configure(
+                    text=" Captura detenida ", text_color=NEUTRAL_TEXT, fg_color=NEUTRAL_BG
+                )
             self._render_controles()
             self._pintar_estado_items()
             self._draw_clock(self.shift.seg_trabajado)
             self._refresh_sync_status()
+            # El hilo del reloj se detiene al finalizar la jornada (o al
+            # cargar el estado inicial), asi que estas tarjetas no se
+            # refrescan solas via _on_tick: se actualizan aqui para que el
+            # reinicio a 0 horas se vea de inmediato al pulsar
+            # "Finalizar jornada".
+            self.lbl_break.configure(text=fmt_hms(self.shift.seg_break))
+            self.lbl_lunch.configure(text=fmt_hms(self.shift.seg_lunch))
+            self.lbl_extra.configure(text=fmt_hms(self.shift.seg_horas_extra))
 
         try:
             self.after(0, _apply)
@@ -1380,14 +1598,14 @@ class StationWindow(ctk.CTk):
                 shift_ok = self.shift._running or self.shift.estado == "FUERA"
                 tracker_ok = self.shift.tracker.activo or self.shift.estado == "FUERA"
                 screens_ok = self.screens._running or not self.screens.activo
-                
+
                 if not (shift_ok and tracker_ok and screens_ok):
                     self._on_state(self.shift.estado)
             except Exception:
                 pass
             if hasattr(self, "winfo_exists") and self.winfo_exists():
                 self.after(60000, check)
-        
+
         self.after(60000, check)
 
     def _al_cerrar(self):
@@ -1421,8 +1639,9 @@ def _mensaje_rechazo(cfg: Config):
         marco,
         text="Entendido",
         command=aviso.destroy,
-        fg_color=NAV_ACCENT_D,
-        hover_color=NAV_ACCENT,
+        fg_color=PRIMARY,
+        hover_color=PRIMARY_DARK,
+        text_color="#FFFFFF",
         height=40,
     ).pack(anchor="e")
     aviso.mainloop()
@@ -1431,6 +1650,10 @@ def _mensaje_rechazo(cfg: Config):
 def main():
     ctk.set_appearance_mode("light")
     cfg = Config()
+
+    # 1) Consentimiento: aparece una unica vez, la primera vez que VYNTRA se
+    #    usa en este equipo. Una vez aceptado queda grabado en consent.json
+    #    y no se vuelve a mostrar en ejecuciones futuras.
     consentimiento = load_consent()
 
     if consentimiento is None:
@@ -1448,7 +1671,13 @@ def main():
         _mensaje_rechazo(cfg)
         sys.exit(0)
 
-    ctk.set_appearance_mode("dark")
+    # 2) Login: se pide cada vez que se abre la app (ya con el consentimiento
+    #    resuelto de forma permanente).
+    login = LoginWindow(cfg)
+    login.mainloop()
+    if login.decision is not True:
+        sys.exit(0)
+
     StationWindow(cfg, consentimiento).mainloop()
 
 

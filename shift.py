@@ -61,6 +61,7 @@ class ShiftManager:
         self.horas_extra_solicitud = None
         self.horas_extra_asignacion = None
         self.horas_extra_codigos_usados = []
+        self._cierre_snapshot = None
 
         self.tracker = ActivityTracker(cfg, on_update=self._on_tracker)
         self.ultimo_snapshot = {}
@@ -103,6 +104,33 @@ class ShiftManager:
         self._running = False
         self.tracker.stop()
         self._safe(self.on_shift_end)
+
+        # Las horas acumuladas solo se reinician a cero aqui, al confirmar
+        # "Finalizar jornada". Apagar el equipo o cerrar la app NO las borra
+        # (ver _cargar_jornada). Se guarda una copia por si un administrador
+        # deshace este cierre por error con "Restaurar jornada".
+        self._cierre_snapshot = {
+            "seg_trabajado": self.seg_trabajado,
+            "seg_break": self.seg_break,
+            "seg_lunch": self.seg_lunch,
+            "seg_horas_extra": self.seg_horas_extra,
+            "break_consumido": self.break_consumido,
+            "lunch_consumido": self.lunch_consumido,
+            "horas_extra_estado": self.horas_extra_estado,
+            "horas_extra_asignadas_segundos": self.horas_extra_asignadas_segundos,
+            "inicio_jornada": (
+                self.inicio_jornada.isoformat() if self.inicio_jornada else None
+            ),
+        }
+        self.seg_trabajado = 0
+        self.seg_break = 0
+        self.seg_lunch = 0
+        self.seg_horas_extra = 0
+        self.break_consumido = False
+        self.lunch_consumido = False
+        self.horas_extra_estado = "SIN_HORAS_EXTRA"
+        self.horas_extra_asignadas_segundos = 0
+
         self._guardar()
         self._notificar_estado()
 
@@ -173,6 +201,19 @@ class ShiftManager:
     def restaurar_jornada(self):
         if self.estado != "TERMINADO":
             return
+        snap = self._cierre_snapshot
+        if snap:
+            self.seg_trabajado = snap.get("seg_trabajado", 0)
+            self.seg_break = snap.get("seg_break", 0)
+            self.seg_lunch = snap.get("seg_lunch", 0)
+            self.seg_horas_extra = snap.get("seg_horas_extra", 0)
+            self.break_consumido = snap.get("break_consumido", False)
+            self.lunch_consumido = snap.get("lunch_consumido", False)
+            self.horas_extra_estado = snap.get("horas_extra_estado", "SIN_HORAS_EXTRA")
+            self.horas_extra_asignadas_segundos = snap.get(
+                "horas_extra_asignadas_segundos", 0
+            )
+            self._cierre_snapshot = None
         self.estado = "TRABAJANDO"
         self.fin_jornada = None
         self._log("restaurar_jornada")
@@ -483,6 +524,7 @@ class ShiftManager:
             "eventos": self.eventos,
             "excepciones": self.excepciones,
             "telemetria": self.ultimo_snapshot,
+            "cierre_snapshot": self._cierre_snapshot,
             "last_update": datetime.datetime.now().isoformat(),
         }
         try:
@@ -531,23 +573,12 @@ class ShiftManager:
         self.ultimo_snapshot = data.get("telemetria", {}) or {}
         self.inicio_jornada = self._parse_dt(data.get("inicio_jornada"))
         self.fin_jornada = self._parse_dt(data.get("fin_jornada"))
+        self._cierre_snapshot = data.get("cierre_snapshot")
 
-        if self.estado in ("TRABAJANDO", "BREAK", "LUNCH"):
-            last = self._parse_dt(data.get("last_update"))
-            if last:
-                delta = max(0, int((datetime.datetime.now() - last).total_seconds()))
-                if self.estado == "TRABAJANDO":
-                    self.seg_trabajado += delta
-                elif self.estado == "BREAK":
-                    self.seg_break += delta
-                elif self.estado == "LUNCH":
-                    self.seg_lunch += delta
-
-        if self.horas_extra_estado == "ACTIVA":
-            last = self._parse_dt(data.get("last_update"))
-            if last:
-                delta = max(0, int((datetime.datetime.now() - last).total_seconds()))
-                self.seg_horas_extra += delta
+        # Las horas se restauran tal cual quedaron guardadas. El tiempo en que
+        # el equipo estuvo apagado o la app cerrada NO se suma al contador:
+        # si acumulo 3h y apago el equipo, al volver a entrar sigue en 3h y
+        # continua desde ahi (no salta a 3h + tiempo apagado).
 
     @staticmethod
     def _parse_dt(value):

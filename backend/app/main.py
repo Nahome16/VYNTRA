@@ -21,6 +21,7 @@ from app.models import (
     AppCatalog,
     AuditLog,
     Company,
+    CompanySetting,
     ConsentRecord,
     Department,
     Device,
@@ -127,44 +128,218 @@ def seed_productivity_rules(db: Session, company_id: str):
         ("", "", "chrome.exe", "Netflix", "non_productive", 100, "Global: streaming no productivo."),
         ("", "", "msedge.exe", "Disney+", "non_productive", 100, "Global: streaming no productivo."),
         ("", "", "chrome.exe", "Disney+", "non_productive", 100, "Global: streaming no productivo."),
+        ("", "", "msedge.exe", "Prime Video", "non_productive", 100, "Global: streaming no productivo."),
+        ("", "", "chrome.exe", "Prime Video", "non_productive", 100, "Global: streaming no productivo."),
+        ("", "", "msedge.exe", "HBO Max", "non_productive", 100, "Global: streaming no productivo."),
+        ("", "", "chrome.exe", "HBO Max", "non_productive", 100, "Global: streaming no productivo."),
+        ("", "", "msedge.exe", "Twitch", "non_productive", 100, "Global: entretenimiento en vivo."),
+        ("", "", "chrome.exe", "Twitch", "non_productive", 100, "Global: entretenimiento en vivo."),
+        ("", "", "msedge.exe", "TikTok", "non_productive", 100, "Global: red social no productiva por defecto."),
+        ("", "", "chrome.exe", "TikTok", "non_productive", 100, "Global: red social no productiva por defecto."),
+        ("", "", "msedge.exe", "Facebook", "non_productive", 90, "Global: red social no productiva por defecto."),
+        ("", "", "chrome.exe", "Facebook", "non_productive", 90, "Global: red social no productiva por defecto."),
+        ("", "", "msedge.exe", "Instagram", "non_productive", 90, "Global: red social no productiva por defecto."),
+        ("", "", "chrome.exe", "Instagram", "non_productive", 90, "Global: red social no productiva por defecto."),
         ("", "", "msedge.exe", "YouTube", "neutral", 80, "Global: YouTube depende del rol/departamento."),
         ("", "", "chrome.exe", "YouTube", "neutral", 80, "Global: YouTube depende del rol/departamento."),
+        ("", "", "msedge.exe", "LinkedIn", "neutral", 80, "Global: red profesional depende del area."),
+        ("", "", "chrome.exe", "LinkedIn", "neutral", 80, "Global: red profesional depende del area."),
+        ("", "", "Discord.exe", "", "neutral", 70, "Global: comunicacion depende del area."),
+        ("", "", "Slack.exe", "", "productive", 60, "Global: comunicacion corporativa."),
         ("", "", "Spotify.exe", "", "neutral", 70, "Global: audio en segundo plano, no mide productividad central."),
         ("", "", "WhatsApp.Root.exe", "", "neutral", 70, "Global: mensajeria depende del area."),
+        ("", "", "explorer.exe", "", "neutral", 60, "Global: explorador de archivos."),
+        ("", "", "SearchHost.exe", "", "neutral", 60, "Global: busqueda de Windows."),
+        ("", "", "SystemSettings.exe", "", "neutral", 60, "Global: configuracion de Windows."),
+        ("", "", "Taskmgr.exe", "", "neutral", 60, "Global: administrador de tareas."),
+        ("", "", "notepad.exe", "", "neutral", 60, "Global: notas simples."),
+        ("", "", "Notepad.exe", "", "neutral", 60, "Global: notas simples."),
+        ("", "", "CalculatorApp.exe", "", "neutral", 60, "Global: calculadora."),
+        ("", "", "SnippingTool.exe", "", "neutral", 60, "Global: recortes/capturas."),
+        ("", "", "mspaint.exe", "", "neutral", 60, "Global: edicion simple de imagen."),
         ("", "", "OUTLOOK.EXE", "", "productive", 60, "Global: correo corporativo."),
         ("", "", "EXCEL.EXE", "", "productive", 60, "Global: hojas de calculo."),
         ("", "", "WINWORD.EXE", "", "productive", 60, "Global: documentos."),
         ("", "", "POWERPNT.EXE", "", "productive", 60, "Global: presentaciones."),
         ("", "", "Teams.exe", "", "productive", 60, "Global: comunicacion corporativa."),
         ("", "", "Zoom.exe", "", "productive", 60, "Global: reuniones."),
-        ("", "", "ChatGPT.exe", "", "productive", 60, "Global demo: asistente de trabajo."),
+        ("", "", "chrome.exe", "Google Drive", "neutral", 80, "Global: archivos en la nube."),
+        ("", "", "msedge.exe", "Google Drive", "neutral", 80, "Global: archivos en la nube."),
+        ("", "", "chrome.exe", "Google Docs", "productive", 90, "Global: documentos en la nube."),
+        ("", "", "msedge.exe", "Google Docs", "productive", 90, "Global: documentos en la nube."),
+        ("", "", "chrome.exe", "Google Sheets", "productive", 90, "Global: hojas en la nube."),
+        ("", "", "msedge.exe", "Google Sheets", "productive", 90, "Global: hojas en la nube."),
+        ("", "", "chrome.exe", "Google Slides", "productive", 90, "Global: presentaciones en la nube."),
+        ("", "", "msedge.exe", "Google Slides", "productive", 90, "Global: presentaciones en la nube."),
+        ("", "", "chrome.exe", "Gmail", "neutral", 80, "Global: correo depende del area."),
+        ("", "", "msedge.exe", "Gmail", "neutral", 80, "Global: correo depende del area."),
+        ("", "", "chrome.exe", "Google Calendar", "neutral", 80, "Global: agenda."),
+        ("", "", "msedge.exe", "Google Calendar", "neutral", 80, "Global: agenda."),
+        ("", "", "chrome.exe", "Google Cloud", "productive", 100, "Global: infraestructura cloud."),
+        ("", "", "msedge.exe", "Google Cloud", "productive", 100, "Global: infraestructura cloud."),
+        ("", "", "chrome.exe", "Google Auth Platform", "productive", 100, "Global: configuracion tecnica."),
+        ("", "", "msedge.exe", "Google Auth Platform", "productive", 100, "Global: configuracion tecnica."),
+        ("", "", "chrome.exe", "OneDrive", "neutral", 80, "Global: archivos en la nube."),
+        ("", "", "msedge.exe", "OneDrive", "neutral", 80, "Global: archivos en la nube."),
+        ("", "", "chrome.exe", "Dropbox", "neutral", 80, "Global: archivos en la nube."),
+        ("", "", "msedge.exe", "Dropbox", "neutral", 80, "Global: archivos en la nube."),
+        ("", "", "ChatGPT.exe", "", "productive", 100, "Global: asistente de trabajo."),
+        ("", "", "chrome.exe", "ChatGPT", "productive", 100, "Global: asistente de trabajo."),
+        ("", "", "msedge.exe", "ChatGPT", "productive", 100, "Global: asistente de trabajo."),
+        ("", "", "chrome.exe", "Claude", "productive", 100, "Global: asistente de trabajo."),
+        ("", "", "msedge.exe", "Claude", "productive", 100, "Global: asistente de trabajo."),
+        ("", "", "chrome.exe", "DeepSeek", "productive", 100, "Global: asistente de trabajo."),
+        ("", "", "msedge.exe", "DeepSeek", "productive", 100, "Global: asistente de trabajo."),
         ("", "", "python.exe", "VYNTRA", "productive", 60, "Global demo: estacion VYNTRA."),
+        ("", "", "python.exe", "Incidencias", "productive", 60, "Global demo: estacion VYNTRA."),
+        ("", "", "python.exe", "Restauracion", "productive", 60, "Global demo: estacion VYNTRA."),
+        ("", "", "python.exe", "Confirmar", "productive", 60, "Global demo: estacion VYNTRA."),
+        ("", "", "python.exe", "Tiempo perdido", "productive", 60, "Global demo: estacion VYNTRA."),
+        ("", "", "Code.exe", "VYNTRA", "productive", 100, "Global demo: desarrollo de VYNTRA."),
+        ("", "", "chrome.exe", "VYNTRA", "productive", 100, "Global demo: panel VYNTRA."),
+        ("", "", "msedge.exe", "VYNTRA", "productive", 100, "Global demo: panel VYNTRA."),
+        ("", "", "chrome.exe", "Adminer", "productive", 100, "Global demo: revision de base de datos."),
+        ("", "", "msedge.exe", "Adminer", "productive", 100, "Global demo: revision de base de datos."),
+        ("", "", "chrome.exe", "Hostinger", "productive", 100, "Global demo: infraestructura VYNTRA."),
+        ("", "", "msedge.exe", "Hostinger", "productive", 100, "Global demo: infraestructura VYNTRA."),
+        ("", "", "chrome.exe", "Buscar con Google", "neutral", 70, "Global: busqueda puntual."),
+        ("", "", "msedge.exe", "Buscar con Google", "neutral", 70, "Global: busqueda puntual."),
+        ("", "", "chrome.exe", "Nueva pesta", "neutral", 60, "Global: pestana nueva sin actividad clara."),
+        ("", "", "msedge.exe", "Nueva pesta", "neutral", 60, "Global: pestana nueva sin actividad clara."),
+        ("", "", "WindowsTerminal.exe", "", "neutral", 80, "Global: terminal depende del area."),
+        ("", "", "Photos.exe", "", "neutral", 60, "Global: visor de imagenes."),
+        ("", "", "Steam.exe", "", "non_productive", 100, "Global: juegos."),
+        ("", "", "EpicGamesLauncher.exe", "", "non_productive", 100, "Global: juegos."),
+        ("", "", "RobloxPlayerBeta.exe", "", "non_productive", 100, "Global: juegos."),
         # Marketing.
+        ("Marketing", "", "Slack.exe", "", "productive", 250, "Marketing: coordinacion."),
+        ("Marketing", "", "chrome.exe", "Google Drive", "productive", 230, "Marketing: archivos creativos."),
+        ("Marketing", "", "msedge.exe", "Google Drive", "productive", 230, "Marketing: archivos creativos."),
         ("Marketing", "", "chrome.exe", "Facebook Business", "productive", 250, "Marketing: herramientas de redes."),
         ("Marketing", "", "msedge.exe", "Facebook Business", "productive", 250, "Marketing: herramientas de redes."),
+        ("Marketing", "", "chrome.exe", "Meta Business", "productive", 250, "Marketing: herramientas de redes."),
+        ("Marketing", "", "msedge.exe", "Meta Business", "productive", 250, "Marketing: herramientas de redes."),
         ("Marketing", "", "chrome.exe", "Instagram", "productive", 250, "Marketing: redes pueden ser trabajo."),
         ("Marketing", "", "msedge.exe", "Instagram", "productive", 250, "Marketing: redes pueden ser trabajo."),
+        ("Marketing", "", "chrome.exe", "TikTok", "productive", 240, "Marketing: contenido/redes."),
+        ("Marketing", "", "msedge.exe", "TikTok", "productive", 240, "Marketing: contenido/redes."),
         ("Marketing", "", "chrome.exe", "Canva", "productive", 250, "Marketing: diseno."),
         ("Marketing", "", "msedge.exe", "Canva", "productive", 250, "Marketing: diseno."),
+        ("Marketing", "", "Photoshop.exe", "", "productive", 250, "Marketing: diseno."),
+        ("Marketing", "", "Illustrator.exe", "", "productive", 250, "Marketing: diseno."),
+        ("Marketing", "", "InDesign.exe", "", "productive", 240, "Marketing: diseno editorial."),
         ("Marketing", "", "chrome.exe", "YouTube", "productive", 200, "Marketing: investigacion/contenido."),
         ("Marketing", "", "msedge.exe", "YouTube", "productive", 200, "Marketing: investigacion/contenido."),
+        ("Marketing", "", "chrome.exe", "Google Ads", "productive", 250, "Marketing: pauta digital."),
+        ("Marketing", "", "msedge.exe", "Google Ads", "productive", 250, "Marketing: pauta digital."),
+        ("Marketing", "", "chrome.exe", "Google Analytics", "productive", 250, "Marketing: analitica."),
+        ("Marketing", "", "msedge.exe", "Google Analytics", "productive", 250, "Marketing: analitica."),
         # Ventas y atencion.
         ("Ventas", "", "WhatsApp.Root.exe", "", "productive", 250, "Ventas: contacto con clientes."),
+        ("Ventas", "", "OUTLOOK.EXE", "", "productive", 250, "Ventas: correo comercial."),
+        ("Ventas", "", "chrome.exe", "Gmail", "productive", 250, "Ventas: correo comercial."),
+        ("Ventas", "", "msedge.exe", "Gmail", "productive", 250, "Ventas: correo comercial."),
+        ("Ventas", "", "chrome.exe", "HubSpot", "productive", 260, "Ventas: CRM."),
+        ("Ventas", "", "msedge.exe", "HubSpot", "productive", 260, "Ventas: CRM."),
+        ("Ventas", "", "chrome.exe", "Salesforce", "productive", 260, "Ventas: CRM."),
+        ("Ventas", "", "msedge.exe", "Salesforce", "productive", 260, "Ventas: CRM."),
+        ("Ventas", "", "chrome.exe", "Zoho CRM", "productive", 260, "Ventas: CRM."),
+        ("Ventas", "", "msedge.exe", "Zoho CRM", "productive", 260, "Ventas: CRM."),
+        ("Ventas", "", "chrome.exe", "LinkedIn", "productive", 220, "Ventas: prospeccion."),
+        ("Ventas", "", "msedge.exe", "LinkedIn", "productive", 220, "Ventas: prospeccion."),
         ("Atencion al cliente", "", "WhatsApp.Root.exe", "", "productive", 250, "Atencion: soporte por mensajeria."),
+        ("Atencion al cliente", "", "Teams.exe", "", "productive", 250, "Atencion: coordinacion de soporte."),
+        ("Atencion al cliente", "", "Slack.exe", "", "productive", 250, "Atencion: coordinacion de soporte."),
         ("Atencion al cliente", "", "chrome.exe", "Gmail", "productive", 230, "Atencion: correo y soporte."),
         ("Atencion al cliente", "", "msedge.exe", "Gmail", "productive", 230, "Atencion: correo y soporte."),
+        ("Atencion al cliente", "", "chrome.exe", "Zendesk", "productive", 260, "Atencion: mesa de ayuda."),
+        ("Atencion al cliente", "", "msedge.exe", "Zendesk", "productive", 260, "Atencion: mesa de ayuda."),
+        ("Atencion al cliente", "", "chrome.exe", "Freshdesk", "productive", 260, "Atencion: mesa de ayuda."),
+        ("Atencion al cliente", "", "msedge.exe", "Freshdesk", "productive", 260, "Atencion: mesa de ayuda."),
+        ("Atencion al cliente", "", "chrome.exe", "Intercom", "productive", 260, "Atencion: soporte chat."),
+        ("Atencion al cliente", "", "msedge.exe", "Intercom", "productive", 260, "Atencion: soporte chat."),
         # Contabilidad y administracion.
         ("Contabilidad", "", "EXCEL.EXE", "", "productive", 250, "Contabilidad: herramienta principal."),
+        ("Contabilidad", "", "chrome.exe", "Google Sheets", "productive", 250, "Contabilidad: hojas en la nube."),
+        ("Contabilidad", "", "msedge.exe", "Google Sheets", "productive", 250, "Contabilidad: hojas en la nube."),
         ("Contabilidad", "", "chrome.exe", "QuickBooks", "productive", 250, "Contabilidad: sistema contable."),
         ("Contabilidad", "", "msedge.exe", "QuickBooks", "productive", 250, "Contabilidad: sistema contable."),
+        ("Contabilidad", "", "chrome.exe", "Alegra", "productive", 250, "Contabilidad: sistema contable."),
+        ("Contabilidad", "", "msedge.exe", "Alegra", "productive", 250, "Contabilidad: sistema contable."),
+        ("Contabilidad", "", "chrome.exe", "Xero", "productive", 250, "Contabilidad: sistema contable."),
+        ("Contabilidad", "", "msedge.exe", "Xero", "productive", 250, "Contabilidad: sistema contable."),
+        ("Contabilidad", "", "chrome.exe", "SAP", "productive", 250, "Contabilidad: ERP/finanzas."),
+        ("Contabilidad", "", "msedge.exe", "SAP", "productive", 250, "Contabilidad: ERP/finanzas."),
         ("Administracion", "", "EXCEL.EXE", "", "productive", 230, "Administracion: control operativo."),
+        ("Administracion", "", "WINWORD.EXE", "", "productive", 230, "Administracion: documentos."),
+        ("Administracion", "", "chrome.exe", "Google Drive", "productive", 230, "Administracion: archivos operativos."),
+        ("Administracion", "", "msedge.exe", "Google Drive", "productive", 230, "Administracion: archivos operativos."),
+        ("Administracion", "", "chrome.exe", "Google Docs", "productive", 230, "Administracion: documentos."),
+        ("Administracion", "", "msedge.exe", "Google Docs", "productive", 230, "Administracion: documentos."),
+        ("Administracion", "", "chrome.exe", "Google Sheets", "productive", 230, "Administracion: reportes."),
+        ("Administracion", "", "msedge.exe", "Google Sheets", "productive", 230, "Administracion: reportes."),
+        ("Administracion", "", "chrome.exe", "hPanel", "productive", 240, "Administracion: gestion de servicios."),
+        ("Administracion", "", "msedge.exe", "hPanel", "productive", 240, "Administracion: gestion de servicios."),
+        # Operaciones.
+        ("Operaciones", "", "EXCEL.EXE", "", "productive", 230, "Operaciones: control operativo."),
+        ("Operaciones", "", "chrome.exe", "Google Sheets", "productive", 230, "Operaciones: control operativo."),
+        ("Operaciones", "", "msedge.exe", "Google Sheets", "productive", 230, "Operaciones: control operativo."),
+        ("Operaciones", "", "chrome.exe", "Odoo", "productive", 250, "Operaciones: ERP."),
+        ("Operaciones", "", "msedge.exe", "Odoo", "productive", 250, "Operaciones: ERP."),
+        ("Operaciones", "", "chrome.exe", "Trello", "productive", 230, "Operaciones: gestion de tareas."),
+        ("Operaciones", "", "msedge.exe", "Trello", "productive", 230, "Operaciones: gestion de tareas."),
+        ("Operaciones", "", "chrome.exe", "Asana", "productive", 230, "Operaciones: gestion de tareas."),
+        ("Operaciones", "", "msedge.exe", "Asana", "productive", 230, "Operaciones: gestion de tareas."),
+        ("Operaciones", "", "chrome.exe", "Monday", "productive", 230, "Operaciones: gestion de tareas."),
+        ("Operaciones", "", "msedge.exe", "Monday", "productive", 230, "Operaciones: gestion de tareas."),
+        # RRHH.
+        ("RRHH", "", "WINWORD.EXE", "", "productive", 230, "RRHH: documentos."),
+        ("RRHH", "", "EXCEL.EXE", "", "productive", 230, "RRHH: controles y nomina."),
+        ("RRHH", "", "chrome.exe", "LinkedIn", "productive", 250, "RRHH: reclutamiento."),
+        ("RRHH", "", "msedge.exe", "LinkedIn", "productive", 250, "RRHH: reclutamiento."),
+        ("RRHH", "", "chrome.exe", "Indeed", "productive", 250, "RRHH: reclutamiento."),
+        ("RRHH", "", "msedge.exe", "Indeed", "productive", 250, "RRHH: reclutamiento."),
+        ("RRHH", "", "chrome.exe", "BambooHR", "productive", 250, "RRHH: gestion de personal."),
+        ("RRHH", "", "msedge.exe", "BambooHR", "productive", 250, "RRHH: gestion de personal."),
+        ("RRHH", "", "chrome.exe", "Workday", "productive", 250, "RRHH: gestion de personal."),
+        ("RRHH", "", "msedge.exe", "Workday", "productive", 250, "RRHH: gestion de personal."),
         # Tecnologia.
         ("Tecnologia", "", "Code.exe", "", "productive", 250, "Tecnologia: desarrollo."),
+        ("Tecnologia", "", "Cursor.exe", "", "productive", 250, "Tecnologia: desarrollo."),
+        ("Tecnologia", "", "pycharm64.exe", "", "productive", 250, "Tecnologia: desarrollo."),
+        ("Tecnologia", "", "idea64.exe", "", "productive", 250, "Tecnologia: desarrollo."),
         ("Tecnologia", "", "WindowsTerminal.exe", "", "productive", 250, "Tecnologia: terminal."),
+        ("Tecnologia", "", "cmd.exe", "", "productive", 230, "Tecnologia: terminal."),
+        ("Tecnologia", "", "powershell.exe", "", "productive", 230, "Tecnologia: terminal."),
+        ("Tecnologia", "", "Postman.exe", "", "productive", 250, "Tecnologia: pruebas API."),
+        ("Tecnologia", "", "Docker Desktop.exe", "", "productive", 250, "Tecnologia: contenedores."),
         ("Tecnologia", "", "chrome.exe", "GitHub", "productive", 250, "Tecnologia: repositorios."),
         ("Tecnologia", "", "msedge.exe", "GitHub", "productive", 250, "Tecnologia: repositorios."),
+        ("Tecnologia", "", "chrome.exe", "GitLab", "productive", 250, "Tecnologia: repositorios."),
+        ("Tecnologia", "", "msedge.exe", "GitLab", "productive", 250, "Tecnologia: repositorios."),
+        ("Tecnologia", "", "chrome.exe", "Bitbucket", "productive", 250, "Tecnologia: repositorios."),
+        ("Tecnologia", "", "msedge.exe", "Bitbucket", "productive", 250, "Tecnologia: repositorios."),
         ("Tecnologia", "", "chrome.exe", "Stack Overflow", "productive", 220, "Tecnologia: investigacion tecnica."),
         ("Tecnologia", "", "msedge.exe", "Stack Overflow", "productive", 220, "Tecnologia: investigacion tecnica."),
+        ("Tecnologia", "", "chrome.exe", "localhost", "productive", 250, "Tecnologia: desarrollo local."),
+        ("Tecnologia", "", "msedge.exe", "localhost", "productive", 250, "Tecnologia: desarrollo local."),
+        ("Tecnologia", "", "chrome.exe", "Adminer", "productive", 250, "Tecnologia: base de datos."),
+        ("Tecnologia", "", "msedge.exe", "Adminer", "productive", 250, "Tecnologia: base de datos."),
+        ("Tecnologia", "", "pgAdmin4.exe", "", "productive", 250, "Tecnologia: base de datos."),
+        ("Tecnologia", "", "chrome.exe", "Hostinger", "productive", 240, "Tecnologia: infraestructura."),
+        ("Tecnologia", "", "msedge.exe", "Hostinger", "productive", 240, "Tecnologia: infraestructura."),
+        ("Tecnologia", "", "chrome.exe", "hPanel", "productive", 240, "Tecnologia: infraestructura."),
+        ("Tecnologia", "", "msedge.exe", "hPanel", "productive", 240, "Tecnologia: infraestructura."),
+        # Gerencia.
+        ("Gerencia", "", "EXCEL.EXE", "", "productive", 230, "Gerencia: indicadores."),
+        ("Gerencia", "", "POWERPNT.EXE", "", "productive", 230, "Gerencia: presentaciones."),
+        ("Gerencia", "", "OUTLOOK.EXE", "", "productive", 230, "Gerencia: correo."),
+        ("Gerencia", "", "chrome.exe", "Google Drive", "productive", 230, "Gerencia: documentos."),
+        ("Gerencia", "", "msedge.exe", "Google Drive", "productive", 230, "Gerencia: documentos."),
+        ("Gerencia", "", "chrome.exe", "Looker Studio", "productive", 250, "Gerencia: BI."),
+        ("Gerencia", "", "msedge.exe", "Looker Studio", "productive", 250, "Gerencia: BI."),
+        ("Gerencia", "", "chrome.exe", "Power BI", "productive", 250, "Gerencia: BI."),
+        ("Gerencia", "", "msedge.exe", "Power BI", "productive", 250, "Gerencia: BI."),
         # Puesto especifico de prueba.
         ("", "Operador", "python.exe", "VYNTRA", "productive", 300, "Operador: estacion de marcaje."),
     ]
@@ -194,6 +369,31 @@ def seed_productivity_rules(db: Session, company_id: str):
                 classification=classification,
                 priority=priority,
                 notes=notes,
+            )
+        )
+
+
+def seed_company_settings(db: Session, company_id: str):
+    settings_seed = [
+        ("idle_grace_seconds", "300", "Tiempo de gracia antes de contar idle real."),
+        ("productivity_block_minutes", "30", "Tamano de bloque para reporteria."),
+        ("activity_sample_seconds", "10", "Intervalo recomendado de muestra en produccion."),
+    ]
+    for key, value, description in settings_seed:
+        exists = db.execute(
+            select(CompanySetting).where(
+                CompanySetting.company_id == company_id,
+                CompanySetting.key == key,
+            )
+        ).scalar_one_or_none()
+        if exists:
+            continue
+        db.add(
+            CompanySetting(
+                company_id=company_id,
+                key=key,
+                value=value,
+                description=description,
             )
         )
 
@@ -365,7 +565,7 @@ def classify_activity(
     employee: Employee,
     executable_name: str,
     title_text_value: str,
-) -> bool | None:
+) -> str:
     executable = (executable_name or "").strip().lower()
     title_lower = (title_text_value or "").strip().lower()
     rules = db.execute(
@@ -398,12 +598,18 @@ def classify_activity(
         matches.append((scope_score + rule.priority, rule))
 
     if not matches:
-        return None
+        return "uncategorized"
 
     _, best = sorted(matches, key=lambda item: item[0], reverse=True)[0]
-    if best.classification == "productive":
+    if best.classification in {"productive", "non_productive", "neutral"}:
+        return best.classification
+    return "uncategorized"
+
+
+def classification_to_bool(classification: str) -> bool | None:
+    if classification == "productive":
         return True
-    if best.classification == "non_productive":
+    if classification == "non_productive":
         return False
     return None
 
@@ -562,7 +768,8 @@ def store_activity_samples(
                 duration_seconds=duration,
                 idle_seconds=duration if is_idle else 0,
                 is_idle=is_idle,
-                is_productive=classification,
+                is_productive=classification_to_bool(classification),
+                classification=classification,
                 source_event_id=source_event_id,
                 source_sample_index=index,
             )
@@ -692,6 +899,7 @@ def bootstrap_data():
                 db.add(Role(company_id=company.id, name=role_name, description=description))
 
         seed_organization_catalogs(db, company.id)
+        seed_company_settings(db, company.id)
 
         admin_user = db.execute(
             select(User).where(

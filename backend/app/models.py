@@ -376,6 +376,8 @@ class ProductivityBlock(Base):
     non_productive_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     uncategorized_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     idle_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    break_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lunch_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     break_lunch_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     productivity_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     acceptable_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -383,6 +385,8 @@ class ProductivityBlock(Base):
     neutral_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     uncategorized_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     idle_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    break_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    lunch_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 

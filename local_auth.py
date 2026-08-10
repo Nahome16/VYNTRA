@@ -14,8 +14,11 @@ contra un unico usuario de pruebas fijo definido aqui abajo. La contrasena
 de prueba tampoco se guarda en texto plano: se compara contra un hash
 PBKDF2-HMAC-SHA256 precalculado.
 
-Usuario de pruebas:
+Usuarios de pruebas:
     correo:     test@vyntra.com
+    contrasena: Vyntra2026
+
+    correo:     empleado@vyntra.local
     contrasena: Vyntra2026
 """
 
@@ -25,11 +28,18 @@ import hashlib
 
 _ITERATIONS = 200_000
 
-# Usuario de pruebas temporal (sin base de datos). Sustituir por la
+# Usuarios de pruebas temporales (sin base de datos). Sustituir por la
 # verificacion contra la plataforma web cuando ese backend este listo.
-_TEST_USER_EMAIL = "test@vyntra.com"
-_TEST_USER_SALT_B64 = "/lZV/m0SF5D+pksiiPC19Q=="
-_TEST_USER_HASH_B64 = "M187IVtrUnKIdrQbmXr0Os7WGbz8/JGT27S95xFvhnI="
+_TEST_USERS = {
+    "test@vyntra.com": {
+        "salt": "/lZV/m0SF5D+pksiiPC19Q==",
+        "hash": "M187IVtrUnKIdrQbmXr0Os7WGbz8/JGT27S95xFvhnI=",
+    },
+    "empleado@vyntra.local": {
+        "salt": "/lZV/m0SF5D+pksiiPC19Q==",
+        "hash": "M187IVtrUnKIdrQbmXr0Os7WGbz8/JGT27S95xFvhnI=",
+    },
+}
 
 
 def _comparacion_segura(a: str, b: str) -> bool:
@@ -48,14 +58,15 @@ def verificar_credenciales(correo: str, password: str) -> bool:
     verificacion mientras no exista la integracion con la plataforma web.
     """
     correo = (correo or "").strip().lower()
-    if correo != _TEST_USER_EMAIL:
+    user = _TEST_USERS.get(correo)
+    if user is None:
         return False
     try:
-        salt = base64.b64decode(_TEST_USER_SALT_B64)
+        salt = base64.b64decode(user["salt"])
         derivado = hashlib.pbkdf2_hmac(
             "sha256", (password or "").encode("utf-8"), salt, _ITERATIONS
         )
         calculado = base64.b64encode(derivado).decode("ascii")
-        return _comparacion_segura(calculado, _TEST_USER_HASH_B64)
+        return _comparacion_segura(calculado, user["hash"])
     except Exception:
         return False

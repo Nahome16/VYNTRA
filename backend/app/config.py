@@ -29,6 +29,14 @@ class Settings:
     bootstrap_employee_code: str = os.environ.get("BOOTSTRAP_EMPLOYEE_CODE", "EMP-001")
     bootstrap_employee_name: str = os.environ.get("BOOTSTRAP_EMPLOYEE_NAME", "Empleado Demo")
     bootstrap_employee_email: str = os.environ.get("BOOTSTRAP_EMPLOYEE_EMAIL", "")
+    bootstrap_position_name: str = os.environ.get("BOOTSTRAP_POSITION_NAME", "Operador")
+    bootstrap_employee_login_email: str = os.environ.get(
+        "BOOTSTRAP_EMPLOYEE_LOGIN_EMAIL", "empleado@vyntra.local"
+    )
+    bootstrap_employee_password_hash: str = os.environ.get(
+        "BOOTSTRAP_EMPLOYEE_PASSWORD_HASH",
+        "pbkdf2_sha256:200000:/lZV/m0SF5D+pksiiPC19Q==:M187IVtrUnKIdrQbmXr0Os7WGbz8/JGT27S95xFvhnI=",
+    )
     bootstrap_device_name: str = os.environ.get("BOOTSTRAP_DEVICE_NAME", "")
     bootstrap_device_token: str = os.environ.get("BOOTSTRAP_DEVICE_TOKEN", "")
     allow_bootstrap: bool = _bool_env("ALLOW_BOOTSTRAP", True)

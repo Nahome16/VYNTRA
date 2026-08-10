@@ -10,6 +10,7 @@ Flujo:
 
 import datetime
 import getpass
+import hashlib
 import json
 import os
 import socket
@@ -18,6 +19,7 @@ import tkinter as tk
 
 import customtkinter as ctk
 
+from agent_event_uploader import AgentEventUploader
 import local_auth
 from config import Config
 from outbox import append_event, count_pending
@@ -91,6 +93,7 @@ class LoginWindow(ctk.CTk):
         super().__init__()
         self.cfg = cfg
         self.decision = None  # True si quedo autenticado, False si cancelo/salio
+        self.authenticated_email = ""
 
         self.title("VYNTRA - Verificacion de usuario")
         self.geometry("480x480")
@@ -179,9 +182,29 @@ class LoginWindow(ctk.CTk):
             self.error_lbl.configure(text="Ingresa tu correo y tu contrasena.")
             return
         if local_auth.verificar_credenciales(correo, pw):
+            self.authenticated_email = correo.lower()
+            append_event(
+                "station_login",
+                {
+                    "email": self.authenticated_email,
+                    "success": True,
+                    "occurred_at": datetime.datetime.now().isoformat(),
+                    "agent_version": VERSION,
+                },
+            )
             self.decision = True
             self.destroy()
         else:
+            append_event(
+                "station_login",
+                {
+                    "email": correo.lower(),
+                    "success": False,
+                    "failure_reason": "invalid_credentials",
+                    "occurred_at": datetime.datetime.now().isoformat(),
+                    "agent_version": VERSION,
+                },
+            )
             self.error_lbl.configure(text="Correo o contrasena incorrectos.")
 
     def _salir(self):
@@ -192,31 +215,35 @@ class LoginWindow(ctk.CTk):
 # ==========================================================================
 # Consentimiento
 # ==========================================================================
-def _consent_path() -> str:
+def _consent_path(auth_email: str = "") -> str:
     base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
     carpeta = os.path.join(base, "VYNTRA")
     os.makedirs(carpeta, exist_ok=True)
+    if auth_email:
+        email_hash = hashlib.sha256(auth_email.strip().lower().encode("utf-8")).hexdigest()[:16]
+        return os.path.join(carpeta, f"consent_{email_hash}.json")
     return os.path.join(carpeta, "consent.json")
 
 
-def load_consent() -> dict | None:
+def load_consent(auth_email: str = "") -> dict | None:
     try:
-        with open(_consent_path(), "r", encoding="utf-8") as f:
+        with open(_consent_path(auth_email), "r", encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
 
 
-def save_consent(aceptado: bool, detalles: dict | None = None) -> dict:
+def save_consent(aceptado: bool, detalles: dict | None = None, auth_email: str = "") -> dict:
     registro = {
         "aceptado": aceptado,
+        "auth_email": auth_email.strip().lower(),
         "empleado": getpass.getuser(),
         "equipo": socket.gethostname(),
         "fechaHora": datetime.datetime.now().isoformat(),
         "version": VERSION,
         "autorizaciones": detalles or {},
     }
-    with open(_consent_path(), "w", encoding="utf-8") as f:
+    with open(_consent_path(auth_email), "w", encoding="utf-8") as f:
         json.dump(registro, f, indent=2, ensure_ascii=False)
     append_event("consent_saved", registro)
     return registro
@@ -449,12 +476,14 @@ class ConsentWindow(ctk.CTk):
 # Estacion de marcaje
 # ==========================================================================
 class StationWindow(ctk.CTk):
-    def __init__(self, cfg: Config, consentimiento: dict):
+    def __init__(self, cfg: Config, consentimiento: dict, auth_email: str = ""):
         super().__init__()
         self.cfg = cfg
         self.consentimiento = consentimiento
+        self.auth_email = auth_email
         self.shift = ShiftManager(cfg, on_state=self._on_state, on_tick=self._on_tick)
         self.screens = ScreenshotEngine(cfg, on_event=self._on_screen_event)
+        self.event_uploader = AgentEventUploader(cfg, on_event=self._on_sync_event)
         self.shift.on_shift_start = self.screens.start
         self.shift.on_shift_pause = self.screens.pause
         self.shift.on_shift_resume = self.screens.resume
@@ -475,6 +504,7 @@ class StationWindow(ctk.CTk):
             self.shift.resume_runtime_if_needed()
             self._refresh_sync_status()
             self.after(200, lambda: self._draw_clock(0))
+            self.event_uploader.start()
             self._start_healthcheck()
         except Exception as exc:
             self._ui_error = exc
@@ -1476,6 +1506,12 @@ class StationWindow(ctk.CTk):
         if msg.startswith("Captura "):
             self._ultima_captura_txt = msg.replace("Captura ", "", 1)[:5]
 
+    def _on_sync_event(self, msg):
+        try:
+            self.after(0, self._refresh_sync_status)
+        except Exception:
+            pass
+
     def _build_fallback_ui(self, error_text):
         self._clear_window_contents()
         frame = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=12,
@@ -1611,6 +1647,11 @@ class StationWindow(ctk.CTk):
     def _al_cerrar(self):
         if self.shift.estado in ("TRABAJANDO", "BREAK", "LUNCH"):
             self.shift.shutdown_runtime()
+        try:
+            self.event_uploader.process_pending(limit=100)
+        except Exception:
+            pass
+        self.event_uploader.stop()
         self.destroy()
 
 
@@ -1651,34 +1692,40 @@ def main():
     ctk.set_appearance_mode("light")
     cfg = Config()
 
-    # 1) Consentimiento: aparece una unica vez, la primera vez que VYNTRA se
-    #    usa en este equipo. Una vez aceptado queda grabado en consent.json
-    #    y no se vuelve a mostrar en ejecuciones futuras.
-    consentimiento = load_consent()
+    # 1) Login: se pide cada vez que se abre la app. Esta identidad permite
+    #    asociar el consentimiento y la jornada con la credencial del empleado.
+    login = LoginWindow(cfg)
+    login.mainloop()
+    if login.decision is not True:
+        sys.exit(0)
+
+    auth_email = login.authenticated_email
+
+    # 2) Consentimiento: aparece una vez por usuario autenticado en este equipo.
+    #    Asi el registro legal queda asociado a la credencial que abrio la
+    #    estacion de marcaje.
+    consentimiento = load_consent(auth_email)
 
     if consentimiento is None:
         ventana = ConsentWindow(cfg)
         ventana.mainloop()
 
         if ventana.decision is not True:
-            save_consent(False)
+            save_consent(False, auth_email=auth_email)
+            try:
+                AgentEventUploader(cfg).process_pending(limit=20)
+            except Exception:
+                pass
             _mensaje_rechazo(cfg)
             sys.exit(0)
 
-        consentimiento = save_consent(True, ventana.detalles)
+        consentimiento = save_consent(True, ventana.detalles, auth_email=auth_email)
 
     elif consentimiento.get("aceptado") is not True:
         _mensaje_rechazo(cfg)
         sys.exit(0)
 
-    # 2) Login: se pide cada vez que se abre la app (ya con el consentimiento
-    #    resuelto de forma permanente).
-    login = LoginWindow(cfg)
-    login.mainloop()
-    if login.decision is not True:
-        sys.exit(0)
-
-    StationWindow(cfg, consentimiento).mainloop()
+    StationWindow(cfg, consentimiento, auth_email).mainloop()
 
 
 if __name__ == "__main__":

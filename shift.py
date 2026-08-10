@@ -70,6 +70,7 @@ class ShiftManager:
         self._thread = None
         self._io_lock = threading.Lock()
         self._last_periodic_save = 0.0
+        self._last_activity_snapshot_sync = 0.0
 
         self.on_shift_start = None
         self.on_shift_pause = None
@@ -313,6 +314,9 @@ class ShiftManager:
             if ahora - self._last_periodic_save >= 10:
                 self._guardar()
                 self._last_periodic_save = ahora
+            if ahora - self._last_activity_snapshot_sync >= 30:
+                self._queue("activity_snapshot")
+                self._last_activity_snapshot_sync = ahora
             time.sleep(1)
 
     # ---- incidencias --------------------------------------------------

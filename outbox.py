@@ -86,6 +86,60 @@ def append_event(tipo: str, payload: dict) -> dict:
     return event
 
 
+def read_pending(limit: int = 50) -> list[dict]:
+    ruta = outbox_path()
+    if not os.path.exists(ruta):
+        return []
+    events = []
+    with _LOCK:
+        with open(ruta, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if event.get("status") == "pending":
+                    events.append(event)
+                    if len(events) >= limit:
+                        break
+    return events
+
+
+def mark_uploaded(event_ids: set[str]):
+    if not event_ids:
+        return
+    ruta = outbox_path()
+    if not os.path.exists(ruta):
+        return
+    with _LOCK:
+        lines = []
+        changed = False
+        with open(ruta, "r", encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    lines.append(line)
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    lines.append(line)
+                    continue
+                if event.get("id") in event_ids and event.get("status") == "pending":
+                    event["status"] = "uploaded"
+                    event["uploaded_at"] = datetime.datetime.now().isoformat()
+                    changed = True
+                    lines.append(json.dumps(event, ensure_ascii=False) + "\n")
+                else:
+                    lines.append(line)
+        if changed:
+            tmp = f"{ruta}.{os.getpid()}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+            os.replace(tmp, ruta)
+
+
 def count_pending() -> int:
     ruta = outbox_path()
     if not os.path.exists(ruta):
@@ -93,6 +147,12 @@ def count_pending() -> int:
     total = 0
     with open(ruta, "r", encoding="utf-8") as f:
         for line in f:
-            if line.strip():
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if event.get("status") == "pending":
                 total += 1
     return total

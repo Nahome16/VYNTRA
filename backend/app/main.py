@@ -9,7 +9,7 @@ import os
 import tempfile
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -30,6 +30,7 @@ from app.models import (
     EvidenceFile,
     EvidenceUploadAttempt,
     Position,
+    ProductivityBlock,
     ProductivityRule,
     Role,
     Shift,
@@ -78,6 +79,56 @@ def json_text(value: dict | list | str | None) -> str:
 
 def title_hash(title: str) -> str:
     return hashlib.sha256(title.encode("utf-8")).hexdigest()
+
+
+def clean_text(value: object, max_len: int = 255) -> str:
+    return str(value or "").strip()[:max_len]
+
+
+def percent(part: int | float, whole: int | float) -> float:
+    if whole <= 0:
+        return 0.0
+    return round((part / whole) * 100, 2)
+
+
+def get_default_company(db: Session) -> Company:
+    company = db.execute(select(Company).order_by(Company.created_at)).scalars().first()
+    if company is None:
+        raise HTTPException(status_code=404, detail="No company found")
+    return company
+
+
+def resolve_company(db: Session, company_id: str | None = None) -> Company:
+    if company_id:
+        company = db.get(Company, company_id)
+        if company is None:
+            raise HTTPException(status_code=404, detail="Company not found")
+        return company
+    return get_default_company(db)
+
+
+def serialize_rule(db: Session, rule: ProductivityRule) -> dict:
+    department = db.get(Department, rule.department_id) if rule.department_id else None
+    position = db.get(Position, rule.position_id) if rule.position_id else None
+    employee = db.get(Employee, rule.employee_id) if rule.employee_id else None
+    return {
+        "id": rule.id,
+        "company_id": rule.company_id,
+        "department_id": rule.department_id,
+        "department": department.name if department else None,
+        "position_id": rule.position_id,
+        "position": position.name if position else None,
+        "employee_id": rule.employee_id,
+        "employee": employee.full_name if employee else None,
+        "executable_name": rule.executable_name,
+        "title_contains": rule.title_contains,
+        "classification": rule.classification,
+        "priority": rule.priority,
+        "is_active": rule.is_active,
+        "notes": rule.notes,
+        "created_at": rule.created_at.isoformat() if rule.created_at else None,
+        "updated_at": rule.updated_at.isoformat() if rule.updated_at else None,
+    }
 
 
 def record_attempt(
@@ -179,6 +230,8 @@ def seed_productivity_rules(db: Session, company_id: str):
         ("", "", "msedge.exe", "Google Cloud", "productive", 100, "Global: infraestructura cloud."),
         ("", "", "chrome.exe", "Google Auth Platform", "productive", 100, "Global: configuracion tecnica."),
         ("", "", "msedge.exe", "Google Auth Platform", "productive", 100, "Global: configuracion tecnica."),
+        ("", "", "chrome.exe", "Google Authorization APIs", "productive", 100, "Global: configuracion tecnica."),
+        ("", "", "msedge.exe", "Google Authorization APIs", "productive", 100, "Global: configuracion tecnica."),
         ("", "", "chrome.exe", "OneDrive", "neutral", 80, "Global: archivos en la nube."),
         ("", "", "msedge.exe", "OneDrive", "neutral", 80, "Global: archivos en la nube."),
         ("", "", "chrome.exe", "Dropbox", "neutral", 80, "Global: archivos en la nube."),
@@ -614,6 +667,42 @@ def classification_to_bool(classification: str) -> bool | None:
     return None
 
 
+def reclassify_activities_for_company(db: Session, company_id: str) -> dict:
+    activities = db.execute(
+        select(Activity)
+        .where(Activity.company_id == company_id)
+        .order_by(Activity.started_at)
+    ).scalars().all()
+    changed = 0
+    totals = {
+        "productive": 0,
+        "neutral": 0,
+        "non_productive": 0,
+        "uncategorized": 0,
+    }
+
+    for activity in activities:
+        employee = db.get(Employee, activity.employee_id)
+        if employee is None:
+            continue
+        app_row = db.get(AppCatalog, activity.app_id) if activity.app_id else None
+        title_row = db.get(WindowTitleCatalog, activity.window_title_id) if activity.window_title_id else None
+        new_classification = classify_activity(
+            db,
+            company_id,
+            employee,
+            app_row.executable_name if app_row else "",
+            title_row.title_text if title_row else "",
+        )
+        totals[new_classification] = totals.get(new_classification, 0) + 1
+        if activity.classification != new_classification:
+            activity.classification = new_classification
+            activity.is_productive = classification_to_bool(new_classification)
+            changed += 1
+
+    return {"changed": changed, "totals": totals}
+
+
 def find_employee_credential(
     db: Session,
     company_id: str,
@@ -1014,6 +1103,401 @@ def on_startup():
 @app.get("/health")
 def health():
     return {"ok": True, "environment": settings.environment}
+
+
+@app.get("/api/productivity/catalogs")
+def productivity_catalogs(
+    company_id: str | None = None,
+    db: Session = Depends(get_db),
+):
+    company = resolve_company(db, company_id)
+    departments = db.execute(
+        select(Department)
+        .where(Department.company_id == company.id)
+        .order_by(Department.name)
+    ).scalars().all()
+    positions = db.execute(
+        select(Position)
+        .where(Position.company_id == company.id)
+        .order_by(Position.name)
+    ).scalars().all()
+    employees = db.execute(
+        select(Employee)
+        .where(Employee.company_id == company.id)
+        .order_by(Employee.full_name)
+    ).scalars().all()
+    return {
+        "company": {"id": company.id, "name": company.name},
+        "classifications": ["productive", "neutral", "non_productive", "uncategorized"],
+        "departments": [
+            {"id": row.id, "name": row.name, "status": row.status}
+            for row in departments
+        ],
+        "positions": [
+            {"id": row.id, "name": row.name, "status": row.status}
+            for row in positions
+        ],
+        "employees": [
+            {
+                "id": row.id,
+                "employee_code": row.employee_code,
+                "full_name": row.full_name,
+                "email": row.email,
+                "department_id": row.department_id,
+                "position_id": row.position_id,
+                "status": row.status,
+            }
+            for row in employees
+        ],
+    }
+
+
+@app.get("/api/productivity/rules")
+def list_productivity_rules(
+    company_id: str | None = None,
+    classification: str | None = None,
+    department_id: str | None = None,
+    position_id: str | None = None,
+    employee_id: str | None = None,
+    db: Session = Depends(get_db),
+):
+    company = resolve_company(db, company_id)
+    query = select(ProductivityRule).where(ProductivityRule.company_id == company.id)
+    if classification:
+        query = query.where(ProductivityRule.classification == classification)
+    if department_id:
+        query = query.where(ProductivityRule.department_id == department_id)
+    if position_id:
+        query = query.where(ProductivityRule.position_id == position_id)
+    if employee_id:
+        query = query.where(ProductivityRule.employee_id == employee_id)
+    rules = db.execute(
+        query.order_by(
+            ProductivityRule.is_active.desc(),
+            ProductivityRule.priority.desc(),
+            ProductivityRule.executable_name,
+            ProductivityRule.title_contains,
+        )
+    ).scalars().all()
+    return {
+        "company": {"id": company.id, "name": company.name},
+        "count": len(rules),
+        "rules": [serialize_rule(db, row) for row in rules],
+    }
+
+
+@app.post("/api/productivity/rules")
+def create_productivity_rule(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+):
+    company = resolve_company(db, payload.get("company_id"))
+    classification = clean_text(payload.get("classification"), 40)
+    if classification not in {"productive", "neutral", "non_productive", "uncategorized"}:
+        raise HTTPException(status_code=400, detail="Invalid classification")
+
+    department_id = clean_text(payload.get("department_id"), 36) or None
+    position_id = clean_text(payload.get("position_id"), 36) or None
+    employee_id = clean_text(payload.get("employee_id"), 36) or None
+    executable_name = clean_text(payload.get("executable_name"), 160)
+    title_contains = clean_text(payload.get("title_contains"), 255)
+
+    if department_id and not db.get(Department, department_id):
+        raise HTTPException(status_code=400, detail="Department not found")
+    if position_id and not db.get(Position, position_id):
+        raise HTTPException(status_code=400, detail="Position not found")
+    if employee_id and not db.get(Employee, employee_id):
+        raise HTTPException(status_code=400, detail="Employee not found")
+    if not executable_name and not title_contains:
+        raise HTTPException(status_code=400, detail="Rule needs executable_name or title_contains")
+
+    duplicate_query = select(ProductivityRule).where(
+        ProductivityRule.company_id == company.id,
+        ProductivityRule.executable_name == executable_name,
+        ProductivityRule.title_contains == title_contains,
+    )
+    duplicate_query = duplicate_query.where(
+        ProductivityRule.department_id == department_id
+        if department_id
+        else ProductivityRule.department_id.is_(None)
+    )
+    duplicate_query = duplicate_query.where(
+        ProductivityRule.position_id == position_id
+        if position_id
+        else ProductivityRule.position_id.is_(None)
+    )
+    duplicate_query = duplicate_query.where(
+        ProductivityRule.employee_id == employee_id
+        if employee_id
+        else ProductivityRule.employee_id.is_(None)
+    )
+    rule = db.execute(duplicate_query).scalar_one_or_none()
+    if rule is None:
+        rule = ProductivityRule(
+            company_id=company.id,
+            department_id=department_id,
+            position_id=position_id,
+            employee_id=employee_id,
+            executable_name=executable_name,
+            title_contains=title_contains,
+        )
+        db.add(rule)
+
+    rule.classification = classification
+    rule.priority = int(payload.get("priority") or rule.priority or 100)
+    rule.is_active = bool(payload.get("is_active", True))
+    rule.notes = clean_text(payload.get("notes"), 2000)
+    rule.updated_at = now_utc()
+    db.flush()
+
+    reclassify_result = None
+    if bool(payload.get("reclassify", True)):
+        reclassify_result = reclassify_activities_for_company(db, company.id)
+
+    db.commit()
+    if bool(payload.get("rebuild_blocks", True)):
+        from scripts.run_productivity_etl import run as run_productivity_etl
+
+        run_productivity_etl()
+    return {
+        "ok": True,
+        "rule": serialize_rule(db, rule),
+        "reclassify": reclassify_result,
+    }
+
+
+@app.patch("/api/productivity/rules/{rule_id}")
+def update_productivity_rule(
+    rule_id: str,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+):
+    rule = db.get(ProductivityRule, rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    if "classification" in payload:
+        classification = clean_text(payload.get("classification"), 40)
+        if classification not in {"productive", "neutral", "non_productive", "uncategorized"}:
+            raise HTTPException(status_code=400, detail="Invalid classification")
+        rule.classification = classification
+    if "department_id" in payload:
+        rule.department_id = clean_text(payload.get("department_id"), 36) or None
+    if "position_id" in payload:
+        rule.position_id = clean_text(payload.get("position_id"), 36) or None
+    if "employee_id" in payload:
+        rule.employee_id = clean_text(payload.get("employee_id"), 36) or None
+    if "executable_name" in payload:
+        rule.executable_name = clean_text(payload.get("executable_name"), 160)
+    if "title_contains" in payload:
+        rule.title_contains = clean_text(payload.get("title_contains"), 255)
+    if "priority" in payload:
+        rule.priority = int(payload.get("priority") or 100)
+    if "is_active" in payload:
+        rule.is_active = bool(payload.get("is_active"))
+    if "notes" in payload:
+        rule.notes = clean_text(payload.get("notes"), 2000)
+    if not rule.executable_name and not rule.title_contains:
+        raise HTTPException(status_code=400, detail="Rule needs executable_name or title_contains")
+
+    rule.updated_at = now_utc()
+    reclassify_result = None
+    if bool(payload.get("reclassify", True)):
+        reclassify_result = reclassify_activities_for_company(db, rule.company_id)
+
+    db.commit()
+    if bool(payload.get("rebuild_blocks", True)):
+        from scripts.run_productivity_etl import run as run_productivity_etl
+
+        run_productivity_etl()
+    return {
+        "ok": True,
+        "rule": serialize_rule(db, rule),
+        "reclassify": reclassify_result,
+    }
+
+
+@app.post("/api/productivity/reclassify")
+def reclassify_productivity(
+    payload: dict = Body(default={}),
+    db: Session = Depends(get_db),
+):
+    company = resolve_company(db, payload.get("company_id"))
+    result = reclassify_activities_for_company(db, company.id)
+    db.commit()
+    if bool(payload.get("rebuild_blocks", True)):
+        from scripts.run_productivity_etl import run as run_productivity_etl
+
+        run_productivity_etl()
+    return {"ok": True, "company_id": company.id, **result}
+
+
+@app.get("/api/productivity/uncategorized")
+def uncategorized_activity_summary(
+    company_id: str | None = None,
+    limit: int = 25,
+    db: Session = Depends(get_db),
+):
+    company = resolve_company(db, company_id)
+    rows = db.execute(
+        select(
+            AppCatalog.executable_name.label("executable_name"),
+            WindowTitleCatalog.title_text.label("title_text"),
+            func.count(Activity.id).label("samples"),
+            func.coalesce(func.sum(Activity.duration_seconds), 0).label("seconds"),
+        )
+        .select_from(Activity)
+        .join(AppCatalog, AppCatalog.id == Activity.app_id, isouter=True)
+        .join(WindowTitleCatalog, WindowTitleCatalog.id == Activity.window_title_id, isouter=True)
+        .where(
+            Activity.company_id == company.id,
+            Activity.classification == "uncategorized",
+        )
+        .group_by(AppCatalog.executable_name, WindowTitleCatalog.title_text)
+        .order_by(func.coalesce(func.sum(Activity.duration_seconds), 0).desc())
+        .limit(max(1, min(limit, 100)))
+    ).all()
+    return {
+        "company": {"id": company.id, "name": company.name},
+        "items": [
+            {
+                "executable_name": row.executable_name or "",
+                "title_text": row.title_text or "",
+                "samples": int(row.samples or 0),
+                "seconds": int(row.seconds or 0),
+            }
+            for row in rows
+        ],
+    }
+
+
+@app.get("/api/productivity/dashboard")
+def productivity_dashboard(
+    company_id: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    employee_id: str | None = None,
+    department_id: str | None = None,
+    db: Session = Depends(get_db),
+):
+    company = resolve_company(db, company_id)
+    query = select(ProductivityBlock).where(ProductivityBlock.company_id == company.id)
+    if date_from:
+        query = query.where(ProductivityBlock.block_date >= date_from)
+    if date_to:
+        query = query.where(ProductivityBlock.block_date <= date_to)
+    if employee_id:
+        query = query.where(ProductivityBlock.employee_id == employee_id)
+    if department_id:
+        query = query.where(ProductivityBlock.department_id_snapshot == department_id)
+
+    blocks = db.execute(query.order_by(ProductivityBlock.block_date, ProductivityBlock.block_start)).scalars().all()
+    totals = {
+        "total_seconds": sum(row.total_seconds for row in blocks),
+        "active_seconds": sum(row.active_seconds for row in blocks),
+        "productive_seconds": sum(row.productive_seconds for row in blocks),
+        "neutral_seconds": sum(row.neutral_seconds for row in blocks),
+        "non_productive_seconds": sum(row.non_productive_seconds for row in blocks),
+        "uncategorized_seconds": sum(row.uncategorized_seconds for row in blocks),
+        "idle_seconds": sum(row.idle_seconds for row in blocks),
+        "break_seconds": sum(row.break_seconds for row in blocks),
+        "lunch_seconds": sum(row.lunch_seconds for row in blocks),
+        "break_lunch_seconds": sum(row.break_lunch_seconds for row in blocks),
+    }
+    active = totals["active_seconds"]
+    total = totals["total_seconds"]
+    totals.update(
+        {
+            "productivity_pct": percent(totals["productive_seconds"], active),
+            "acceptable_pct": percent(totals["productive_seconds"] + totals["neutral_seconds"], active),
+            "non_productive_pct": percent(totals["non_productive_seconds"], active),
+            "neutral_pct": percent(totals["neutral_seconds"], active),
+            "uncategorized_pct": percent(totals["uncategorized_seconds"], active),
+            "idle_pct": percent(totals["idle_seconds"], total),
+            "break_pct": percent(totals["break_seconds"], total),
+            "lunch_pct": percent(totals["lunch_seconds"], total),
+        }
+    )
+
+    by_day: dict[str, dict] = {}
+    for block in blocks:
+        day = by_day.setdefault(
+            block.block_date,
+            {
+                "block_date": block.block_date,
+                "total_seconds": 0,
+                "active_seconds": 0,
+                "productive_seconds": 0,
+                "neutral_seconds": 0,
+                "non_productive_seconds": 0,
+                "uncategorized_seconds": 0,
+                "idle_seconds": 0,
+                "break_seconds": 0,
+                "lunch_seconds": 0,
+                "break_lunch_seconds": 0,
+            },
+        )
+        for key in [
+            "total_seconds",
+            "active_seconds",
+            "productive_seconds",
+            "neutral_seconds",
+            "non_productive_seconds",
+            "uncategorized_seconds",
+            "idle_seconds",
+            "break_seconds",
+            "lunch_seconds",
+            "break_lunch_seconds",
+        ]:
+            day[key] += getattr(block, key)
+
+    days = []
+    for day in by_day.values():
+        day_active = day["active_seconds"]
+        day_total = day["total_seconds"]
+        day["productivity_pct"] = percent(day["productive_seconds"], day_active)
+        day["acceptable_pct"] = percent(day["productive_seconds"] + day["neutral_seconds"], day_active)
+        day["idle_pct"] = percent(day["idle_seconds"], day_total)
+        day["break_pct"] = percent(day["break_seconds"], day_total)
+        day["lunch_pct"] = percent(day["lunch_seconds"], day_total)
+        days.append(day)
+
+    return {
+        "company": {"id": company.id, "name": company.name},
+        "filters": {
+            "date_from": date_from,
+            "date_to": date_to,
+            "employee_id": employee_id,
+            "department_id": department_id,
+        },
+        "totals": totals,
+        "days": days,
+        "blocks": [
+            {
+                "id": row.id,
+                "employee_id": row.employee_id,
+                "department_id": row.department_id_snapshot,
+                "block_date": row.block_date,
+                "block_start": row.block_start,
+                "total_seconds": row.total_seconds,
+                "active_seconds": row.active_seconds,
+                "productive_seconds": row.productive_seconds,
+                "neutral_seconds": row.neutral_seconds,
+                "non_productive_seconds": row.non_productive_seconds,
+                "uncategorized_seconds": row.uncategorized_seconds,
+                "idle_seconds": row.idle_seconds,
+                "break_seconds": row.break_seconds,
+                "lunch_seconds": row.lunch_seconds,
+                "break_lunch_seconds": row.break_lunch_seconds,
+                "productivity_pct": row.productivity_pct,
+                "acceptable_pct": row.acceptable_pct,
+                "idle_pct": row.idle_pct,
+                "break_pct": row.break_pct,
+                "lunch_pct": row.lunch_pct,
+            }
+            for row in blocks
+        ],
+    }
 
 
 @app.post("/api/agent/events")

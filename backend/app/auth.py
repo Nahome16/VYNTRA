@@ -1,5 +1,5 @@
 """
-auth.py - Device-token authentication.
+auth.py - API authentication helpers.
 """
 
 import hashlib
@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.config import settings
 from app.models import Device, now_utc
 
 
@@ -45,3 +46,22 @@ def require_device(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid device token",
     )
+
+
+def require_admin(
+    x_admin_token: str = Header(default="", alias="X-Admin-Token"),
+) -> bool:
+    expected = settings.admin_api_token.strip()
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Admin API token is not configured",
+        )
+
+    token = x_admin_token.strip()
+    if not token or not secrets.compare_digest(token, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid admin token",
+        )
+    return True

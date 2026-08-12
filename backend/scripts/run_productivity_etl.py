@@ -9,6 +9,7 @@ This first ETL is intentionally simple and auditable:
 """
 
 from collections import defaultdict
+import argparse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
@@ -160,8 +161,11 @@ def add_interval_to_blocks(
         current = piece_end
 
 
-def add_shift_pause_intervals(db, blocks: dict[tuple[str, str, str, str], dict]):
-    shifts = db.execute(select(Shift).order_by(Shift.started_at)).scalars().all()
+def add_shift_pause_intervals(
+    db,
+    blocks: dict[tuple[str, str, str, str], dict],
+    shifts: list[Shift],
+):
     for shift in shifts:
         events = db.execute(
             select(ShiftEvent)
@@ -192,32 +196,53 @@ def add_shift_pause_intervals(db, blocks: dict[tuple[str, str, str, str], dict])
             add_interval_to_blocks(db, blocks, shift, open_lunch, fallback_end, "lunch_seconds")
 
 
-def run():
+def run(company_id: str | None = None):
     with SessionLocal() as db:
+        activity_query = select(Activity)
+        shift_query = select(Shift)
+        if company_id:
+            activity_query = activity_query.where(Activity.company_id == company_id)
+            shift_query = shift_query.where(Shift.company_id == company_id)
+
         activities = db.execute(
-            select(Activity).order_by(
+            activity_query.order_by(
                 Activity.company_id,
                 Activity.employee_id,
                 Activity.shift_id,
                 Activity.started_at,
             )
         ).scalars().all()
+        shifts = db.execute(
+            shift_query.order_by(
+                Shift.company_id,
+                Shift.employee_id,
+                Shift.started_at,
+            )
+        ).scalars().all()
 
-        if not activities:
-            print("No activities to process.")
+        if not activities and not shifts:
+            scope = f" for company {company_id}" if company_id else ""
+            print(f"No activities or shifts to process{scope}.")
             return
 
         company_ids = {activity.company_id for activity in activities}
+        company_ids.update(shift.company_id for shift in shifts)
+        if company_id:
+            company_ids = {company_id}
+
         deleted = 0
-        for company_id in company_ids:
+        for target_company_id in company_ids:
             result = db.execute(
-                delete(ProductivityBlock).where(ProductivityBlock.company_id == company_id)
+                delete(ProductivityBlock).where(ProductivityBlock.company_id == target_company_id)
             )
             deleted += result.rowcount or 0
 
         idle_streak_by_shift: dict[tuple[str, str, str], int] = defaultdict(int)
         blocks: dict[tuple[str, str, str, str], dict] = {}
-        employees = {row.id: row for row in db.execute(select(Employee)).scalars()}
+        employee_query = select(Employee)
+        if company_id:
+            employee_query = employee_query.where(Employee.company_id == company_id)
+        employees = {row.id: row for row in db.execute(employee_query).scalars()}
 
         for activity in activities:
             block_minutes = setting_int(
@@ -264,7 +289,7 @@ def run():
                 block["active_seconds"] += duration
                 block[f"{bucket}_seconds"] += duration
 
-        add_shift_pause_intervals(db, blocks)
+        add_shift_pause_intervals(db, blocks, shifts)
 
         now = now_utc()
         for block in blocks.values():
@@ -289,21 +314,28 @@ def run():
             block["updated_at"] = now
             db.add(ProductivityBlock(**block))
 
-        min_day = min(activity.started_at.date().isoformat() for activity in activities)
-        max_day = max(activity.started_at.date().isoformat() for activity in activities)
+        date_values = [activity.started_at for activity in activities]
+        date_values.extend(shift.started_at for shift in shifts if shift.started_at)
+        date_values.extend(shift.ended_at for shift in shifts if shift.ended_at)
+        min_day = min(value.date().isoformat() for value in date_values)
+        max_day = max(value.date().isoformat() for value in date_values)
         db.add(
             ETLRunLog(
-                company_id=None,
+                company_id=company_id,
                 window_start=min_day,
                 window_end=max_day,
                 rows_deleted=deleted,
                 rows_inserted=len(blocks),
-                notes="productivity_blocks rebuilt from activities",
+                notes="productivity_blocks rebuilt from activities and shift pauses",
             )
         )
         db.commit()
-        print(f"Inserted {len(blocks)} productivity blocks. Deleted {deleted}.")
+        scope = f" for company {company_id}" if company_id else ""
+        print(f"Inserted {len(blocks)} productivity blocks{scope}. Deleted {deleted}.")
 
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--company-id", default=None)
+    args = parser.parse_args()
+    run(company_id=args.company_id)

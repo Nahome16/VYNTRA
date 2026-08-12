@@ -8,12 +8,12 @@ import json
 import os
 import tempfile
 
-from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import hash_token, require_device
+from app.auth import hash_token, require_admin, require_device
 from app.config import settings
 from app.database import Base, engine, get_db, SessionLocal
 from app.models import (
@@ -1108,6 +1108,7 @@ def health():
 @app.get("/api/productivity/catalogs")
 def productivity_catalogs(
     company_id: str | None = None,
+    _admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     company = resolve_company(db, company_id)
@@ -1159,6 +1160,7 @@ def list_productivity_rules(
     department_id: str | None = None,
     position_id: str | None = None,
     employee_id: str | None = None,
+    _admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     company = resolve_company(db, company_id)
@@ -1188,7 +1190,9 @@ def list_productivity_rules(
 
 @app.post("/api/productivity/rules")
 def create_productivity_rule(
+    background_tasks: BackgroundTasks,
     payload: dict = Body(...),
+    _admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     company = resolve_company(db, payload.get("company_id"))
@@ -1255,21 +1259,25 @@ def create_productivity_rule(
         reclassify_result = reclassify_activities_for_company(db, company.id)
 
     db.commit()
-    if bool(payload.get("rebuild_blocks", True)):
+    rebuild_queued = bool(payload.get("rebuild_blocks", True))
+    if rebuild_queued:
         from scripts.run_productivity_etl import run as run_productivity_etl
 
-        run_productivity_etl()
+        background_tasks.add_task(run_productivity_etl, company_id=company.id)
     return {
         "ok": True,
         "rule": serialize_rule(db, rule),
         "reclassify": reclassify_result,
+        "rebuild_queued": rebuild_queued,
     }
 
 
 @app.patch("/api/productivity/rules/{rule_id}")
 def update_productivity_rule(
     rule_id: str,
+    background_tasks: BackgroundTasks,
     payload: dict = Body(...),
+    _admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     rule = db.get(ProductivityRule, rule_id)
@@ -1306,36 +1314,42 @@ def update_productivity_rule(
         reclassify_result = reclassify_activities_for_company(db, rule.company_id)
 
     db.commit()
-    if bool(payload.get("rebuild_blocks", True)):
+    rebuild_queued = bool(payload.get("rebuild_blocks", True))
+    if rebuild_queued:
         from scripts.run_productivity_etl import run as run_productivity_etl
 
-        run_productivity_etl()
+        background_tasks.add_task(run_productivity_etl, company_id=rule.company_id)
     return {
         "ok": True,
         "rule": serialize_rule(db, rule),
         "reclassify": reclassify_result,
+        "rebuild_queued": rebuild_queued,
     }
 
 
 @app.post("/api/productivity/reclassify")
 def reclassify_productivity(
+    background_tasks: BackgroundTasks,
     payload: dict = Body(default={}),
+    _admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     company = resolve_company(db, payload.get("company_id"))
     result = reclassify_activities_for_company(db, company.id)
     db.commit()
-    if bool(payload.get("rebuild_blocks", True)):
+    rebuild_queued = bool(payload.get("rebuild_blocks", True))
+    if rebuild_queued:
         from scripts.run_productivity_etl import run as run_productivity_etl
 
-        run_productivity_etl()
-    return {"ok": True, "company_id": company.id, **result}
+        background_tasks.add_task(run_productivity_etl, company_id=company.id)
+    return {"ok": True, "company_id": company.id, "rebuild_queued": rebuild_queued, **result}
 
 
 @app.get("/api/productivity/uncategorized")
 def uncategorized_activity_summary(
     company_id: str | None = None,
     limit: int = 25,
+    _admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     company = resolve_company(db, company_id)
@@ -1378,6 +1392,7 @@ def productivity_dashboard(
     date_to: str | None = None,
     employee_id: str | None = None,
     department_id: str | None = None,
+    _admin: bool = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     company = resolve_company(db, company_id)

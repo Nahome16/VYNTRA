@@ -23,6 +23,7 @@ class Settings:
     )
     storage_dir: str = os.environ.get("STORAGE_DIR", "/data/evidence")
     max_upload_bytes: int = int(os.environ.get("MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
+    admin_api_token: str = os.environ.get("ADMIN_API_TOKEN", "")
     bootstrap_company_name: str = os.environ.get("BOOTSTRAP_COMPANY_NAME", "VYNTRA Demo")
     bootstrap_admin_email: str = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "admin@vyntra.local")
     bootstrap_admin_name: str = os.environ.get("BOOTSTRAP_ADMIN_NAME", "VYNTRA Admin")

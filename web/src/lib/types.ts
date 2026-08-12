@@ -106,6 +106,20 @@ export type UncategorizedItem = {
   seconds: number;
 };
 
+export type StationRestoreCode = {
+  id: string;
+  employee_id: string;
+  employee: string | null;
+  email: string;
+  code: string;
+  status: string;
+  reason: string;
+  valid_from: string;
+  valid_until: string;
+  used_at: string | null;
+  created_at: string | null;
+};
+
 export type ProductivityRule = {
   id: string;
   company_id: string;
@@ -169,4 +183,42 @@ export type AttendanceOverviewResponse = {
   };
   employees: AttendanceEmployee[];
   shifts: AttendanceShift[];
+};
+
+export type EmployeeDetailResponse = {
+  company: { id: string; name: string };
+  filters: {
+    date_from: string | null;
+    date_to: string | null;
+  };
+  employee: Employee & {
+    department: string | null;
+    position: string | null;
+  };
+  totals: DashboardTotals;
+  days: Array<{
+    date: string;
+    active_seconds: number;
+    productive_seconds: number;
+    neutral_seconds: number;
+    non_productive_seconds: number;
+    idle_seconds: number;
+    break_seconds: number;
+    lunch_seconds: number;
+  }>;
+  apps: Array<{
+    app: string;
+    classification: string;
+    seconds: number;
+    samples: number;
+  }>;
+  blocks: ProductivityBlock[];
+  evidence: Array<{
+    id: string;
+    captured_at: string;
+    original_filename: string;
+    equipment: string;
+    content_type: string;
+    status: string;
+  }>;
 };

@@ -121,6 +121,7 @@ class Employee(Base):
     schedules: Mapped[list["EmployeeSchedule"]] = relationship(back_populates="employee")
     incidents: Mapped[list["Incident"]] = relationship(back_populates="employee")
     overtime_authorizations: Mapped[list["OvertimeAuthorization"]] = relationship(back_populates="employee")
+    restore_codes: Mapped[list["StationRestoreCode"]] = relationship(back_populates="employee")
 
 
 class Device(Base):
@@ -145,6 +146,7 @@ class Device(Base):
     shifts: Mapped[list["Shift"]] = relationship(back_populates="device")
     incidents: Mapped[list["Incident"]] = relationship(back_populates="device")
     overtime_authorizations: Mapped[list["OvertimeAuthorization"]] = relationship(back_populates="device")
+    restore_codes: Mapped[list["StationRestoreCode"]] = relationship(back_populates="device")
 
 
 class EmployeeCredential(Base):
@@ -466,6 +468,27 @@ class OvertimeAuthorization(Base):
 
     employee: Mapped[Employee] = relationship(back_populates="overtime_authorizations")
     device: Mapped[Device | None] = relationship(back_populates="overtime_authorizations")
+
+
+class StationRestoreCode(Base):
+    __tablename__ = "station_restore_codes"
+    __table_args__ = (UniqueConstraint("code", name="uq_station_restore_code"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False)
+    employee_id: Mapped[str] = mapped_column(ForeignKey("employees.id"), nullable=False)
+    device_id: Mapped[str | None] = mapped_column(ForeignKey("devices.id"), nullable=True)
+    code: Mapped[str] = mapped_column(String(80), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="issued")
+    reason: Mapped[str] = mapped_column(String(180), nullable=False, default="")
+    valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+    employee: Mapped[Employee] = relationship(back_populates="restore_codes")
+    device: Mapped[Device | None] = relationship(back_populates="restore_codes")
 
 
 class AuditLog(Base):

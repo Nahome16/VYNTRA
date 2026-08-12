@@ -121,7 +121,7 @@ function dateTimeFromInput(date: string, time: string) {
 }
 
 export default function AttendancePage() {
-  const { apiGet, apiPatch, user } = useAuth();
+  const { apiGet, apiPost, apiPatch, user } = useAuth();
   const [view, setView] = useState<AttendanceView>("history");
   const [overview, setOverview] = useState<AttendanceOverviewResponse | null>(null);
   const [selectedDepartment, setSelectedDepartment] = useState("");
@@ -136,17 +136,20 @@ export default function AttendancePage() {
   const [breakEndTime, setBreakEndTime] = useState("");
   const [lunchStartTime, setLunchStartTime] = useState("");
   const [lunchEndTime, setLunchEndTime] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
   const [dateFrom, setDateFrom] = useState(monthStartISO());
   const [dateTo, setDateTo] = useState(todayISO());
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function loadAttendance() {
+  async function loadAttendance(range?: { dateFrom?: string; dateTo?: string }) {
     setLoading(true);
     setStatusText("Actualizando asistencia...");
     const params = new URLSearchParams();
-    if (dateFrom) params.set("date_from", dateFrom);
-    if (dateTo) params.set("date_to", dateTo);
+    const nextDateFrom = range?.dateFrom ?? dateFrom;
+    const nextDateTo = range?.dateTo ?? dateTo;
+    if (nextDateFrom) params.set("date_from", nextDateFrom);
+    if (nextDateTo) params.set("date_to", nextDateTo);
     if (selectedDepartment) params.set("department_id", selectedDepartment);
     if (selectedEmployee) params.set("employee_id", selectedEmployee);
 
@@ -295,7 +298,17 @@ export default function AttendancePage() {
     setBreakEndTime(timeInput(breakEnd));
     setLunchStartTime(timeInput(lunchStart));
     setLunchEndTime(timeInput(lunchEnd));
+    setCorrectionReason("");
   }, [selectedDayShift]);
+
+  async function handleDetailDateChange(value: string) {
+    setDetailDate(value);
+    if (value && (value < dateFrom || value > dateTo)) {
+      setDateFrom(value);
+      setDateTo(value);
+      await loadAttendance({ dateFrom: value, dateTo: value });
+    }
+  }
 
   async function saveSchedule() {
     if (!selectedAssociate) return;
@@ -315,6 +328,10 @@ export default function AttendancePage() {
 
   async function saveShiftCorrection() {
     if (!selectedDayShift) return;
+    if (correctionReason.trim().length < 3) {
+      setStatusText("Escribe el motivo de la correccion");
+      return;
+    }
     setStatusText("Guardando correccion...");
     try {
       await apiPatch(`/api/attendance/shifts/${selectedDayShift.id}`, {
@@ -324,11 +341,38 @@ export default function AttendancePage() {
         break_ended_at: dateTimeFromInput(detailDate, breakEndTime),
         lunch_started_at: dateTimeFromInput(detailDate, lunchStartTime),
         lunch_ended_at: dateTimeFromInput(detailDate, lunchEndTime),
+        correction_reason: correctionReason,
       });
       await loadAttendance();
       setStatusText("Asistencia corregida");
     } catch {
       setStatusText("No se pudo guardar la correccion");
+    }
+  }
+
+  async function createManualShift() {
+    if (!selectedAssociate) return;
+    if (correctionReason.trim().length < 3) {
+      setStatusText("Escribe el motivo para crear la jornada");
+      return;
+    }
+    setStatusText("Creando jornada manual...");
+    try {
+      await apiPost("/api/attendance/shifts", {
+        employee_id: selectedAssociate.id,
+        shift_date: detailDate,
+        started_at: dateTimeFromInput(detailDate, entryTime),
+        ended_at: dateTimeFromInput(detailDate, exitTime),
+        break_started_at: dateTimeFromInput(detailDate, breakStartTime),
+        break_ended_at: dateTimeFromInput(detailDate, breakEndTime),
+        lunch_started_at: dateTimeFromInput(detailDate, lunchStartTime),
+        lunch_ended_at: dateTimeFromInput(detailDate, lunchEndTime),
+        correction_reason: correctionReason,
+      });
+      await loadAttendance({ dateFrom, dateTo });
+      setStatusText("Jornada manual creada");
+    } catch {
+      setStatusText("No se pudo crear la jornada manual");
     }
   }
 
@@ -373,7 +417,7 @@ export default function AttendancePage() {
               ))}
             </select>
           </label>
-          <button className="secondary-button" onClick={loadAttendance} disabled={loading}>Aplicar</button>
+          <button className="secondary-button" onClick={() => void loadAttendance()} disabled={loading}>Aplicar</button>
         </div>
       </div>
 
@@ -583,7 +627,9 @@ export default function AttendancePage() {
                         <input
                           type="date"
                           value={detailDate}
-                          onChange={(event) => setDetailDate(event.target.value)}
+                          onChange={(event) => {
+                            void handleDetailDateChange(event.target.value);
+                          }}
                         />
                       </label>
                     </div>
@@ -642,11 +688,25 @@ export default function AttendancePage() {
                           <label>Fin break<input type="time" value={breakEndTime} onChange={(event) => setBreakEndTime(event.target.value)} /></label>
                           <label>Inicio lunch<input type="time" value={lunchStartTime} onChange={(event) => setLunchStartTime(event.target.value)} /></label>
                           <label>Fin lunch<input type="time" value={lunchEndTime} onChange={(event) => setLunchEndTime(event.target.value)} /></label>
+                          <label className="form-wide">Motivo<input value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="Ej. Correccion aprobada por RRHH" required /></label>
                           <button className="secondary-button" type="submit">Guardar correccion</button>
                         </form>
                       </div>
                     ) : (
-                      <EmptyState>No hay actividad registrada para este asociado en la fecha seleccionada.</EmptyState>
+                      <form className="shift-edit-form" onSubmit={(event) => {
+                        event.preventDefault();
+                        void createManualShift();
+                      }}>
+                        <label className="form-wide">Estado<input disabled value="No hay jornada registrada en esta fecha" /></label>
+                        <label>Entrada<input type="time" value={entryTime} onChange={(event) => setEntryTime(event.target.value)} required /></label>
+                        <label>Salida<input type="time" value={exitTime} onChange={(event) => setExitTime(event.target.value)} /></label>
+                        <label>Inicio break<input type="time" value={breakStartTime} onChange={(event) => setBreakStartTime(event.target.value)} /></label>
+                        <label>Fin break<input type="time" value={breakEndTime} onChange={(event) => setBreakEndTime(event.target.value)} /></label>
+                        <label>Inicio lunch<input type="time" value={lunchStartTime} onChange={(event) => setLunchStartTime(event.target.value)} /></label>
+                        <label>Fin lunch<input type="time" value={lunchEndTime} onChange={(event) => setLunchEndTime(event.target.value)} /></label>
+                        <label className="form-wide">Motivo<input value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="Ej. Registro manual aprobado" required /></label>
+                        <button className="secondary-button" type="submit">Crear jornada manual</button>
+                      </form>
                     )}
                   </section>
                 </div>

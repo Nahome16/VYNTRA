@@ -10,6 +10,7 @@ type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   apiGet: <T,>(path: string) => Promise<T>;
+  apiPost: <T,>(path: string, body: unknown) => Promise<T>;
   apiPatch: <T,>(path: string, body: unknown) => Promise<T>;
 };
 
@@ -80,6 +81,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       logout,
       apiGet: <T,>(path: string) => requestJson<T>(path, token),
+      apiPost: <T,>(path: string, body: unknown) =>
+        requestJson<T>(path, token, {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
       apiPatch: <T,>(path: string, body: unknown) =>
         requestJson<T>(path, token, {
           method: "PATCH",

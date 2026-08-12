@@ -3,10 +3,12 @@ main.py - VYNTRA Evidence API.
 """
 
 from datetime import datetime, timedelta, timezone
+import base64
 import hashlib
 import json
 import os
 import re
+import secrets
 import tempfile
 
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
@@ -45,6 +47,7 @@ from app.models import (
     Role,
     Shift,
     ShiftEvent,
+    StationRestoreCode,
     StationLoginEvent,
     User,
     WindowTitleCatalog,
@@ -93,6 +96,41 @@ def title_hash(title: str) -> str:
 
 def clean_text(value: object, max_len: int = 255) -> str:
     return str(value or "").strip()[:max_len]
+
+
+def clean_email(value: object) -> str:
+    email = clean_text(value, 180).lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise HTTPException(status_code=400, detail="Invalid email")
+    return email
+
+
+def generate_password(length: int = 14) -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%*?"
+    while True:
+        password = "".join(secrets.choice(alphabet) for _ in range(length))
+        if (
+            any(char.islower() for char in password)
+            and any(char.isupper() for char in password)
+            and any(char.isdigit() for char in password)
+            and any(char in "!@#$%*?" for char in password)
+        ):
+            return password
+
+
+def hash_password(password: str) -> str:
+    iterations = 390000
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return "pbkdf2_sha256:{}:{}:{}".format(
+        iterations,
+        base64.b64encode(salt).decode("ascii"),
+        base64.b64encode(digest).decode("ascii"),
+    )
+
+
+def generate_restore_code() -> str:
+    return "-".join(secrets.token_hex(2).upper() for _ in range(3))
 
 
 def percent(part: int | float, whole: int | float) -> float:
@@ -252,6 +290,74 @@ def serialize_shift_for_attendance(shift: Shift, events_by_shift: dict[str, list
             for event in events_by_shift.get(shift.id, [])
         ],
     }
+
+
+def serialize_department(department: Department) -> dict:
+    return {
+        "id": department.id,
+        "name": department.name,
+        "status": department.status,
+    }
+
+
+def serialize_employee(employee: Employee, department: Department | None = None, position: Position | None = None) -> dict:
+    return {
+        "id": employee.id,
+        "employee_code": employee.employee_code,
+        "full_name": employee.full_name,
+        "email": employee.email,
+        "department_id": employee.department_id,
+        "department": department.name if department else None,
+        "position_id": employee.position_id,
+        "position": position.name if position else None,
+        "status": employee.status,
+    }
+
+
+def serialize_restore_code(code: StationRestoreCode, employee: Employee | None = None) -> dict:
+    return {
+        "id": code.id,
+        "employee_id": code.employee_id,
+        "employee": employee.full_name if employee else None,
+        "email": employee.email if employee else "",
+        "code": code.code,
+        "status": code.status,
+        "reason": code.reason,
+        "valid_from": code.valid_from.isoformat(),
+        "valid_until": code.valid_until.isoformat(),
+        "used_at": code.used_at.isoformat() if code.used_at else None,
+        "created_at": code.created_at.isoformat() if code.created_at else None,
+    }
+
+
+def productivity_totals(blocks: list[ProductivityBlock]) -> dict:
+    totals = {
+        "total_seconds": sum(row.total_seconds for row in blocks),
+        "active_seconds": sum(row.active_seconds for row in blocks),
+        "productive_seconds": sum(row.productive_seconds for row in blocks),
+        "neutral_seconds": sum(row.neutral_seconds for row in blocks),
+        "non_productive_seconds": sum(row.non_productive_seconds for row in blocks),
+        "uncategorized_seconds": sum(row.uncategorized_seconds for row in blocks),
+        "idle_seconds": sum(row.idle_seconds for row in blocks),
+        "break_seconds": sum(row.break_seconds for row in blocks),
+        "lunch_seconds": sum(row.lunch_seconds for row in blocks),
+        "break_lunch_seconds": sum(row.break_lunch_seconds for row in blocks),
+    }
+    active = totals["active_seconds"]
+    total = totals["total_seconds"]
+    totals.update(
+        {
+            "productivity_pct": percent(totals["productive_seconds"], active),
+            "acceptable_pct": percent(totals["productive_seconds"] + totals["neutral_seconds"], active),
+            "non_productive_pct": percent(totals["non_productive_seconds"], active),
+            "neutral_pct": percent(totals["neutral_seconds"], active),
+            "uncategorized_pct": percent(totals["uncategorized_seconds"], active),
+            "idle_pct": percent(totals["idle_seconds"], total),
+            "break_pct": percent(totals["break_seconds"], total),
+            "lunch_pct": percent(totals["lunch_seconds"], total),
+        }
+    )
+    return totals
 
 
 def update_shift_event(
@@ -1528,6 +1634,216 @@ def productivity_catalogs(
         ],
     }
 
+@app.post("/api/settings/departments")
+def create_department(
+    payload: dict = Body(...),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    company = resolve_admin_company(db, admin, payload.get("company_id"))
+    name = clean_text(payload.get("name"), 120)
+    if len(name) < 2:
+        raise HTTPException(status_code=400, detail="Department name is required")
+    department = db.execute(
+        select(Department).where(
+            Department.company_id == company.id,
+            func.lower(Department.name) == name.lower(),
+        )
+    ).scalar_one_or_none()
+    if department is None:
+        department = Department(company_id=company.id, name=name)
+        db.add(department)
+        db.flush()
+        db.add(
+            AuditLog(
+                company_id=company.id,
+                user_id=admin.user_id,
+                action="department_created",
+                entity_type="department",
+                entity_id=department.id,
+                payload_json=json_text({"name": name}),
+            )
+        )
+        db.commit()
+        db.refresh(department)
+    return {"ok": True, "department": serialize_department(department)}
+
+
+@app.post("/api/settings/employees")
+def create_monitored_employee(
+    payload: dict = Body(...),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    company = resolve_admin_company(db, admin, payload.get("company_id"))
+    full_name = clean_text(payload.get("full_name") or payload.get("name"), 180)
+    email = clean_email(payload.get("email"))
+    if len(full_name) < 2:
+        raise HTTPException(status_code=400, detail="Employee name is required")
+
+    department_id = clean_text(payload.get("department_id"), 36) or None
+    new_department = clean_text(payload.get("new_department"), 120)
+    department = None
+    if new_department:
+        department = db.execute(
+            select(Department).where(
+                Department.company_id == company.id,
+                func.lower(Department.name) == new_department.lower(),
+            )
+        ).scalar_one_or_none()
+        if department is None:
+            department = Department(company_id=company.id, name=new_department)
+            db.add(department)
+            db.flush()
+        department_id = department.id
+    elif department_id:
+        department = require_company_owned(db, Department, department_id, company.id, "Department")
+
+    duplicate_credential = db.execute(
+        select(EmployeeCredential).where(
+            EmployeeCredential.company_id == company.id,
+            EmployeeCredential.email == email,
+        )
+    ).scalar_one_or_none()
+    if duplicate_credential:
+        raise HTTPException(status_code=409, detail="Email already has station credentials")
+
+    next_count = db.execute(
+        select(func.count()).select_from(Employee).where(Employee.company_id == company.id)
+    ).scalar_one()
+    employee_code = clean_text(payload.get("employee_code"), 80) or f"EMP-{int(next_count or 0) + 1:03d}"
+    password = generate_password()
+    employee = Employee(
+        company_id=company.id,
+        department_id=department_id,
+        employee_code=employee_code,
+        full_name=full_name,
+        email=email,
+        status="active",
+    )
+    db.add(employee)
+    db.flush()
+    credential = EmployeeCredential(
+        company_id=company.id,
+        employee_id=employee.id,
+        email=email,
+        password_hash=hash_password(password),
+        status="active",
+    )
+    db.add(credential)
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="monitored_employee_created",
+            entity_type="employee",
+            entity_id=employee.id,
+            payload_json=json_text(
+                {
+                    "email": email,
+                    "department_id": department_id,
+                    "email_delivery": "not_configured",
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(employee)
+    return {
+        "ok": True,
+        "employee": serialize_employee(employee, department),
+        "credentials": {
+            "email": email,
+            "password": password,
+            "delivery_status": "not_configured",
+            "note": "SMTP is not configured; password is returned once for local testing.",
+        },
+    }
+
+
+@app.get("/api/settings/restore-codes")
+def list_restore_codes(
+    company_id: str | None = None,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    company = resolve_admin_company(db, admin, company_id)
+    codes = db.execute(
+        select(StationRestoreCode)
+        .where(StationRestoreCode.company_id == company.id)
+        .order_by(StationRestoreCode.created_at.desc())
+    ).scalars().all()
+    employee_ids = [code.employee_id for code in codes]
+    employees = {}
+    if employee_ids:
+        employees = {
+            employee.id: employee
+            for employee in db.execute(
+                select(Employee).where(Employee.id.in_(employee_ids))
+            ).scalars()
+        }
+    return {
+        "company": {"id": company.id, "name": company.name},
+        "codes": [serialize_restore_code(code, employees.get(code.employee_id)) for code in codes],
+    }
+
+
+@app.post("/api/settings/restore-codes")
+def create_restore_code(
+    payload: dict = Body(...),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    employee_id = clean_text(payload.get("employee_id"), 36)
+    employee = db.get(Employee, employee_id)
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    company = resolve_admin_company(db, admin, employee.company_id)
+    if employee.company_id != company.id:
+        raise HTTPException(status_code=403, detail="Cannot create code for another company")
+
+    valid_minutes = max(5, min(int(payload.get("valid_minutes") or 60), 1440))
+    issued_at = now_utc()
+    code_value = generate_restore_code()
+    while db.execute(select(StationRestoreCode).where(StationRestoreCode.code == code_value)).scalar_one_or_none():
+        code_value = generate_restore_code()
+
+    restore_code = StationRestoreCode(
+        company_id=company.id,
+        employee_id=employee.id,
+        code=code_value,
+        reason=clean_text(payload.get("reason") or "Restaurar estacion de marcaje", 180),
+        valid_from=issued_at,
+        valid_until=issued_at + timedelta(minutes=valid_minutes),
+        created_by_user_id=admin.user_id,
+    )
+    db.add(restore_code)
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="station_restore_code_created",
+            entity_type="station_restore_code",
+            entity_id=restore_code.id,
+            payload_json=json_text(
+                {
+                    "employee_id": employee.id,
+                    "email": employee.email,
+                    "delivery_status": "not_configured",
+                    "valid_minutes": valid_minutes,
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(restore_code)
+    return {
+        "ok": True,
+        "code": serialize_restore_code(restore_code, employee),
+        "delivery_status": "not_configured",
+        "note": "SMTP is not configured; code is returned for local testing.",
+    }
+
 
 @app.get("/api/productivity/rules")
 def list_productivity_rules(
@@ -1787,32 +2103,7 @@ def productivity_dashboard(
         query = query.where(ProductivityBlock.department_id_snapshot == department_id)
 
     blocks = db.execute(query.order_by(ProductivityBlock.block_date, ProductivityBlock.block_start)).scalars().all()
-    totals = {
-        "total_seconds": sum(row.total_seconds for row in blocks),
-        "active_seconds": sum(row.active_seconds for row in blocks),
-        "productive_seconds": sum(row.productive_seconds for row in blocks),
-        "neutral_seconds": sum(row.neutral_seconds for row in blocks),
-        "non_productive_seconds": sum(row.non_productive_seconds for row in blocks),
-        "uncategorized_seconds": sum(row.uncategorized_seconds for row in blocks),
-        "idle_seconds": sum(row.idle_seconds for row in blocks),
-        "break_seconds": sum(row.break_seconds for row in blocks),
-        "lunch_seconds": sum(row.lunch_seconds for row in blocks),
-        "break_lunch_seconds": sum(row.break_lunch_seconds for row in blocks),
-    }
-    active = totals["active_seconds"]
-    total = totals["total_seconds"]
-    totals.update(
-        {
-            "productivity_pct": percent(totals["productive_seconds"], active),
-            "acceptable_pct": percent(totals["productive_seconds"] + totals["neutral_seconds"], active),
-            "non_productive_pct": percent(totals["non_productive_seconds"], active),
-            "neutral_pct": percent(totals["neutral_seconds"], active),
-            "uncategorized_pct": percent(totals["uncategorized_seconds"], active),
-            "idle_pct": percent(totals["idle_seconds"], total),
-            "break_pct": percent(totals["break_seconds"], total),
-            "lunch_pct": percent(totals["lunch_seconds"], total),
-        }
-    )
+    totals = productivity_totals(blocks)
 
     by_day: dict[str, dict] = {}
     for block in blocks:
@@ -1891,6 +2182,151 @@ def productivity_dashboard(
                 "lunch_pct": row.lunch_pct,
             }
             for row in blocks
+        ],
+    }
+
+
+@app.get("/api/employees/{employee_id}/detail")
+def employee_detail(
+    employee_id: str,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    employee = db.get(Employee, employee_id)
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    company = resolve_admin_company(db, admin, employee.company_id)
+    if employee.company_id != company.id:
+        raise HTTPException(status_code=403, detail="Cannot access another company")
+
+    department = db.get(Department, employee.department_id) if employee.department_id else None
+    position = db.get(Position, employee.position_id) if employee.position_id else None
+    block_query = select(ProductivityBlock).where(
+        ProductivityBlock.company_id == company.id,
+        ProductivityBlock.employee_id == employee.id,
+    )
+    if date_from:
+        block_query = block_query.where(ProductivityBlock.block_date >= date_from)
+    if date_to:
+        block_query = block_query.where(ProductivityBlock.block_date <= date_to)
+    blocks = db.execute(
+        block_query.order_by(ProductivityBlock.block_date, ProductivityBlock.block_start)
+    ).scalars().all()
+    totals = productivity_totals(blocks)
+
+    days_by_date: dict[str, dict] = {}
+    for block in blocks:
+        day = days_by_date.setdefault(
+            block.block_date,
+            {
+                "date": block.block_date,
+                "active_seconds": 0,
+                "productive_seconds": 0,
+                "neutral_seconds": 0,
+                "non_productive_seconds": 0,
+                "idle_seconds": 0,
+                "break_seconds": 0,
+                "lunch_seconds": 0,
+            },
+        )
+        day["active_seconds"] += block.active_seconds
+        day["productive_seconds"] += block.productive_seconds
+        day["neutral_seconds"] += block.neutral_seconds
+        day["non_productive_seconds"] += block.non_productive_seconds
+        day["idle_seconds"] += block.idle_seconds
+        day["break_seconds"] += block.break_seconds
+        day["lunch_seconds"] += block.lunch_seconds
+
+    activity_query = (
+        select(
+            AppCatalog.executable_name.label("app"),
+            Activity.classification.label("classification"),
+            func.coalesce(func.sum(Activity.duration_seconds), 0).label("seconds"),
+            func.count(Activity.id).label("samples"),
+        )
+        .select_from(Activity)
+        .join(AppCatalog, AppCatalog.id == Activity.app_id, isouter=True)
+        .where(
+            Activity.company_id == company.id,
+            Activity.employee_id == employee.id,
+        )
+        .group_by(AppCatalog.executable_name, Activity.classification)
+        .order_by(func.coalesce(func.sum(Activity.duration_seconds), 0).desc())
+        .limit(20)
+    )
+    if date_from:
+        activity_query = activity_query.where(Activity.started_at >= parse_client_datetime(f"{date_from}T00:00:00+00:00"))
+    if date_to:
+        activity_query = activity_query.where(Activity.started_at <= parse_client_datetime(f"{date_to}T23:59:59+00:00"))
+    app_rows = db.execute(activity_query).all()
+
+    evidence_query = select(EvidenceFile).where(
+        EvidenceFile.company_id == company.id,
+        EvidenceFile.employee_id == employee.id,
+    )
+    if date_from:
+        evidence_query = evidence_query.where(EvidenceFile.captured_at >= parse_client_datetime(f"{date_from}T00:00:00+00:00"))
+    if date_to:
+        evidence_query = evidence_query.where(EvidenceFile.captured_at <= parse_client_datetime(f"{date_to}T23:59:59+00:00"))
+    evidence = db.execute(
+        evidence_query.order_by(EvidenceFile.captured_at.desc()).limit(8)
+    ).scalars().all()
+
+    return {
+        "company": {"id": company.id, "name": company.name},
+        "filters": {"date_from": date_from, "date_to": date_to},
+        "employee": serialize_employee(employee, department, position),
+        "totals": totals,
+        "days": list(days_by_date.values()),
+        "apps": [
+            {
+                "app": row.app or "(desconocido)",
+                "classification": row.classification or "uncategorized",
+                "seconds": int(row.seconds or 0),
+                "samples": int(row.samples or 0),
+            }
+            for row in app_rows
+        ],
+        "blocks": [
+            {
+                "id": row.id,
+                "employee_id": row.employee_id,
+                "department_id": row.department_id_snapshot,
+                "block_date": row.block_date,
+                "block_start": row.block_start,
+                "total_seconds": row.total_seconds,
+                "active_seconds": row.active_seconds,
+                "productive_seconds": row.productive_seconds,
+                "neutral_seconds": row.neutral_seconds,
+                "non_productive_seconds": row.non_productive_seconds,
+                "uncategorized_seconds": row.uncategorized_seconds,
+                "idle_seconds": row.idle_seconds,
+                "break_seconds": row.break_seconds,
+                "lunch_seconds": row.lunch_seconds,
+                "break_lunch_seconds": row.break_lunch_seconds,
+                "productivity_pct": row.productivity_pct,
+                "acceptable_pct": row.acceptable_pct,
+                "non_productive_pct": row.non_productive_pct,
+                "neutral_pct": row.neutral_pct,
+                "uncategorized_pct": row.uncategorized_pct,
+                "idle_pct": row.idle_pct,
+                "break_pct": row.break_pct,
+                "lunch_pct": row.lunch_pct,
+            }
+            for row in blocks
+        ],
+        "evidence": [
+            {
+                "id": row.id,
+                "captured_at": row.captured_at.isoformat(),
+                "original_filename": row.original_filename,
+                "equipment": row.equipment,
+                "content_type": row.content_type,
+                "status": row.status,
+            }
+            for row in evidence
         ],
     }
 
@@ -2059,6 +2495,10 @@ def update_attendance_shift(
     if shift.company_id != company.id:
         raise HTTPException(status_code=403, detail="Cannot edit shift from another company")
 
+    correction_reason = clean_text(payload.get("correction_reason"), 180)
+    if len(correction_reason) < 3:
+        raise HTTPException(status_code=400, detail="correction_reason is required")
+
     started_at = parse_optional_client_datetime(payload.get("started_at"))
     ended_at = parse_optional_client_datetime(payload.get("ended_at"))
     break_started_at = parse_optional_client_datetime(payload.get("break_started_at"))
@@ -2106,12 +2546,111 @@ def update_attendance_shift(
             entity_id=shift.id,
             payload_json=json_text(
                 {
+                    "correction_reason": correction_reason,
                     "started_at": payload.get("started_at"),
                     "ended_at": payload.get("ended_at"),
                     "break_started_at": payload.get("break_started_at"),
                     "break_ended_at": payload.get("break_ended_at"),
                     "lunch_started_at": payload.get("lunch_started_at"),
                     "lunch_ended_at": payload.get("lunch_ended_at"),
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(shift)
+    fresh_events = db.execute(
+        select(ShiftEvent)
+        .where(ShiftEvent.shift_id == shift.id)
+        .order_by(ShiftEvent.occurred_at)
+    ).scalars().all()
+    return {
+        "ok": True,
+        "shift": serialize_shift_for_attendance(shift, {shift.id: fresh_events}),
+    }
+
+
+@app.post("/api/attendance/shifts")
+def create_attendance_shift(
+    payload: dict = Body(...),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    employee_id = clean_text(payload.get("employee_id"), 36)
+    employee = db.get(Employee, employee_id)
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    company = resolve_admin_company(db, admin, employee.company_id)
+    if employee.company_id != company.id:
+        raise HTTPException(status_code=403, detail="Cannot create shift for another company")
+
+    shift_date = validate_date(payload.get("shift_date"), "shift_date")
+    correction_reason = clean_text(payload.get("correction_reason"), 180)
+    if len(correction_reason) < 3:
+        raise HTTPException(status_code=400, detail="correction_reason is required")
+
+    duplicate = db.execute(
+        select(Shift).where(
+            Shift.company_id == company.id,
+            Shift.employee_id == employee.id,
+            Shift.shift_date == shift_date,
+        )
+    ).scalars().first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Shift already exists for employee and date")
+
+    started_at = parse_optional_client_datetime(payload.get("started_at"))
+    ended_at = parse_optional_client_datetime(payload.get("ended_at"))
+    break_started_at = parse_optional_client_datetime(payload.get("break_started_at"))
+    break_ended_at = parse_optional_client_datetime(payload.get("break_ended_at"))
+    lunch_started_at = parse_optional_client_datetime(payload.get("lunch_started_at"))
+    lunch_ended_at = parse_optional_client_datetime(payload.get("lunch_ended_at"))
+
+    if not started_at:
+        raise HTTPException(status_code=400, detail="started_at is required")
+    if ended_at and ended_at <= started_at:
+        raise HTTPException(status_code=400, detail="ended_at must be after started_at")
+    if break_started_at and break_ended_at and break_ended_at <= break_started_at:
+        raise HTTPException(status_code=400, detail="break end must be after break start")
+    if lunch_started_at and lunch_ended_at and lunch_ended_at <= lunch_started_at:
+        raise HTTPException(status_code=400, detail="lunch end must be after lunch start")
+
+    shift = Shift(
+        company_id=company.id,
+        employee_id=employee.id,
+        device_id=None,
+        shift_date=shift_date,
+        status="closed" if ended_at else "open",
+        started_at=started_at,
+        ended_at=ended_at,
+        work_seconds=seconds_between(started_at, ended_at),
+        break_seconds=seconds_between(break_started_at, break_ended_at),
+        lunch_seconds=seconds_between(lunch_started_at, lunch_ended_at),
+    )
+    if (break_started_at and not break_ended_at) or (lunch_started_at and not lunch_ended_at):
+        shift.status = "paused"
+    db.add(shift)
+    db.flush()
+
+    event_map: dict[str, ShiftEvent] = {}
+    update_shift_event(db, shift, event_map, "shift_started", started_at)
+    update_shift_event(db, shift, event_map, "shift_finished", ended_at)
+    update_shift_event(db, shift, event_map, "break_started", break_started_at)
+    update_shift_event(db, shift, event_map, "break_finished", break_ended_at)
+    update_shift_event(db, shift, event_map, "lunch_started", lunch_started_at)
+    update_shift_event(db, shift, event_map, "lunch_finished", lunch_ended_at)
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="attendance_shift_created_manually",
+            entity_type="shift",
+            entity_id=shift.id,
+            payload_json=json_text(
+                {
+                    "employee_id": employee.id,
+                    "shift_date": shift_date,
+                    "correction_reason": correction_reason,
                 }
             ),
         )

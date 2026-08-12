@@ -118,6 +118,7 @@ class Employee(Base):
     devices: Mapped[list["Device"]] = relationship(back_populates="employee")
     credentials: Mapped[list["EmployeeCredential"]] = relationship(back_populates="employee")
     shifts: Mapped[list["Shift"]] = relationship(back_populates="employee")
+    schedules: Mapped[list["EmployeeSchedule"]] = relationship(back_populates="employee")
     incidents: Mapped[list["Incident"]] = relationship(back_populates="employee")
     overtime_authorizations: Mapped[list["OvertimeAuthorization"]] = relationship(back_populates="employee")
 
@@ -213,6 +214,26 @@ class CompanySetting(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class EmployeeSchedule(Base):
+    __tablename__ = "employee_schedules"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "effective_from", name="uq_employee_schedule_effective"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False)
+    employee_id: Mapped[str] = mapped_column(ForeignKey("employees.id"), nullable=False)
+    start_time: Mapped[str] = mapped_column(String(5), nullable=False, default="08:00")
+    end_time: Mapped[str] = mapped_column(String(5), nullable=False, default="17:00")
+    effective_from: Mapped[str] = mapped_column(String(10), nullable=False, default="1970-01-01")
+    timezone: Mapped[str] = mapped_column(String(80), nullable=False, default="America/Managua")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+    employee: Mapped[Employee] = relationship(back_populates="schedules")
 
 
 class Shift(Base):

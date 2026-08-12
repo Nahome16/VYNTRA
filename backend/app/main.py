@@ -6,10 +6,11 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
+import re
 import tempfile
 
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -34,6 +35,7 @@ from app.models import (
     Device,
     Employee,
     EmployeeCredential,
+    EmployeeSchedule,
     EvidenceFile,
     EvidenceUploadAttempt,
     LoginAttempt,
@@ -158,6 +160,124 @@ def serialize_rule(db: Session, rule: ProductivityRule) -> dict:
         "created_at": rule.created_at.isoformat() if rule.created_at else None,
         "updated_at": rule.updated_at.isoformat() if rule.updated_at else None,
     }
+
+
+def validate_date(value: str | None, field_name: str = "date") -> str:
+    value = clean_text(value, 10)
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name}")
+    return value
+
+
+def validate_time(value: str | None, field_name: str = "time") -> str:
+    value = clean_text(value, 5)
+    if not re.fullmatch(r"\d{2}:\d{2}", value):
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name}")
+    hour, minute = [int(part) for part in value.split(":")]
+    if hour > 23 or minute > 59:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name}")
+    return value
+
+
+def seconds_between(start: datetime | None, end: datetime | None) -> int:
+    if not start or not end or end <= start:
+        return 0
+    return int((end - start).total_seconds())
+
+
+def first_event(events: list[ShiftEvent], event_type: str) -> ShiftEvent | None:
+    return next((event for event in events if event.event_type == event_type), None)
+
+
+def latest_employee_schedule(db: Session, employee_id: str, on_date: str | None = None) -> EmployeeSchedule | None:
+    query = select(EmployeeSchedule).where(
+        EmployeeSchedule.employee_id == employee_id,
+        EmployeeSchedule.is_active.is_(True),
+    )
+    if on_date:
+        query = query.where(EmployeeSchedule.effective_from <= on_date)
+    return db.execute(query.order_by(EmployeeSchedule.effective_from.desc())).scalars().first()
+
+
+def serialize_employee_for_attendance(
+    employee: Employee,
+    departments: dict[str, Department],
+    positions: dict[str, Position],
+    schedule: EmployeeSchedule | None,
+) -> dict:
+    return {
+        "id": employee.id,
+        "employee_code": employee.employee_code,
+        "full_name": employee.full_name,
+        "email": employee.email,
+        "department_id": employee.department_id,
+        "department": departments[employee.department_id].name
+        if employee.department_id in departments
+        else None,
+        "position_id": employee.position_id,
+        "position": positions[employee.position_id].name
+        if employee.position_id in positions
+        else None,
+        "status": employee.status,
+        "schedule": {
+            "id": schedule.id if schedule else None,
+            "start_time": schedule.start_time if schedule else "08:00",
+            "end_time": schedule.end_time if schedule else "17:00",
+            "effective_from": schedule.effective_from if schedule else "1970-01-01",
+            "timezone": schedule.timezone if schedule else "America/Managua",
+        },
+    }
+
+
+def serialize_shift_for_attendance(shift: Shift, events_by_shift: dict[str, list[ShiftEvent]]) -> dict:
+    return {
+        "id": shift.id,
+        "company_id": shift.company_id,
+        "employee_id": shift.employee_id,
+        "device_id": shift.device_id,
+        "shift_date": shift.shift_date,
+        "status": shift.status,
+        "started_at": shift.started_at.isoformat() if shift.started_at else None,
+        "ended_at": shift.ended_at.isoformat() if shift.ended_at else None,
+        "work_seconds": shift.work_seconds,
+        "break_seconds": shift.break_seconds,
+        "lunch_seconds": shift.lunch_seconds,
+        "idle_seconds": shift.idle_seconds,
+        "events": [
+            {
+                "id": event.id,
+                "event_type": event.event_type,
+                "occurred_at": event.occurred_at.isoformat(),
+            }
+            for event in events_by_shift.get(shift.id, [])
+        ],
+    }
+
+
+def update_shift_event(
+    db: Session,
+    shift: Shift,
+    events: dict[str, ShiftEvent],
+    event_type: str,
+    occurred_at: datetime | None,
+):
+    current = events.get(event_type)
+    if occurred_at is None:
+        if current:
+            db.delete(current)
+        return
+    if current:
+        current.occurred_at = occurred_at
+        current.payload_json = json_text({"source": "admin_correction"})
+    else:
+        db.add(
+            ShiftEvent(
+                shift_id=shift.id,
+                event_type=event_type,
+                occurred_at=occurred_at,
+                payload_json=json_text({"source": "admin_correction"}),
+            )
+        )
 
 
 def record_attempt(
@@ -1772,6 +1892,240 @@ def productivity_dashboard(
             }
             for row in blocks
         ],
+    }
+
+
+@app.get("/api/attendance/overview")
+def attendance_overview(
+    company_id: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    employee_id: str | None = None,
+    department_id: str | None = None,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    company = resolve_admin_company(db, admin, company_id)
+    employee_query = select(Employee).where(Employee.company_id == company.id)
+    if employee_id:
+        employee_query = employee_query.where(Employee.id == employee_id)
+    if department_id:
+        employee_query = employee_query.where(Employee.department_id == department_id)
+    employees = db.execute(employee_query.order_by(Employee.full_name)).scalars().all()
+    employee_ids = [employee.id for employee in employees]
+
+    shift_query = select(Shift).where(Shift.company_id == company.id)
+    if employee_ids:
+        shift_query = shift_query.where(Shift.employee_id.in_(employee_ids))
+    if employee_id and not employee_ids:
+        shift_query = shift_query.where(Shift.employee_id == employee_id)
+    if date_from:
+        shift_query = shift_query.where(Shift.shift_date >= date_from)
+    if date_to:
+        shift_query = shift_query.where(Shift.shift_date <= date_to)
+    shifts = db.execute(
+        shift_query.order_by(Shift.shift_date.desc(), Shift.started_at.desc())
+    ).scalars().all()
+    shift_ids = [shift.id for shift in shifts]
+
+    events_by_shift: dict[str, list[ShiftEvent]] = {}
+    if shift_ids:
+        events = db.execute(
+            select(ShiftEvent)
+            .where(ShiftEvent.shift_id.in_(shift_ids))
+            .order_by(ShiftEvent.occurred_at)
+        ).scalars().all()
+        for event in events:
+            events_by_shift.setdefault(event.shift_id, []).append(event)
+
+    departments = {
+        department.id: department
+        for department in db.execute(
+            select(Department).where(Department.company_id == company.id)
+        ).scalars()
+    }
+    positions = {
+        position.id: position
+        for position in db.execute(
+            select(Position).where(Position.company_id == company.id)
+        ).scalars()
+    }
+    schedules = {
+        employee.id: latest_employee_schedule(db, employee.id, date_to or date_from)
+        for employee in employees
+    }
+
+    return {
+        "company": {"id": company.id, "name": company.name},
+        "filters": {
+            "date_from": date_from,
+            "date_to": date_to,
+            "employee_id": employee_id,
+            "department_id": department_id,
+        },
+        "employees": [
+            serialize_employee_for_attendance(
+                employee,
+                departments,
+                positions,
+                schedules.get(employee.id),
+            )
+            for employee in employees
+        ],
+        "shifts": [serialize_shift_for_attendance(shift, events_by_shift) for shift in shifts],
+    }
+
+
+@app.patch("/api/attendance/employees/{employee_id}/schedule")
+def update_employee_schedule(
+    employee_id: str,
+    payload: dict = Body(...),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    employee = db.get(Employee, employee_id)
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    company = resolve_admin_company(db, admin, employee.company_id)
+    if employee.company_id != company.id:
+        raise HTTPException(status_code=403, detail="Cannot edit employee from another company")
+
+    start_time = validate_time(payload.get("start_time"), "start_time")
+    end_time = validate_time(payload.get("end_time"), "end_time")
+    effective_from = validate_date(payload.get("effective_from") or "1970-01-01", "effective_from")
+    timezone_name = clean_text(payload.get("timezone") or company.timezone or "America/Managua", 80)
+
+    schedule = db.execute(
+        select(EmployeeSchedule).where(
+            EmployeeSchedule.employee_id == employee.id,
+            EmployeeSchedule.effective_from == effective_from,
+        )
+    ).scalar_one_or_none()
+    if schedule is None:
+        schedule = EmployeeSchedule(
+            company_id=company.id,
+            employee_id=employee.id,
+            effective_from=effective_from,
+        )
+        db.add(schedule)
+    schedule.start_time = start_time
+    schedule.end_time = end_time
+    schedule.timezone = timezone_name
+    schedule.is_active = True
+    schedule.updated_at = now_utc()
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="attendance_schedule_updated",
+            entity_type="employee_schedule",
+            entity_id=schedule.id,
+            payload_json=json_text(
+                {
+                    "employee_id": employee.id,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "effective_from": effective_from,
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(schedule)
+    return {
+        "ok": True,
+        "schedule": {
+            "id": schedule.id,
+            "employee_id": schedule.employee_id,
+            "start_time": schedule.start_time,
+            "end_time": schedule.end_time,
+            "effective_from": schedule.effective_from,
+            "timezone": schedule.timezone,
+        },
+    }
+
+
+@app.patch("/api/attendance/shifts/{shift_id}")
+def update_attendance_shift(
+    shift_id: str,
+    payload: dict = Body(...),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    shift = db.get(Shift, shift_id)
+    if shift is None:
+        raise HTTPException(status_code=404, detail="Shift not found")
+    company = resolve_admin_company(db, admin, shift.company_id)
+    if shift.company_id != company.id:
+        raise HTTPException(status_code=403, detail="Cannot edit shift from another company")
+
+    started_at = parse_optional_client_datetime(payload.get("started_at"))
+    ended_at = parse_optional_client_datetime(payload.get("ended_at"))
+    break_started_at = parse_optional_client_datetime(payload.get("break_started_at"))
+    break_ended_at = parse_optional_client_datetime(payload.get("break_ended_at"))
+    lunch_started_at = parse_optional_client_datetime(payload.get("lunch_started_at"))
+    lunch_ended_at = parse_optional_client_datetime(payload.get("lunch_ended_at"))
+
+    if started_at and ended_at and ended_at <= started_at:
+        raise HTTPException(status_code=400, detail="ended_at must be after started_at")
+    if break_started_at and break_ended_at and break_ended_at <= break_started_at:
+        raise HTTPException(status_code=400, detail="break end must be after break start")
+    if lunch_started_at and lunch_ended_at and lunch_ended_at <= lunch_started_at:
+        raise HTTPException(status_code=400, detail="lunch end must be after lunch start")
+
+    events = db.execute(
+        select(ShiftEvent)
+        .where(ShiftEvent.shift_id == shift.id)
+        .order_by(ShiftEvent.occurred_at)
+    ).scalars().all()
+    event_map = {event.event_type: event for event in events}
+
+    shift.started_at = started_at
+    shift.ended_at = ended_at
+    shift.status = "closed" if ended_at else "open"
+    if (break_started_at and not break_ended_at) or (lunch_started_at and not lunch_ended_at):
+        shift.status = "paused"
+    shift.work_seconds = seconds_between(started_at, ended_at)
+    shift.break_seconds = seconds_between(break_started_at, break_ended_at)
+    shift.lunch_seconds = seconds_between(lunch_started_at, lunch_ended_at)
+    shift.updated_at = now_utc()
+
+    update_shift_event(db, shift, event_map, "shift_started", started_at)
+    update_shift_event(db, shift, event_map, "shift_finished", ended_at)
+    update_shift_event(db, shift, event_map, "break_started", break_started_at)
+    update_shift_event(db, shift, event_map, "break_finished", break_ended_at)
+    update_shift_event(db, shift, event_map, "lunch_started", lunch_started_at)
+    update_shift_event(db, shift, event_map, "lunch_finished", lunch_ended_at)
+
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="attendance_shift_corrected",
+            entity_type="shift",
+            entity_id=shift.id,
+            payload_json=json_text(
+                {
+                    "started_at": payload.get("started_at"),
+                    "ended_at": payload.get("ended_at"),
+                    "break_started_at": payload.get("break_started_at"),
+                    "break_ended_at": payload.get("break_ended_at"),
+                    "lunch_started_at": payload.get("lunch_started_at"),
+                    "lunch_ended_at": payload.get("lunch_ended_at"),
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(shift)
+    fresh_events = db.execute(
+        select(ShiftEvent)
+        .where(ShiftEvent.shift_id == shift.id)
+        .order_by(ShiftEvent.occurred_at)
+    ).scalars().all()
+    return {
+        "ok": True,
+        "shift": serialize_shift_for_attendance(shift, {shift.id: fresh_events}),
     }
 
 

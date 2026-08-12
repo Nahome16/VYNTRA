@@ -181,31 +181,42 @@ class LoginWindow(ctk.CTk):
         if not correo or not pw:
             self.error_lbl.configure(text="Ingresa tu correo y tu contrasena.")
             return
-        if local_auth.verificar_credenciales(correo, pw):
+        auth_result = local_auth.autenticar_credenciales(correo, pw, self.cfg, VERSION)
+        if auth_result.get("ok"):
             self.authenticated_email = correo.lower()
-            append_event(
-                "station_login",
-                {
-                    "email": self.authenticated_email,
-                    "success": True,
-                    "occurred_at": datetime.datetime.now().isoformat(),
-                    "agent_version": VERSION,
-                },
-            )
+            if auth_result.get("source") != "backend":
+                append_event(
+                    "station_login",
+                    {
+                        "email": self.authenticated_email,
+                        "success": True,
+                        "occurred_at": datetime.datetime.now().isoformat(),
+                        "agent_version": VERSION,
+                        "auth_source": auth_result.get("source", "local"),
+                    },
+                )
             self.decision = True
             self.destroy()
         else:
-            append_event(
-                "station_login",
-                {
-                    "email": correo.lower(),
-                    "success": False,
-                    "failure_reason": "invalid_credentials",
-                    "occurred_at": datetime.datetime.now().isoformat(),
-                    "agent_version": VERSION,
-                },
-            )
-            self.error_lbl.configure(text="Correo o contrasena incorrectos.")
+            reason = auth_result.get("reason") or "invalid_credentials"
+            if auth_result.get("source") != "backend":
+                append_event(
+                    "station_login",
+                    {
+                        "email": correo.lower(),
+                        "success": False,
+                        "failure_reason": reason,
+                        "occurred_at": datetime.datetime.now().isoformat(),
+                        "agent_version": VERSION,
+                        "auth_source": auth_result.get("source", "local"),
+                    },
+                )
+            if reason == "backend_unavailable":
+                self.error_lbl.configure(
+                    text="No se pudo conectar con el servidor de VYNTRA. Intenta de nuevo."
+                )
+            else:
+                self.error_lbl.configure(text="Correo o contrasena incorrectos.")
 
     def _salir(self):
         self.decision = False

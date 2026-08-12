@@ -13,7 +13,14 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth import hash_token, require_admin, require_device
+from app.auth import (
+    AdminPrincipal,
+    create_admin_access_token,
+    hash_token,
+    require_admin,
+    require_device,
+    verify_password_hash,
+)
 from app.config import settings
 from app.database import Base, engine, get_db, SessionLocal
 from app.models import (
@@ -29,6 +36,7 @@ from app.models import (
     EmployeeCredential,
     EvidenceFile,
     EvidenceUploadAttempt,
+    LoginAttempt,
     Position,
     ProductivityBlock,
     ProductivityRule,
@@ -105,6 +113,27 @@ def resolve_company(db: Session, company_id: str | None = None) -> Company:
             raise HTTPException(status_code=404, detail="Company not found")
         return company
     return get_default_company(db)
+
+
+def require_company_owned(db: Session, model, row_id: str | None, company_id: str, label: str):
+    if not row_id:
+        return None
+    row = db.get(model, row_id)
+    if row is None or getattr(row, "company_id", None) != company_id:
+        raise HTTPException(status_code=400, detail=f"{label} not found for company")
+    return row
+
+
+def resolve_admin_company(
+    db: Session,
+    admin: AdminPrincipal,
+    company_id: str | None = None,
+) -> Company:
+    if admin.auth_method == "legacy_token":
+        return resolve_company(db, company_id)
+    if company_id and company_id != admin.company_id:
+        raise HTTPException(status_code=403, detail="Cannot access another company")
+    return resolve_company(db, admin.company_id)
 
 
 def serialize_rule(db: Session, rule: ProductivityRule) -> dict:
@@ -1003,9 +1032,16 @@ def bootstrap_data():
                     role_id=admin_role.id,
                     email=settings.bootstrap_admin_email,
                     full_name=settings.bootstrap_admin_name,
+                    password_hash=settings.bootstrap_admin_password_hash,
                     status="active",
                 )
             )
+        else:
+            admin_user.role_id = admin_role.id
+            admin_user.full_name = settings.bootstrap_admin_name
+            if settings.bootstrap_admin_password_hash:
+                admin_user.password_hash = settings.bootstrap_admin_password_hash
+            admin_user.status = "active"
 
         department = get_or_create_department(db, company.id, "General")
         position = get_or_create_position(
@@ -1105,13 +1141,233 @@ def health():
     return {"ok": True, "environment": settings.environment}
 
 
+def serialize_admin_user(db: Session, user: User, role_name: str | None = None) -> dict:
+    role = db.get(Role, user.role_id) if user.role_id and role_name is None else None
+    company = db.get(Company, user.company_id)
+    return {
+        "id": user.id,
+        "company_id": user.company_id,
+        "company": company.name if company else None,
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": role_name or (role.name if role else ""),
+        "status": user.status,
+        "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+    }
+
+
+@app.post("/api/admin/login")
+def admin_login(
+    request: Request,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+):
+    email = clean_text(payload.get("email"), 180).lower()
+    password = str(payload.get("password") or "")
+    client_ip = request.client.host if request.client else ""
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Missing credentials")
+
+    user = db.execute(
+        select(User).where(
+            User.email == email,
+            User.status == "active",
+        )
+    ).scalar_one_or_none()
+    role = db.get(Role, user.role_id) if user and user.role_id else None
+    role_name = role.name if role else ""
+    allowed_roles = {"admin", "owner", "rrhh", "supervisor", "viewer"}
+    if (
+        user is None
+        or role_name not in allowed_roles
+        or not verify_password_hash(password, user.password_hash)
+    ):
+        db.add(
+            AuditLog(
+                company_id=user.company_id if user else None,
+                user_id=user.id if user else None,
+                action="admin_login_failed",
+                entity_type="user",
+                entity_id=user.id if user else "",
+                ip_address=client_ip[:80],
+                payload_json=json_text({"email": email}),
+            )
+        )
+        db.commit()
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    user.last_login_at = now_utc()
+    db.add(
+        AuditLog(
+            company_id=user.company_id,
+            user_id=user.id,
+            action="admin_login_succeeded",
+            entity_type="user",
+            entity_id=user.id,
+            ip_address=client_ip[:80],
+            payload_json=json_text({"email": email}),
+        )
+    )
+    token = create_admin_access_token(user, role_name)
+    db.commit()
+    db.refresh(user)
+    return {
+        "ok": True,
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in_seconds": settings.admin_token_expire_minutes * 60,
+        "user": serialize_admin_user(db, user, role_name),
+    }
+
+
+@app.get("/api/admin/me")
+def admin_me(
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    if admin.auth_method == "legacy_token":
+        company = get_default_company(db)
+        return {
+            "auth_method": "legacy_token",
+            "user": {
+                "id": None,
+                "company_id": company.id,
+                "company": company.name,
+                "email": admin.email,
+                "full_name": "Legacy Admin Token",
+                "role": admin.role,
+                "status": "active",
+                "last_login_at": None,
+            },
+        }
+
+    user = db.get(User, admin.user_id)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid admin session")
+    return {
+        "auth_method": admin.auth_method,
+        "user": serialize_admin_user(db, user, admin.role),
+    }
+
+
+@app.post("/api/station/login")
+def station_login(
+    request: Request,
+    payload: dict = Body(...),
+    device: Device = Depends(require_device),
+    db: Session = Depends(get_db),
+):
+    email = clean_text(payload.get("email") or payload.get("correo"), 180).lower()
+    password = str(payload.get("password") or "")
+    occurred_at = (
+        parse_optional_client_datetime(payload.get("occurred_at"))
+        or now_utc()
+    )
+    client_ip = request.client.host if request.client else ""
+
+    if not email or not password:
+        db.add(
+            LoginAttempt(
+                email_attempted=email,
+                ip_address=client_ip[:45],
+                success=False,
+            )
+        )
+        db.add(
+            StationLoginEvent(
+                company_id=device.company_id,
+                employee_id=device.employee_id,
+                credential_id=None,
+                device_id=device.id,
+                email_attempted=email,
+                success=False,
+                failure_reason="missing_credentials",
+                occurred_at=occurred_at,
+                ip_address=client_ip[:80],
+                payload_json=json_text({"email": email, "reason": "missing_credentials"}),
+            )
+        )
+        db.commit()
+        raise HTTPException(status_code=400, detail="Missing credentials")
+
+    credential = find_employee_credential(db, device.company_id, email)
+    employee = db.get(Employee, credential.employee_id) if credential else None
+    success = (
+        credential is not None
+        and employee is not None
+        and credential.status == "active"
+        and employee.status == "active"
+        and verify_password_hash(password, credential.password_hash)
+    )
+
+    db.add(
+        LoginAttempt(
+            email_attempted=email,
+            ip_address=client_ip[:45],
+            success=success,
+        )
+    )
+    db.add(
+        StationLoginEvent(
+            company_id=device.company_id,
+            employee_id=credential.employee_id if credential else device.employee_id,
+            credential_id=credential.id if credential else None,
+            device_id=device.id,
+            email_attempted=email,
+            success=success,
+            failure_reason="" if success else "invalid_credentials",
+            occurred_at=occurred_at,
+            ip_address=client_ip[:80],
+            payload_json=json_text(
+                {
+                    "email": email,
+                    "auth_source": "backend",
+                    "agent_version": clean_text(payload.get("agent_version"), 40),
+                }
+            ),
+        )
+    )
+
+    if not success:
+        db.commit()
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    credential.last_login_at = occurred_at
+    device.employee_id = credential.employee_id
+    device.last_seen_at = occurred_at
+    db.commit()
+
+    return {
+        "ok": True,
+        "company": {
+            "id": device.company_id,
+        },
+        "employee": {
+            "id": employee.id,
+            "employee_code": employee.employee_code,
+            "full_name": employee.full_name,
+            "email": employee.email,
+            "department_id": employee.department_id,
+            "position_id": employee.position_id,
+        },
+        "credential": {
+            "id": credential.id,
+            "email": credential.email,
+        },
+        "device": {
+            "id": device.id,
+            "name": device.name,
+        },
+    }
+
+
 @app.get("/api/productivity/catalogs")
 def productivity_catalogs(
     company_id: str | None = None,
-    _admin: bool = Depends(require_admin),
+    admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    company = resolve_company(db, company_id)
+    company = resolve_admin_company(db, admin, company_id)
     departments = db.execute(
         select(Department)
         .where(Department.company_id == company.id)
@@ -1160,10 +1416,10 @@ def list_productivity_rules(
     department_id: str | None = None,
     position_id: str | None = None,
     employee_id: str | None = None,
-    _admin: bool = Depends(require_admin),
+    admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    company = resolve_company(db, company_id)
+    company = resolve_admin_company(db, admin, company_id)
     query = select(ProductivityRule).where(ProductivityRule.company_id == company.id)
     if classification:
         query = query.where(ProductivityRule.classification == classification)
@@ -1192,10 +1448,10 @@ def list_productivity_rules(
 def create_productivity_rule(
     background_tasks: BackgroundTasks,
     payload: dict = Body(...),
-    _admin: bool = Depends(require_admin),
+    admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    company = resolve_company(db, payload.get("company_id"))
+    company = resolve_admin_company(db, admin, payload.get("company_id"))
     classification = clean_text(payload.get("classification"), 40)
     if classification not in {"productive", "neutral", "non_productive", "uncategorized"}:
         raise HTTPException(status_code=400, detail="Invalid classification")
@@ -1206,12 +1462,9 @@ def create_productivity_rule(
     executable_name = clean_text(payload.get("executable_name"), 160)
     title_contains = clean_text(payload.get("title_contains"), 255)
 
-    if department_id and not db.get(Department, department_id):
-        raise HTTPException(status_code=400, detail="Department not found")
-    if position_id and not db.get(Position, position_id):
-        raise HTTPException(status_code=400, detail="Position not found")
-    if employee_id and not db.get(Employee, employee_id):
-        raise HTTPException(status_code=400, detail="Employee not found")
+    require_company_owned(db, Department, department_id, company.id, "Department")
+    require_company_owned(db, Position, position_id, company.id, "Position")
+    require_company_owned(db, Employee, employee_id, company.id, "Employee")
     if not executable_name and not title_contains:
         raise HTTPException(status_code=400, detail="Rule needs executable_name or title_contains")
 
@@ -1277,12 +1530,13 @@ def update_productivity_rule(
     rule_id: str,
     background_tasks: BackgroundTasks,
     payload: dict = Body(...),
-    _admin: bool = Depends(require_admin),
+    admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
     rule = db.get(ProductivityRule, rule_id)
     if rule is None:
         raise HTTPException(status_code=404, detail="Rule not found")
+    resolve_admin_company(db, admin, rule.company_id)
 
     if "classification" in payload:
         classification = clean_text(payload.get("classification"), 40)
@@ -1290,11 +1544,17 @@ def update_productivity_rule(
             raise HTTPException(status_code=400, detail="Invalid classification")
         rule.classification = classification
     if "department_id" in payload:
-        rule.department_id = clean_text(payload.get("department_id"), 36) or None
+        department_id = clean_text(payload.get("department_id"), 36) or None
+        require_company_owned(db, Department, department_id, rule.company_id, "Department")
+        rule.department_id = department_id
     if "position_id" in payload:
-        rule.position_id = clean_text(payload.get("position_id"), 36) or None
+        position_id = clean_text(payload.get("position_id"), 36) or None
+        require_company_owned(db, Position, position_id, rule.company_id, "Position")
+        rule.position_id = position_id
     if "employee_id" in payload:
-        rule.employee_id = clean_text(payload.get("employee_id"), 36) or None
+        employee_id = clean_text(payload.get("employee_id"), 36) or None
+        require_company_owned(db, Employee, employee_id, rule.company_id, "Employee")
+        rule.employee_id = employee_id
     if "executable_name" in payload:
         rule.executable_name = clean_text(payload.get("executable_name"), 160)
     if "title_contains" in payload:
@@ -1331,10 +1591,10 @@ def update_productivity_rule(
 def reclassify_productivity(
     background_tasks: BackgroundTasks,
     payload: dict = Body(default={}),
-    _admin: bool = Depends(require_admin),
+    admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    company = resolve_company(db, payload.get("company_id"))
+    company = resolve_admin_company(db, admin, payload.get("company_id"))
     result = reclassify_activities_for_company(db, company.id)
     db.commit()
     rebuild_queued = bool(payload.get("rebuild_blocks", True))
@@ -1349,10 +1609,10 @@ def reclassify_productivity(
 def uncategorized_activity_summary(
     company_id: str | None = None,
     limit: int = 25,
-    _admin: bool = Depends(require_admin),
+    admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    company = resolve_company(db, company_id)
+    company = resolve_admin_company(db, admin, company_id)
     rows = db.execute(
         select(
             AppCatalog.executable_name.label("executable_name"),
@@ -1392,10 +1652,10 @@ def productivity_dashboard(
     date_to: str | None = None,
     employee_id: str | None = None,
     department_id: str | None = None,
-    _admin: bool = Depends(require_admin),
+    admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    company = resolve_company(db, company_id)
+    company = resolve_admin_company(db, admin, company_id)
     query = select(ProductivityBlock).where(ProductivityBlock.company_id == company.id)
     if date_from:
         query = query.where(ProductivityBlock.block_date >= date_from)

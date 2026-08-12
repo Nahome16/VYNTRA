@@ -1,18 +1,16 @@
 """
-local_auth.py - Verificacion de usuario para VYNTRA (temporal, sin base de datos).
+local_auth.py - Verificacion de usuario para VYNTRA.
 
 Antes de mostrar el aviso de privacidad o la estacion de marcaje, VYNTRA pide
 correo y contrasena para confirmar quien esta operando el equipo.
 
 IMPORTANTE: el agente de escritorio NO crea ni administra usuarios. Este
 modulo solo VERIFICA credenciales; la creacion de cuentas se hara mas
-adelante desde la plataforma web (paso siguiente, todavia no implementado).
+adelante desde la plataforma web.
 
-Mientras esa integracion no exista, para poder probar el flujo de inicio de
-sesion sin depender de un backend ni de una base de datos local, se valida
-contra un unico usuario de pruebas fijo definido aqui abajo. La contrasena
-de prueba tampoco se guarda en texto plano: se compara contra un hash
-PBKDF2-HMAC-SHA256 precalculado.
+Cuando el backend de evidencias esta configurado, la verificacion ocurre en
+la API. El usuario local fijo queda solo como fallback de desarrollo cuando
+no hay backend configurado o cuando se permite explicitamente en config.ini.
 
 Usuarios de pruebas:
     correo:     test@vyntra.com
@@ -24,6 +22,9 @@ Usuarios de pruebas:
 
 import base64
 import hashlib
+import datetime
+
+import requests
 
 
 _ITERATIONS = 200_000
@@ -70,3 +71,64 @@ def verificar_credenciales(correo: str, password: str) -> bool:
         return _comparacion_segura(calculado, user["hash"])
     except Exception:
         return False
+
+
+def autenticar_credenciales(correo: str, password: str, cfg, agent_version: str = "unknown") -> dict:
+    """Autentica contra el backend; usa fallback local solo en desarrollo."""
+    correo = (correo or "").strip().lower()
+    backend_enabled = bool(getattr(cfg, "evidence_backend_enabled", False))
+    base_url = str(getattr(cfg, "evidence_backend_url", "") or "").rstrip("/")
+    device_token = str(getattr(cfg, "evidence_device_token", "") or "").strip()
+    timeout = int(getattr(cfg, "evidence_request_timeout", 30) or 30)
+    allow_local_fallback = bool(getattr(cfg, "station_auth_allow_local_fallback", False))
+
+    if backend_enabled and base_url and device_token:
+        try:
+            response = requests.post(
+                f"{base_url}/api/station/login",
+                headers={"X-Device-Token": device_token},
+                json={
+                    "email": correo,
+                    "password": password or "",
+                    "occurred_at": datetime.datetime.now().isoformat(),
+                    "agent_version": agent_version,
+                },
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            if allow_local_fallback and verificar_credenciales(correo, password):
+                return {"ok": True, "source": "local_fallback", "email": correo}
+            return {
+                "ok": False,
+                "source": "backend",
+                "reason": "backend_unavailable",
+                "message": str(exc)[:220],
+            }
+
+        if response.status_code < 400:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {}
+            return {
+                "ok": True,
+                "source": "backend",
+                "email": correo,
+                "payload": payload,
+            }
+        if allow_local_fallback and response.status_code >= 500 and verificar_credenciales(correo, password):
+            return {"ok": True, "source": "local_fallback", "email": correo}
+        return {
+            "ok": False,
+            "source": "backend",
+            "reason": "invalid_credentials",
+            "status_code": response.status_code,
+        }
+
+    local_ok = verificar_credenciales(correo, password)
+    return {
+        "ok": local_ok,
+        "source": "local",
+        "email": correo,
+        "reason": "" if local_ok else "invalid_credentials",
+    }

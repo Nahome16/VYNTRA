@@ -14,3 +14,5 @@ Write-Host "Compiling VYNTRA agent..."
 Invoke-Expression "$Python -m PyInstaller vyntra_agent.spec --clean"
 
 Write-Host "Build ready at dist\VYNTRAAgent"
+Write-Host "To install auto-start on this PC, run:"
+Write-Host ".\installer\install_agent_autostart.ps1"

@@ -5,12 +5,39 @@ Backend minimo para recibir evidencias del agente VYNTRA.
 ## Endpoints
 
 - `GET /health`
+- `POST /api/admin/login`
+- `GET /api/admin/me`
+- `POST /api/station/login`
+- `POST /api/agent/events`
 - `POST /api/evidence/upload`
 
-`POST /api/evidence/upload` requiere el header:
+Los endpoints administrativos aceptan sesion JWT:
+
+```http
+Authorization: Bearer token_admin
+```
+
+Durante la transicion local tambien se mantiene:
+
+```http
+X-Admin-Token: token_admin_temporal
+```
+
+Los endpoints del agente requieren el header:
 
 ```http
 X-Device-Token: token_unico_del_equipo
+```
+
+`POST /api/station/login` valida el correo y contrasena del empleado contra
+`employee_credentials`, registra el intento en `station_login_events` y asocia
+el dispositivo al empleado autenticado.
+
+Credenciales demo locales:
+
+```text
+admin@vyntra.local / Vyntra2026
+empleado@vyntra.local / Vyntra2026
 ```
 
 Campos `multipart/form-data`:

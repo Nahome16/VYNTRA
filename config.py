@@ -69,6 +69,10 @@ class Config:
         if self.evidence_queue_db and not os.path.isabs(self.evidence_queue_db):
             self.evidence_queue_db = os.path.join(base, self.evidence_queue_db)
 
+        self.station_auth_allow_local_fallback = parser.getboolean(
+            "StationAuth", "AllowLocalFallback", fallback=False
+        )
+
         self.empresa = parser.get("General", "Empresa", fallback="Tu Empresa S.A.")
         self.correo_contacto = parser.get(
             "General", "CorreoContacto", fallback="rrhh@tuempresa.com"

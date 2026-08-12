@@ -11,6 +11,7 @@ This first ETL is intentionally simple and auditable:
 from collections import defaultdict
 import argparse
 from datetime import datetime, timedelta, timezone
+import math
 from pathlib import Path
 import sys
 
@@ -139,12 +140,16 @@ def add_interval_to_blocks(
     current = normalize_utc(started_at)
     interval_end = normalize_utc(ended_at)
     department_id = shift.employee.department_id if shift.employee else None
+    remaining = max(0, int(round((interval_end - current).total_seconds())))
 
-    while current < interval_end:
+    while remaining > 0:
         block_start = block_start_for(current, block_minutes)
         block_end = block_start + timedelta(minutes=block_minutes)
-        piece_end = min(interval_end, block_end)
-        seconds = max(0, int((piece_end - current).total_seconds()))
+        seconds_to_boundary = (block_end - current).total_seconds()
+        if seconds_to_boundary <= 0:
+            current = block_end
+            continue
+        seconds = min(remaining, max(1, int(math.ceil(seconds_to_boundary))))
         if seconds:
             block = get_block(
                 blocks,
@@ -158,7 +163,8 @@ def add_interval_to_blocks(
             block["total_seconds"] += seconds
             block[field_name] += seconds
             block["break_lunch_seconds"] += seconds
-        current = piece_end
+        current += timedelta(seconds=seconds)
+        remaining -= seconds
 
 
 def add_shift_pause_intervals(
@@ -194,6 +200,72 @@ def add_shift_pause_intervals(
             add_interval_to_blocks(db, blocks, shift, open_break, fallback_end, "break_seconds")
         if open_lunch:
             add_interval_to_blocks(db, blocks, shift, open_lunch, fallback_end, "lunch_seconds")
+
+
+def add_activity_to_blocks(
+    db,
+    blocks: dict[tuple[str, str, str, str], dict],
+    activity: Activity,
+    employee: Employee | None,
+    idle_streak_by_shift: dict[tuple[str, str, str], int],
+):
+    duration = max(0, int(activity.duration_seconds or 0))
+    if duration <= 0:
+        return
+
+    block_minutes = setting_int(db, activity.company_id, "productivity_block_minutes", 30)
+    idle_grace = setting_int(db, activity.company_id, "idle_grace_seconds", 300)
+    department_id = employee.department_id if employee else None
+    current = normalize_utc(activity.started_at)
+    interval_end = current + timedelta(seconds=duration)
+    shift_key = (
+        activity.company_id,
+        activity.employee_id,
+        activity.shift_id or "",
+    )
+    bucket = activity_bucket(activity, 0)
+
+    if not activity.is_idle:
+        idle_streak_by_shift[shift_key] = 0
+
+    remaining = duration
+    while remaining > 0:
+        block_start = block_start_for(current, block_minutes)
+        block_end = block_start + timedelta(minutes=block_minutes)
+        seconds_to_boundary = (block_end - current).total_seconds()
+        if seconds_to_boundary <= 0:
+            current = block_end
+            continue
+        seconds = min(remaining, max(1, int(math.ceil(seconds_to_boundary))))
+
+        block = get_block(
+            blocks,
+            activity.company_id,
+            activity.employee_id,
+            activity.shift_id,
+            department_id,
+            current,
+            block_minutes,
+        )
+        block["total_seconds"] += seconds
+
+        if activity.is_idle:
+            idle_before = idle_streak_by_shift[shift_key]
+            idle_after = idle_before + seconds
+            idle_real = max(0, idle_after - idle_grace) - max(
+                0, idle_before - idle_grace
+            )
+            idle_streak_by_shift[shift_key] = idle_after
+            block["idle_seconds"] += idle_real
+            active_piece = max(0, seconds - idle_real)
+            block["active_seconds"] += active_piece
+            block["neutral_seconds"] += active_piece
+        else:
+            block["active_seconds"] += seconds
+            block[f"{bucket}_seconds"] += seconds
+
+        current += timedelta(seconds=seconds)
+        remaining -= seconds
 
 
 def run(company_id: str | None = None):
@@ -245,49 +317,8 @@ def run(company_id: str | None = None):
         employees = {row.id: row for row in db.execute(employee_query).scalars()}
 
         for activity in activities:
-            block_minutes = setting_int(
-                db, activity.company_id, "productivity_block_minutes", 30
-            )
-            idle_grace = setting_int(db, activity.company_id, "idle_grace_seconds", 300)
-            duration = max(0, int(activity.duration_seconds or 0))
-            shift_key = (
-                activity.company_id,
-                activity.employee_id,
-                activity.shift_id or "",
-            )
-            idle_real = 0
-            if activity.is_idle:
-                idle_before = idle_streak_by_shift[shift_key]
-                idle_after = idle_before + duration
-                idle_real = max(0, idle_after - idle_grace) - max(
-                    0, idle_before - idle_grace
-                )
-                idle_streak_by_shift[shift_key] = idle_after
-            else:
-                idle_streak_by_shift[shift_key] = 0
-
             employee = employees.get(activity.employee_id)
-            department_id = employee.department_id if employee else None
-            block = get_block(
-                blocks,
-                activity.company_id,
-                activity.employee_id,
-                activity.shift_id,
-                department_id,
-                activity.started_at,
-                block_minutes,
-            )
-            block["total_seconds"] += duration
-            if activity.is_idle:
-                block["idle_seconds"] += idle_real
-                active_piece = max(0, duration - idle_real)
-                block["active_seconds"] += active_piece
-                if active_piece:
-                    block["neutral_seconds"] += active_piece
-            else:
-                bucket = activity_bucket(activity, idle_real)
-                block["active_seconds"] += duration
-                block[f"{bucket}_seconds"] += duration
+            add_activity_to_blocks(db, blocks, activity, employee, idle_streak_by_shift)
 
         add_shift_pause_intervals(db, blocks, shifts)
 

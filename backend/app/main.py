@@ -2,6 +2,7 @@
 main.py - VYNTRA Evidence API.
 """
 
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 import base64
 import hashlib
@@ -10,8 +11,13 @@ import os
 import re
 import secrets
 import tempfile
+from time import monotonic
+from typing import Literal
 
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -65,6 +71,192 @@ from app.storage import (
 
 
 app = FastAPI(title=settings.app_name)
+
+if settings.cors_allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(settings.cors_allowed_origins),
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PATCH"],
+        allow_headers=["Authorization", "Content-Type", "X-Admin-Token", "X-Device-Token"],
+        max_age=600,
+    )
+
+
+class StrictPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminLoginPayload(StrictPayload):
+    email: str = Field(..., min_length=3, max_length=180)
+    password: str = Field(..., min_length=1, max_length=256)
+
+
+class StationLoginPayload(StrictPayload):
+    email: str | None = Field(default=None, max_length=180)
+    correo: str | None = Field(default=None, max_length=180)
+    password: str = Field(..., min_length=1, max_length=256)
+    occurred_at: str | None = Field(default=None, max_length=40)
+    agent_version: str | None = Field(default=None, max_length=40)
+
+
+class DepartmentPayload(StrictPayload):
+    company_id: str | None = Field(default=None, max_length=36)
+    name: str = Field(..., min_length=2, max_length=120)
+
+
+class EmployeeCreatePayload(StrictPayload):
+    company_id: str | None = Field(default=None, max_length=36)
+    full_name: str | None = Field(default=None, max_length=180)
+    name: str | None = Field(default=None, max_length=180)
+    email: str = Field(..., min_length=3, max_length=180)
+    department_id: str | None = Field(default=None, max_length=36)
+    new_department: str | None = Field(default=None, max_length=120)
+    employee_code: str | None = Field(default=None, max_length=80)
+
+
+class EmployeePatchPayload(StrictPayload):
+    full_name: str | None = Field(default=None, max_length=180)
+    name: str | None = Field(default=None, max_length=180)
+    email: str | None = Field(default=None, min_length=3, max_length=180)
+    department_id: str | None = Field(default=None, max_length=36)
+    new_department: str | None = Field(default=None, max_length=120)
+    status: str | None = Field(default=None, max_length=40)
+
+
+class RestoreCodePayload(StrictPayload):
+    employee_id: str = Field(..., min_length=1, max_length=36)
+    valid_minutes: int = Field(default=60, ge=5, le=1440)
+    reason: str | None = Field(default=None, max_length=180)
+
+
+class AccessCodePayload(RestoreCodePayload):
+    type: Literal["station_reopen", "overtime"]
+    assigned_minutes: int | None = Field(default=None, ge=5, le=1440)
+
+
+class ProductivityRulePayload(StrictPayload):
+    company_id: str | None = Field(default=None, max_length=36)
+    classification: Literal["productive", "neutral", "non_productive", "uncategorized"]
+    department_id: str | None = Field(default=None, max_length=36)
+    position_id: str | None = Field(default=None, max_length=36)
+    employee_id: str | None = Field(default=None, max_length=36)
+    executable_name: str | None = Field(default=None, max_length=160)
+    title_contains: str | None = Field(default=None, max_length=255)
+    priority: int = Field(default=100, ge=1, le=10000)
+    is_active: bool = True
+    notes: str | None = Field(default=None, max_length=2000)
+    reclassify: bool = True
+    rebuild_blocks: bool = True
+
+
+class ProductivityRulePatchPayload(StrictPayload):
+    classification: Literal["productive", "neutral", "non_productive", "uncategorized"] | None = None
+    department_id: str | None = Field(default=None, max_length=36)
+    position_id: str | None = Field(default=None, max_length=36)
+    employee_id: str | None = Field(default=None, max_length=36)
+    executable_name: str | None = Field(default=None, max_length=160)
+    title_contains: str | None = Field(default=None, max_length=255)
+    priority: int | None = Field(default=None, ge=1, le=10000)
+    is_active: bool | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+    reclassify: bool = True
+    rebuild_blocks: bool = True
+
+
+class ReclassifyPayload(StrictPayload):
+    company_id: str | None = Field(default=None, max_length=36)
+    rebuild_blocks: bool = True
+
+
+class SchedulePayload(StrictPayload):
+    start_time: str = Field(..., min_length=5, max_length=5)
+    end_time: str = Field(..., min_length=5, max_length=5)
+    effective_from: str | None = Field(default=None, max_length=10)
+    timezone: str | None = Field(default=None, max_length=80)
+
+
+class ShiftCorrectionPayload(StrictPayload):
+    correction_reason: str = Field(..., min_length=3, max_length=180)
+    started_at: str | None = Field(default=None, max_length=40)
+    ended_at: str | None = Field(default=None, max_length=40)
+    break_started_at: str | None = Field(default=None, max_length=40)
+    break_ended_at: str | None = Field(default=None, max_length=40)
+    lunch_started_at: str | None = Field(default=None, max_length=40)
+    lunch_ended_at: str | None = Field(default=None, max_length=40)
+
+
+class ShiftCreatePayload(ShiftCorrectionPayload):
+    employee_id: str = Field(..., min_length=1, max_length=36)
+    shift_date: str = Field(..., min_length=10, max_length=10)
+
+
+class AgentEventsPayload(StrictPayload):
+    events: list[dict] = Field(..., max_length=200)
+
+
+RATE_LIMITS = {
+    ("POST", "/api/admin/login"): (8, 300),
+    ("POST", "/api/station/login"): (20, 300),
+    ("POST", "/api/evidence/upload"): (60, 60),
+    ("POST", "/api/agent/events"): (120, 60),
+}
+_rate_buckets: dict[tuple[str, str, str], deque[float]] = defaultdict(deque)
+
+IP_SCOPES = (
+    ("/api/admin", settings.admin_allowed_ips),
+    ("/api/settings", settings.admin_allowed_ips),
+    ("/api/productivity", settings.admin_allowed_ips),
+    ("/api/employees", settings.admin_allowed_ips),
+    ("/api/attendance", settings.admin_allowed_ips),
+    ("/api/agent", settings.agent_allowed_ips),
+    ("/api/evidence", settings.agent_allowed_ips),
+)
+
+
+def client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def ip_allowed(path: str, ip_address: str) -> bool:
+    for prefix, allowed_ips in IP_SCOPES:
+        if path.startswith(prefix) and allowed_ips:
+            return ip_address in allowed_ips
+    return True
+
+
+def rate_limit_exceeded(method: str, path: str, ip_address: str) -> tuple[bool, int]:
+    limit = RATE_LIMITS.get((method.upper(), path))
+    if not limit:
+        return False, 0
+    max_requests, window_seconds = limit
+    bucket = _rate_buckets[(method.upper(), path, ip_address)]
+    now = monotonic()
+    while bucket and now - bucket[0] > window_seconds:
+        bucket.popleft()
+    if len(bucket) >= max_requests:
+        retry_after = max(1, int(window_seconds - (now - bucket[0])))
+        return True, retry_after
+    bucket.append(now)
+    return False, 0
+
+
+@app.middleware("http")
+async def security_rate_limiter(request: Request, call_next):
+    ip_address = client_ip(request)
+    if not ip_allowed(request.url.path, ip_address):
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"detail": "IP address is not allowed"},
+        )
+    limited, retry_after = rate_limit_exceeded(request.method, request.url.path, ip_address)
+    if limited:
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={"detail": "Too many requests"},
+            headers={"Retry-After": str(retry_after)},
+        )
+    return await call_next(request)
 
 
 def parse_client_datetime(value: str) -> datetime:
@@ -1416,12 +1608,12 @@ def serialize_admin_user(db: Session, user: User, role_name: str | None = None) 
 @app.post("/api/admin/login")
 def admin_login(
     request: Request,
-    payload: dict = Body(...),
+    payload: AdminLoginPayload,
     db: Session = Depends(get_db),
 ):
-    email = clean_text(payload.get("email"), 180).lower()
-    password = str(payload.get("password") or "")
-    client_ip = request.client.host if request.client else ""
+    email = clean_text(payload.email, 180).lower()
+    password = payload.password
+    client_ip_address = client_ip(request)
     if not email or not password:
         raise HTTPException(status_code=400, detail="Missing credentials")
 
@@ -1446,7 +1638,7 @@ def admin_login(
                 action="admin_login_failed",
                 entity_type="user",
                 entity_id=user.id if user else "",
-                ip_address=client_ip[:80],
+                ip_address=client_ip_address[:80],
                 payload_json=json_text({"email": email}),
             )
         )
@@ -1461,7 +1653,7 @@ def admin_login(
             action="admin_login_succeeded",
             entity_type="user",
             entity_id=user.id,
-            ip_address=client_ip[:80],
+            ip_address=client_ip_address[:80],
             payload_json=json_text({"email": email}),
         )
     )
@@ -1510,23 +1702,23 @@ def admin_me(
 @app.post("/api/station/login")
 def station_login(
     request: Request,
-    payload: dict = Body(...),
+    payload: StationLoginPayload,
     device: Device = Depends(require_device),
     db: Session = Depends(get_db),
 ):
-    email = clean_text(payload.get("email") or payload.get("correo"), 180).lower()
-    password = str(payload.get("password") or "")
+    email = clean_text(payload.email or payload.correo, 180).lower()
+    password = payload.password
     occurred_at = (
-        parse_optional_client_datetime(payload.get("occurred_at"))
+        parse_optional_client_datetime(payload.occurred_at)
         or now_utc()
     )
-    client_ip = request.client.host if request.client else ""
+    client_ip_address = client_ip(request)
 
     if not email or not password:
         db.add(
             LoginAttempt(
                 email_attempted=email,
-                ip_address=client_ip[:45],
+                ip_address=client_ip_address[:45],
                 success=False,
             )
         )
@@ -1540,7 +1732,7 @@ def station_login(
                 success=False,
                 failure_reason="missing_credentials",
                 occurred_at=occurred_at,
-                ip_address=client_ip[:80],
+                ip_address=client_ip_address[:80],
                 payload_json=json_text({"email": email, "reason": "missing_credentials"}),
             )
         )
@@ -1560,7 +1752,7 @@ def station_login(
     db.add(
         LoginAttempt(
             email_attempted=email,
-            ip_address=client_ip[:45],
+            ip_address=client_ip_address[:45],
             success=success,
         )
     )
@@ -1574,12 +1766,12 @@ def station_login(
             success=success,
             failure_reason="" if success else "invalid_credentials",
             occurred_at=occurred_at,
-            ip_address=client_ip[:80],
+            ip_address=client_ip_address[:80],
             payload_json=json_text(
                 {
                     "email": email,
                     "auth_source": "backend",
-                    "agent_version": clean_text(payload.get("agent_version"), 40),
+                    "agent_version": clean_text(payload.agent_version, 40),
                 }
             ),
         )
@@ -1667,10 +1859,11 @@ def productivity_catalogs(
 
 @app.post("/api/settings/departments")
 def create_department(
-    payload: dict = Body(...),
+    payload: DepartmentPayload,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    payload = payload.model_dump(exclude_unset=True)
     company = resolve_admin_company(db, admin, payload.get("company_id"))
     name = clean_text(payload.get("name"), 120)
     if len(name) < 2:
@@ -1702,10 +1895,11 @@ def create_department(
 
 @app.post("/api/settings/employees")
 def create_monitored_employee(
-    payload: dict = Body(...),
+    payload: EmployeeCreatePayload,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    payload = payload.model_dump(exclude_unset=True)
     company = resolve_admin_company(db, admin, payload.get("company_id"))
     full_name = clean_text(payload.get("full_name") or payload.get("name"), 180)
     email = clean_email(payload.get("email"))
@@ -1795,10 +1989,11 @@ def create_monitored_employee(
 @app.patch("/api/settings/employees/{employee_id}")
 def update_monitored_employee(
     employee_id: str,
-    payload: dict = Body(...),
+    payload: EmployeePatchPayload,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    payload = payload.model_dump(exclude_unset=True)
     employee = db.get(Employee, employee_id)
     if employee is None:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -1909,10 +2104,11 @@ def list_restore_codes(
 
 @app.post("/api/settings/restore-codes")
 def create_restore_code(
-    payload: dict = Body(...),
+    payload: RestoreCodePayload,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    payload = payload.model_dump(exclude_unset=True)
     employee_id = clean_text(payload.get("employee_id"), 36)
     employee = db.get(Employee, employee_id)
     if employee is None:
@@ -2000,10 +2196,11 @@ def list_access_codes(
 
 @app.post("/api/settings/access-codes")
 def create_access_code(
-    payload: dict = Body(...),
+    payload: AccessCodePayload,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    payload = payload.model_dump(exclude_unset=True)
     access_type = clean_text(payload.get("type"), 40)
     if access_type not in {"station_reopen", "overtime"}:
         raise HTTPException(status_code=400, detail="Invalid access code type")
@@ -2121,10 +2318,11 @@ def list_productivity_rules(
 @app.post("/api/productivity/rules")
 def create_productivity_rule(
     background_tasks: BackgroundTasks,
-    payload: dict = Body(...),
+    payload: ProductivityRulePayload,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    payload = payload.model_dump(exclude_unset=True)
     company = resolve_admin_company(db, admin, payload.get("company_id"))
     classification = clean_text(payload.get("classification"), 40)
     if classification not in {"productive", "neutral", "non_productive", "uncategorized"}:
@@ -2203,10 +2401,11 @@ def create_productivity_rule(
 def update_productivity_rule(
     rule_id: str,
     background_tasks: BackgroundTasks,
-    payload: dict = Body(...),
+    payload: ProductivityRulePatchPayload,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    payload = payload.model_dump(exclude_unset=True)
     rule = db.get(ProductivityRule, rule_id)
     if rule is None:
         raise HTTPException(status_code=404, detail="Rule not found")
@@ -2264,10 +2463,11 @@ def update_productivity_rule(
 @app.post("/api/productivity/reclassify")
 def reclassify_productivity(
     background_tasks: BackgroundTasks,
-    payload: dict = Body(default={}),
+    payload: ReclassifyPayload = Body(default_factory=ReclassifyPayload),
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    payload = payload.model_dump(exclude_unset=True)
     company = resolve_admin_company(db, admin, payload.get("company_id"))
     result = reclassify_activities_for_company(db, company.id)
     db.commit()
@@ -2653,10 +2853,11 @@ def attendance_overview(
 @app.patch("/api/attendance/employees/{employee_id}/schedule")
 def update_employee_schedule(
     employee_id: str,
-    payload: dict = Body(...),
+    payload: SchedulePayload,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    payload = payload.model_dump(exclude_unset=True)
     employee = db.get(Employee, employee_id)
     if employee is None:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -2722,10 +2923,11 @@ def update_employee_schedule(
 @app.patch("/api/attendance/shifts/{shift_id}")
 def update_attendance_shift(
     shift_id: str,
-    payload: dict = Body(...),
+    payload: ShiftCorrectionPayload,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    payload = payload.model_dump(exclude_unset=True)
     shift = db.get(Shift, shift_id)
     if shift is None:
         raise HTTPException(status_code=404, detail="Shift not found")
@@ -2810,10 +3012,11 @@ def update_attendance_shift(
 
 @app.post("/api/attendance/shifts")
 def create_attendance_shift(
-    payload: dict = Body(...),
+    payload: ShiftCreatePayload,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    payload = payload.model_dump(exclude_unset=True)
     employee_id = clean_text(payload.get("employee_id"), 36)
     employee = db.get(Employee, employee_id)
     if employee is None:
@@ -3004,10 +3207,11 @@ def get_agent_rules(
 @app.post("/api/agent/events")
 def sync_agent_events(
     request: Request,
-    payload: dict = Body(...),
+    payload: AgentEventsPayload,
     device: Device = Depends(require_device),
     db: Session = Depends(get_db),
 ):
+    payload = payload.model_dump()
     events = payload.get("events")
     if not isinstance(events, list):
         raise HTTPException(status_code=400, detail="events must be a list")

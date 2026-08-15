@@ -13,10 +13,19 @@ def _bool_env(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _csv_env(name: str) -> tuple[str, ...]:
+    value = os.environ.get(name, "")
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
 def _jwt_secret_default() -> str:
     if os.environ.get("ENVIRONMENT", "development").strip().lower() == "production":
         return ""
     return "local_dev_vyntra_jwt_secret_change_before_production"
+
+
+def _bootstrap_default() -> bool:
+    return os.environ.get("ENVIRONMENT", "development").strip().lower() != "production"
 
 
 @dataclass(frozen=True)
@@ -32,6 +41,9 @@ class Settings:
     admin_api_token: str = os.environ.get("ADMIN_API_TOKEN", "")
     jwt_secret: str = os.environ.get("JWT_SECRET", _jwt_secret_default())
     admin_token_expire_minutes: int = int(os.environ.get("ADMIN_TOKEN_EXPIRE_MINUTES", "720"))
+    cors_allowed_origins: tuple[str, ...] = _csv_env("CORS_ALLOWED_ORIGINS")
+    admin_allowed_ips: tuple[str, ...] = _csv_env("ADMIN_ALLOWED_IPS")
+    agent_allowed_ips: tuple[str, ...] = _csv_env("AGENT_ALLOWED_IPS")
     bootstrap_company_name: str = os.environ.get("BOOTSTRAP_COMPANY_NAME", "VYNTRA Demo")
     bootstrap_admin_email: str = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "admin@vyntra.local")
     bootstrap_admin_name: str = os.environ.get("BOOTSTRAP_ADMIN_NAME", "VYNTRA Admin")
@@ -52,7 +64,8 @@ class Settings:
     )
     bootstrap_device_name: str = os.environ.get("BOOTSTRAP_DEVICE_NAME", "")
     bootstrap_device_token: str = os.environ.get("BOOTSTRAP_DEVICE_TOKEN", "")
-    allow_bootstrap: bool = _bool_env("ALLOW_BOOTSTRAP", True)
+    allow_bootstrap: bool = _bool_env("ALLOW_BOOTSTRAP", _bootstrap_default())
+    allow_legacy_admin_token: bool = _bool_env("ALLOW_LEGACY_ADMIN_TOKEN", False)
 
 
 settings = Settings()

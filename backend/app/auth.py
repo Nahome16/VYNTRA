@@ -184,6 +184,12 @@ def require_admin(
             auth_method="jwt",
         )
 
+    if not settings.allow_legacy_admin_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Bearer admin session required",
+        )
+
     expected = settings.admin_api_token.strip()
     if not expected:
         raise HTTPException(

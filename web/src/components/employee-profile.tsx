@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { EmptyState, Panel, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
@@ -111,7 +111,7 @@ export function EmployeeProfile({
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function loadProfile(nextDateFrom = dateFrom, nextDateTo = dateTo) {
+  const loadProfile = useCallback(async (nextDateFrom: string, nextDateTo: string) => {
     setLoading(true);
     setStatusText("Cargando perfil empleado...");
     const params = new URLSearchParams();
@@ -129,11 +129,14 @@ export function EmployeeProfile({
     } finally {
       setLoading(false);
     }
-  }
+  }, [apiGet, employeeId]);
 
   useEffect(() => {
-    void loadProfile();
-  }, [employeeId]);
+    const timer = window.setTimeout(() => {
+      void loadProfile(initialDateFrom || monthStartISO(), initialDateTo || todayISO());
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [initialDateFrom, initialDateTo, loadProfile]);
 
   const productiveApps = useMemo(
     () => (employeeDetail?.apps || []).filter((app) => app.classification === "productive").slice(0, 5),
@@ -206,7 +209,7 @@ export function EmployeeProfile({
           <span>Periodo</span>
           <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
           <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
-          <button className="row-action" onClick={() => void loadProfile()}>
+          <button className="row-action" onClick={() => void loadProfile(dateFrom, dateTo)}>
             Aplicar
           </button>
         </div>

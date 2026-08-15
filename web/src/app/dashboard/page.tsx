@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState, Panel, RefreshButton, StatCard, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
@@ -18,7 +18,7 @@ export default function DashboardPage() {
   const totals = dashboard?.totals;
   const topDays = useMemo(() => dashboard?.days.slice(-7).reverse() || [], [dashboard]);
 
-  async function loadDashboard() {
+  const loadDashboard = useCallback(async () => {
     setLoading(true);
     setStatusText("Actualizando datos...");
     try {
@@ -36,11 +36,15 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [apiGet]);
 
   useEffect(() => {
-    if (user) void loadDashboard();
-  }, [user]);
+    if (!user) return;
+    const timer = window.setTimeout(() => {
+      void loadDashboard();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadDashboard, user]);
 
   return (
     <AppShell

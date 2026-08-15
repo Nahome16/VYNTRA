@@ -23,6 +23,7 @@ from agent_event_uploader import AgentEventUploader
 import local_auth
 from config import Config
 from outbox import append_event, count_pending
+from rules_downloader import RulesDownloader
 from screenshots import ScreenshotEngine
 from shift import ShiftManager, fmt_hms
 
@@ -495,6 +496,7 @@ class StationWindow(ctk.CTk):
         self.shift = ShiftManager(cfg, on_state=self._on_state, on_tick=self._on_tick)
         self.screens = ScreenshotEngine(cfg, on_event=self._on_screen_event)
         self.event_uploader = AgentEventUploader(cfg, on_event=self._on_sync_event)
+        self.rules_downloader = RulesDownloader(cfg, on_event=self._on_rules_event)
         self.shift.on_shift_start = self.screens.start
         self.shift.on_shift_pause = self.screens.pause
         self.shift.on_shift_resume = self.screens.resume
@@ -516,6 +518,7 @@ class StationWindow(ctk.CTk):
             self._refresh_sync_status()
             self.after(200, lambda: self._draw_clock(0))
             self.event_uploader.start()
+            self.rules_downloader.start()
             self._start_healthcheck()
         except Exception as exc:
             self._ui_error = exc
@@ -831,6 +834,18 @@ class StationWindow(ctk.CTk):
             height=46,
             font=ctk.CTkFont(size=13, weight="bold"),
         ).pack(fill="x", pady=(10, 0))
+
+        ctk.CTkButton(
+            inner,
+            text="Descargar reglas de productividad",
+            command=self._download_rules_now,
+            fg_color="#059669",
+            hover_color="#047857",
+            text_color="#FFFFFF",
+            corner_radius=8,
+            height=46,
+            font=ctk.CTkFont(size=13, weight="bold"),
+        ).pack(fill="x", pady=(8, 0))
 
     def _support_card(self, parent, col, icon, title, detail):
         card = ctk.CTkFrame(
@@ -1224,6 +1239,63 @@ class StationWindow(ctk.CTk):
                 anchor="w",
             ).pack(fill="x", pady=4)
 
+    def _download_rules_now(self):
+        """Descarga reglas de productividad del backend inmediatamente."""
+        try:
+            success = self.rules_downloader.download_now()
+            rules_info = self.rules_downloader.get_rules_info()
+            
+            top = self._modal("Reglas de productividad", 500, 280)
+            cont = ctk.CTkFrame(top, fg_color="transparent")
+            cont.pack(fill="both", expand=True, padx=22, pady=20)
+            
+            if success:
+                ctk.CTkLabel(
+                    cont,
+                    text="✓ Reglas descargadas exitosamente",
+                    font=ctk.CTkFont(size=16, weight="bold"),
+                    text_color=SUCCESS,
+                ).pack(anchor="w", pady=(0, 14))
+                ctk.CTkLabel(
+                    cont,
+                    text=f"Total de reglas: {rules_info['count']}",
+                    font=ctk.CTkFont(size=13),
+                    text_color=TEXT_BODY,
+                ).pack(anchor="w", pady=4)
+                ctk.CTkLabel(
+                    cont,
+                    text=f"Última actualización: {rules_info['last_update'] or 'Nunca'}",
+                    font=ctk.CTkFont(size=12),
+                    text_color=TEXT_MUTED,
+                ).pack(anchor="w", pady=4)
+            else:
+                ctk.CTkLabel(
+                    cont,
+                    text="✗ Error al descargar reglas",
+                    font=ctk.CTkFont(size=16, weight="bold"),
+                    text_color=DANGER,
+                ).pack(anchor="w", pady=(0, 14))
+                ctk.CTkLabel(
+                    cont,
+                    text="Intenta nuevamente más tarde.",
+                    font=ctk.CTkFont(size=13),
+                    text_color=TEXT_BODY,
+                ).pack(anchor="w", pady=4)
+            
+            ctk.CTkButton(
+                cont,
+                text="Cerrar",
+                command=top.destroy,
+                height=42,
+                fg_color=PRIMARY,
+                hover_color=PRIMARY_DARK,
+                text_color="#FFFFFF",
+                corner_radius=8,
+                font=ctk.CTkFont(size=13, weight="bold"),
+            ).pack(fill="x", pady=(20, 0))
+        except Exception as exc:
+            pass
+
     def _modal_horas_extra(self):
         if self.shift.horas_extra_estado == "ACTIVA":
             self._modal_cronometro_horas_extra()
@@ -1518,6 +1590,12 @@ class StationWindow(ctk.CTk):
             self._ultima_captura_txt = msg.replace("Captura ", "", 1)[:5]
 
     def _on_sync_event(self, msg):
+        try:
+            self.after(0, self._refresh_sync_status)
+        except Exception:
+            pass
+
+    def _on_rules_event(self, msg):
         try:
             self.after(0, self._refresh_sync_status)
         except Exception:

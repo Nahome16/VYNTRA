@@ -16,4 +16,5 @@ backend/data/
 # Build artifacts
 build/
 dist/
+web.zip
 *.spec.bak

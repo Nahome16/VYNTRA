@@ -47,6 +47,7 @@ from app.models import (
     Role,
     Shift,
     ShiftEvent,
+    OvertimeAuthorization,
     StationRestoreCode,
     StationLoginEvent,
     User,
@@ -328,6 +329,36 @@ def serialize_restore_code(code: StationRestoreCode, employee: Employee | None =
         "used_at": code.used_at.isoformat() if code.used_at else None,
         "created_at": code.created_at.isoformat() if code.created_at else None,
     }
+
+
+def serialize_overtime_authorization(code: OvertimeAuthorization, employee: Employee | None = None) -> dict:
+    return {
+        "id": code.id,
+        "employee_id": code.employee_id,
+        "employee": employee.full_name if employee else None,
+        "email": employee.email if employee else "",
+        "code": code.code,
+        "status": code.status,
+        "reason": code.reason,
+        "assigned_minutes": code.assigned_minutes,
+        "valid_from": code.valid_from.isoformat(),
+        "valid_until": code.valid_until.isoformat(),
+        "used_at": code.started_at.isoformat() if code.started_at else None,
+        "created_at": code.created_at.isoformat() if code.created_at else None,
+    }
+
+
+def serialize_access_code(kind: str, code: StationRestoreCode | OvertimeAuthorization, employee: Employee | None = None) -> dict:
+    labels = {
+        "station_reopen": "Reabrir estacion",
+        "overtime": "Horas extra",
+    }
+    base = (
+        serialize_overtime_authorization(code, employee)
+        if kind == "overtime"
+        else serialize_restore_code(code, employee)
+    )
+    return {**base, "type": kind, "type_label": labels[kind]}
 
 
 def productivity_totals(blocks: list[ProductivityBlock]) -> dict:
@@ -1761,6 +1792,94 @@ def create_monitored_employee(
     }
 
 
+@app.patch("/api/settings/employees/{employee_id}")
+def update_monitored_employee(
+    employee_id: str,
+    payload: dict = Body(...),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    employee = db.get(Employee, employee_id)
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    company = resolve_admin_company(db, admin, employee.company_id)
+    if employee.company_id != company.id:
+        raise HTTPException(status_code=403, detail="Cannot edit employee from another company")
+
+    department = db.get(Department, employee.department_id) if employee.department_id else None
+    if "new_department" in payload and clean_text(payload.get("new_department"), 120):
+        new_department = clean_text(payload.get("new_department"), 120)
+        department = db.execute(
+            select(Department).where(
+                Department.company_id == company.id,
+                func.lower(Department.name) == new_department.lower(),
+            )
+        ).scalar_one_or_none()
+        if department is None:
+            department = Department(company_id=company.id, name=new_department)
+            db.add(department)
+            db.flush()
+        employee.department_id = department.id
+    elif "department_id" in payload:
+        department_id = clean_text(payload.get("department_id"), 36) or None
+        department = require_company_owned(db, Department, department_id, company.id, "Department") if department_id else None
+        employee.department_id = department_id
+
+    if "full_name" in payload:
+        full_name = clean_text(payload.get("full_name"), 180)
+        if len(full_name) < 2:
+            raise HTTPException(status_code=400, detail="Employee name is required")
+        employee.full_name = full_name
+
+    if "email" in payload:
+        email = clean_email(payload.get("email"))
+        duplicate_credential = db.execute(
+            select(EmployeeCredential).where(
+                EmployeeCredential.company_id == company.id,
+                EmployeeCredential.email == email,
+                EmployeeCredential.employee_id != employee.id,
+            )
+        ).scalar_one_or_none()
+        if duplicate_credential:
+            raise HTTPException(status_code=409, detail="Email already has station credentials")
+        employee.email = email
+        credential = db.execute(
+            select(EmployeeCredential).where(EmployeeCredential.employee_id == employee.id)
+        ).scalar_one_or_none()
+        if credential:
+            credential.email = email
+
+    if "status" in payload:
+        next_status = clean_text(payload.get("status"), 40)
+        if next_status not in {"active", "inactive"}:
+            raise HTTPException(status_code=400, detail="Invalid employee status")
+        employee.status = next_status
+        credentials = db.execute(
+            select(EmployeeCredential).where(EmployeeCredential.employee_id == employee.id)
+        ).scalars().all()
+        for credential in credentials:
+            credential.status = next_status
+
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="monitored_employee_updated",
+            entity_type="employee",
+            entity_id=employee.id,
+            payload_json=json_text(
+                {
+                    "department_id": employee.department_id,
+                    "status": employee.status,
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(employee)
+    return {"ok": True, "employee": serialize_employee(employee, department)}
+
+
 @app.get("/api/settings/restore-codes")
 def list_restore_codes(
     company_id: str | None = None,
@@ -1840,6 +1959,125 @@ def create_restore_code(
     return {
         "ok": True,
         "code": serialize_restore_code(restore_code, employee),
+        "delivery_status": "not_configured",
+        "note": "SMTP is not configured; code is returned for local testing.",
+    }
+
+
+@app.get("/api/settings/access-codes")
+def list_access_codes(
+    company_id: str | None = None,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    company = resolve_admin_company(db, admin, company_id)
+    station_codes = db.execute(
+        select(StationRestoreCode).where(StationRestoreCode.company_id == company.id)
+    ).scalars().all()
+    overtime_codes = db.execute(
+        select(OvertimeAuthorization).where(OvertimeAuthorization.company_id == company.id)
+    ).scalars().all()
+    employee_ids = [code.employee_id for code in station_codes] + [code.employee_id for code in overtime_codes]
+    employees = {}
+    if employee_ids:
+        employees = {
+            employee.id: employee
+            for employee in db.execute(select(Employee).where(Employee.id.in_(employee_ids))).scalars()
+        }
+    codes = [
+        serialize_access_code("station_reopen", code, employees.get(code.employee_id))
+        for code in station_codes
+    ] + [
+        serialize_access_code("overtime", code, employees.get(code.employee_id))
+        for code in overtime_codes
+    ]
+    codes.sort(key=lambda row: row.get("created_at") or "", reverse=True)
+    return {
+        "company": {"id": company.id, "name": company.name},
+        "codes": codes,
+    }
+
+
+@app.post("/api/settings/access-codes")
+def create_access_code(
+    payload: dict = Body(...),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    access_type = clean_text(payload.get("type"), 40)
+    if access_type not in {"station_reopen", "overtime"}:
+        raise HTTPException(status_code=400, detail="Invalid access code type")
+
+    employee_id = clean_text(payload.get("employee_id"), 36)
+    employee = db.get(Employee, employee_id)
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    company = resolve_admin_company(db, admin, employee.company_id)
+    if employee.company_id != company.id:
+        raise HTTPException(status_code=403, detail="Cannot create code for another company")
+    if employee.status != "active":
+        raise HTTPException(status_code=400, detail="Employee must be active")
+
+    valid_minutes = max(5, min(int(payload.get("valid_minutes") or 60), 1440))
+    issued_at = now_utc()
+    code_value = generate_restore_code()
+    while (
+        db.execute(select(StationRestoreCode).where(StationRestoreCode.code == code_value)).scalar_one_or_none()
+        or db.execute(select(OvertimeAuthorization).where(OvertimeAuthorization.code == code_value)).scalar_one_or_none()
+    ):
+        code_value = generate_restore_code()
+
+    if access_type == "overtime":
+        access_code = OvertimeAuthorization(
+            company_id=company.id,
+            employee_id=employee.id,
+            code=code_value,
+            reason=clean_text(payload.get("reason") or "Designar horas extra", 180),
+            assigned_minutes=max(5, min(int(payload.get("assigned_minutes") or valid_minutes), 1440)),
+            valid_from=issued_at,
+            valid_until=issued_at + timedelta(minutes=valid_minutes),
+            created_by_user_id=admin.user_id,
+        )
+        audit_action = "overtime_code_created"
+        audit_entity = "overtime_authorization"
+    else:
+        access_code = StationRestoreCode(
+            company_id=company.id,
+            employee_id=employee.id,
+            code=code_value,
+            reason=clean_text(payload.get("reason") or "Reabrir estacion de marcaje", 180),
+            valid_from=issued_at,
+            valid_until=issued_at + timedelta(minutes=valid_minutes),
+            created_by_user_id=admin.user_id,
+        )
+        audit_action = "station_restore_code_created"
+        audit_entity = "station_restore_code"
+
+    db.add(access_code)
+    db.flush()
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action=audit_action,
+            entity_type=audit_entity,
+            entity_id=access_code.id,
+            payload_json=json_text(
+                {
+                    "employee_id": employee.id,
+                    "email": employee.email,
+                    "type": access_type,
+                    "valid_minutes": valid_minutes,
+                    "delivery_status": "not_configured",
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(access_code)
+    return {
+        "ok": True,
+        "code": serialize_access_code(access_type, access_code, employee),
         "delivery_status": "not_configured",
         "note": "SMTP is not configured; code is returned for local testing.",
     }
@@ -2665,6 +2903,101 @@ def create_attendance_shift(
     return {
         "ok": True,
         "shift": serialize_shift_for_attendance(shift, {shift.id: fresh_events}),
+    }
+
+
+@app.get("/api/agent/rules")
+def get_agent_rules(
+    device: Device = Depends(require_device),
+    db: Session = Depends(get_db),
+):
+    """
+    Device endpoint to download productivity rules applicable to this device's employee.
+    Returns global rules and rules specific to the employee's department/position.
+    """
+    if not device.employee_id:
+        return {
+            "ok": True,
+            "device_id": device.id,
+            "employee_id": None,
+            "rules": [],
+        }
+    
+    employee = db.get(Employee, device.employee_id)
+    if not employee:
+        return {
+            "ok": True,
+            "device_id": device.id,
+            "employee_id": device.employee_id,
+            "rules": [],
+        }
+    
+    # Query rules applicable to this employee
+    query = select(ProductivityRule).where(
+        ProductivityRule.company_id == device.company_id,
+        ProductivityRule.is_active.is_(True),
+    )
+    
+    # Start with rules that apply to all (no department/position/employee filter)
+    global_rules = db.execute(
+        query.where(
+            ProductivityRule.department_id.is_(None),
+            ProductivityRule.position_id.is_(None),
+            ProductivityRule.employee_id.is_(None),
+        ).order_by(ProductivityRule.priority.desc())
+    ).scalars().all()
+    
+    # Then add department-specific rules
+    department_rules = []
+    if employee.department_id:
+        department_rules = db.execute(
+            query.where(
+                ProductivityRule.department_id == employee.department_id,
+                ProductivityRule.position_id.is_(None),
+                ProductivityRule.employee_id.is_(None),
+            ).order_by(ProductivityRule.priority.desc())
+        ).scalars().all()
+    
+    # Then add position-specific rules
+    position_rules = []
+    if employee.position_id:
+        position_rules = db.execute(
+            query.where(
+                ProductivityRule.position_id == employee.position_id,
+                ProductivityRule.employee_id.is_(None),
+            ).order_by(ProductivityRule.priority.desc())
+        ).scalars().all()
+    
+    # Finally add employee-specific rules (highest priority)
+    employee_rules = db.execute(
+        query.where(
+            ProductivityRule.employee_id == device.employee_id,
+        ).order_by(ProductivityRule.priority.desc())
+    ).scalars().all()
+    
+    # Combine all rules (employee-specific take precedence due to ordering)
+    all_rules = global_rules + department_rules + position_rules + employee_rules
+    
+    return {
+        "ok": True,
+        "device_id": device.id,
+        "company_id": device.company_id,
+        "employee_id": device.employee_id,
+        "employee_name": employee.full_name if employee else None,
+        "department_id": employee.department_id if employee else None,
+        "position_id": employee.position_id if employee else None,
+        "count": len(all_rules),
+        "rules": [
+            {
+                "id": rule.id,
+                "executable_name": rule.executable_name,
+                "title_contains": rule.title_contains,
+                "classification": rule.classification,
+                "priority": rule.priority,
+                "updated_at": rule.updated_at.isoformat() if rule.updated_at else None,
+            }
+            for rule in all_rules
+        ],
     }
 
 

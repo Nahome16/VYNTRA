@@ -120,6 +120,12 @@ export type StationRestoreCode = {
   created_at: string | null;
 };
 
+export type AccessCode = StationRestoreCode & {
+  type: "station_reopen" | "overtime";
+  type_label: string;
+  assigned_minutes?: number | null;
+};
+
 export type ProductivityRule = {
   id: string;
   company_id: string;

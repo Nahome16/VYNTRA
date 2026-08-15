@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState, Panel, RefreshButton, StatCard, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
@@ -141,8 +141,9 @@ export default function AttendancePage() {
   const [dateTo, setDateTo] = useState(todayISO());
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
+  const didInitialLoad = useRef(false);
 
-  async function loadAttendance(range?: { dateFrom?: string; dateTo?: string }) {
+  const loadAttendance = useCallback(async (range?: { dateFrom?: string; dateTo?: string }) => {
     setLoading(true);
     setStatusText("Actualizando asistencia...");
     const params = new URLSearchParams();
@@ -164,14 +165,19 @@ export default function AttendancePage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [apiGet, dateFrom, dateTo, selectedDepartment, selectedEmployee]);
 
   useEffect(() => {
-    if (user) void loadAttendance();
-  }, [user]);
+    if (!user || didInitialLoad.current) return;
+    didInitialLoad.current = true;
+    const timer = window.setTimeout(() => {
+      void loadAttendance();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadAttendance, user]);
 
-  const employees = overview?.employees || [];
-  const shifts = overview?.shifts || [];
+  const employees = useMemo(() => overview?.employees || [], [overview]);
+  const shifts = useMemo(() => overview?.shifts || [], [overview]);
   const employeeMap = useMemo(
     () => new Map(employees.map((employee) => [employee.id, employee])),
     [employees],
@@ -283,22 +289,28 @@ export default function AttendancePage() {
 
   useEffect(() => {
     if (!selectedAssociate) return;
-    setScheduleStart(selectedAssociate.schedule.start_time || "08:00");
-    setScheduleEnd(selectedAssociate.schedule.end_time || "17:00");
+    const timer = window.setTimeout(() => {
+      setScheduleStart(selectedAssociate.schedule.start_time || "08:00");
+      setScheduleEnd(selectedAssociate.schedule.end_time || "17:00");
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [selectedAssociate]);
 
   useEffect(() => {
-    const breakStart = selectedDayShift ? eventTime(selectedDayShift, "break_started") : null;
-    const breakEnd = selectedDayShift ? eventTime(selectedDayShift, "break_finished") : null;
-    const lunchStart = selectedDayShift ? eventTime(selectedDayShift, "lunch_started") : null;
-    const lunchEnd = selectedDayShift ? eventTime(selectedDayShift, "lunch_finished") : null;
-    setEntryTime(timeInput(selectedDayShift?.started_at || null));
-    setExitTime(timeInput(selectedDayShift?.ended_at || null));
-    setBreakStartTime(timeInput(breakStart));
-    setBreakEndTime(timeInput(breakEnd));
-    setLunchStartTime(timeInput(lunchStart));
-    setLunchEndTime(timeInput(lunchEnd));
-    setCorrectionReason("");
+    const timer = window.setTimeout(() => {
+      const breakStart = selectedDayShift ? eventTime(selectedDayShift, "break_started") : null;
+      const breakEnd = selectedDayShift ? eventTime(selectedDayShift, "break_finished") : null;
+      const lunchStart = selectedDayShift ? eventTime(selectedDayShift, "lunch_started") : null;
+      const lunchEnd = selectedDayShift ? eventTime(selectedDayShift, "lunch_finished") : null;
+      setEntryTime(timeInput(selectedDayShift?.started_at || null));
+      setExitTime(timeInput(selectedDayShift?.ended_at || null));
+      setBreakStartTime(timeInput(breakStart));
+      setBreakEndTime(timeInput(breakEnd));
+      setLunchStartTime(timeInput(lunchStart));
+      setLunchEndTime(timeInput(lunchEnd));
+      setCorrectionReason("");
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [selectedDayShift]);
 
   async function handleDetailDateChange(value: string) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState, Panel, RefreshButton, StatusLine } from "@/components/ui";
@@ -50,8 +50,9 @@ export default function EmployeesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
+  const didInitialLoad = useRef(false);
 
-  async function loadEmployees() {
+  const loadEmployees = useCallback(async () => {
     setLoading(true);
     setStatusText("Actualizando empleados...");
     const params = new URLSearchParams();
@@ -71,13 +72,18 @@ export default function EmployeesPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [apiGet, dateFrom, dateTo]);
 
   useEffect(() => {
-    if (user) void loadEmployees();
-  }, [user]);
+    if (!user || didInitialLoad.current) return;
+    didInitialLoad.current = true;
+    const timer = window.setTimeout(() => {
+      void loadEmployees();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadEmployees, user]);
 
-  const employees = catalogs?.employees || [];
+  const employees = useMemo(() => catalogs?.employees || [], [catalogs]);
   const departmentMap = useMemo(
     () => new Map(catalogs?.departments.map((department) => [department.id, department.name])),
     [catalogs],

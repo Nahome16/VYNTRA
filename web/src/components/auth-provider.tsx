@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { AdminUser } from "@/lib/types";
 
 type AuthContextValue = {
@@ -19,6 +19,15 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const tokenKey = "vyntra.admin.token";
 const userKey = "vyntra.admin.user";
 
+class ApiError extends Error {
+  status: number;
+
+  constructor(status: number) {
+    super(`HTTP ${status}`);
+    this.status = status;
+  }
+}
+
 async function requestJson<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -29,7 +38,7 @@ async function requestJson<T>(path: string, token: string, init: RequestInit = {
     },
     cache: "no-store",
   });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (!response.ok) throw new ApiError(response.status);
   return response.json();
 }
 
@@ -39,20 +48,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const storedToken = window.localStorage.getItem(tokenKey) || "";
-    const storedUser = window.localStorage.getItem(userKey);
-    setToken(storedToken);
-    if (storedUser) {
-      try {
-        setUser(JSON.parse(storedUser));
-      } catch {
-        window.localStorage.removeItem(userKey);
+    const timer = window.setTimeout(() => {
+      const storedToken = window.localStorage.getItem(tokenKey) || "";
+      const storedUser = window.localStorage.getItem(userKey);
+      setToken(storedToken);
+      if (storedUser) {
+        try {
+          setUser(JSON.parse(storedUser));
+        } catch {
+          window.localStorage.removeItem(userKey);
+        }
       }
-    }
-    setReady(true);
+      setReady(true);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
   }, []);
 
-  async function login(email: string, password: string) {
+  const login = useCallback(async (email: string, password: string) => {
     const payload = await requestJson<{
       access_token: string;
       user: AdminUser;
@@ -64,14 +77,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(payload.user);
     window.localStorage.setItem(tokenKey, payload.access_token);
     window.localStorage.setItem(userKey, JSON.stringify(payload.user));
-  }
+  }, []);
 
-  function logout() {
+  const logout = useCallback(() => {
     setToken("");
     setUser(null);
     window.localStorage.removeItem(tokenKey);
     window.localStorage.removeItem(userKey);
-  }
+  }, []);
+
+  const requestAuthorized = useCallback(
+    async <T,>(path: string, init: RequestInit = {}) => {
+      try {
+        return await requestJson<T>(path, token, init);
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          logout();
+        }
+        throw error;
+      }
+    },
+    [logout, token],
+  );
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -80,19 +107,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ready,
       login,
       logout,
-      apiGet: <T,>(path: string) => requestJson<T>(path, token),
+      apiGet: <T,>(path: string) => requestAuthorized<T>(path),
       apiPost: <T,>(path: string, body: unknown) =>
-        requestJson<T>(path, token, {
+        requestAuthorized<T>(path, {
           method: "POST",
           body: JSON.stringify(body),
         }),
       apiPatch: <T,>(path: string, body: unknown) =>
-        requestJson<T>(path, token, {
+        requestAuthorized<T>(path, {
           method: "PATCH",
           body: JSON.stringify(body),
         }),
     }),
-    [ready, token, user],
+    [login, logout, ready, requestAuthorized, token, user],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

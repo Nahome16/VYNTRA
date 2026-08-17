@@ -67,5 +67,36 @@ class Settings:
     allow_bootstrap: bool = _bool_env("ALLOW_BOOTSTRAP", _bootstrap_default())
     allow_legacy_admin_token: bool = _bool_env("ALLOW_LEGACY_ADMIN_TOKEN", False)
 
+    # --- Correo saliente -------------------------------------------------
+    smtp_host: str = os.environ.get("SMTP_HOST", "")
+    smtp_port: int = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user: str = os.environ.get("SMTP_USER", "")
+    smtp_password: str = os.environ.get("SMTP_PASSWORD", "")
+    smtp_starttls: bool = _bool_env("SMTP_STARTTLS", True)
+    smtp_ssl: bool = _bool_env("SMTP_SSL", False)
+    smtp_timeout_seconds: int = int(os.environ.get("SMTP_TIMEOUT_SECONDS", "20"))
+    mail_from: str = os.environ.get("MAIL_FROM", "")
+    mail_from_name: str = os.environ.get("MAIL_FROM_NAME", "VYNTRA")
+    mail_reply_to: str = os.environ.get("MAIL_REPLY_TO", "")
+
+    # --- Activación y contraseñas ----------------------------------------
+    activation_ttl_hours: int = int(os.environ.get("ACTIVATION_TTL_HOURS", "72"))
+    activation_max_attempts: int = int(os.environ.get("ACTIVATION_MAX_ATTEMPTS", "5"))
+    password_min_length: int = int(os.environ.get("PASSWORD_MIN_LENGTH", "10"))
+    station_lockout_threshold: int = int(os.environ.get("STATION_LOCKOUT_THRESHOLD", "8"))
+    station_lockout_minutes: int = int(os.environ.get("STATION_LOCKOUT_MINUTES", "15"))
+    # Solo fuera de producción: si no hay SMTP, devuelve el código al administrador.
+    expose_activation_code_without_smtp: bool = _bool_env(
+        "EXPOSE_ACTIVATION_CODE_WITHOUT_SMTP", _bootstrap_default()
+    )
+
+    @property
+    def smtp_configured(self) -> bool:
+        return bool(self.smtp_host and (self.mail_from or self.smtp_user))
+
+    @property
+    def effective_mail_from(self) -> str:
+        return self.mail_from or self.smtp_user
+
 
 settings = Settings()

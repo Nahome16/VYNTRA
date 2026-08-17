@@ -18,7 +18,7 @@ from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, Form, HTTPExc
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, inspect as sa_inspect, select, text as sa_text, update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -42,11 +42,13 @@ from app.models import (
     Department,
     Device,
     Employee,
+    EmployeeActivationToken,
     EmployeeCredential,
     EmployeeSchedule,
     EvidenceFile,
     EvidenceUploadAttempt,
     LoginAttempt,
+    LoginLockout,
     Position,
     ProductivityBlock,
     ProductivityRule,
@@ -61,6 +63,7 @@ from app.models import (
     new_id,
     now_utc,
 )
+from app import mailer
 from app.storage import (
     IMAGE_CONTENT_TYPES,
     build_storage_path,
@@ -195,9 +198,28 @@ class AgentEventsPayload(StrictPayload):
     events: list[dict] = Field(..., max_length=200)
 
 
+class StationActivatePayload(StrictPayload):
+    email: str = Field(..., min_length=3, max_length=180)
+    code: str = Field(..., min_length=6, max_length=20)
+    new_password: str = Field(..., min_length=1, max_length=128)
+
+
+class StationPasswordPayload(StrictPayload):
+    email: str = Field(..., min_length=3, max_length=180)
+    current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=1, max_length=128)
+
+
+class StationForgotPayload(StrictPayload):
+    email: str = Field(..., min_length=3, max_length=180)
+
+
 RATE_LIMITS = {
     ("POST", "/api/admin/login"): (8, 300),
     ("POST", "/api/station/login"): (20, 300),
+    ("POST", "/api/station/activate"): (10, 300),
+    ("POST", "/api/station/password"): (10, 300),
+    ("POST", "/api/station/password/forgot"): (5, 900),
     ("POST", "/api/evidence/upload"): (60, 60),
     ("POST", "/api/agent/events"): (120, 60),
 }
@@ -324,6 +346,223 @@ def hash_password(password: str) -> str:
 
 def generate_restore_code() -> str:
     return "-".join(secrets.token_hex(2).upper() for _ in range(3))
+
+
+# ---------------------------------------------------------------------------
+# Activacion de cuentas y contrasenas de estacion
+# ---------------------------------------------------------------------------
+
+# Alfabeto sin caracteres ambiguos (0/O, 1/I/L) porque el codigo se teclea a mano.
+ACTIVATION_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+COMMON_PASSWORDS = {
+    "password", "contrasena", "contrasena1", "12345678", "123456789", "1234567890",
+    "qwertyuiop", "vyntra2026", "bienvenido", "empleado1", "administrador",
+}
+
+
+def as_utc(value: datetime | None) -> datetime | None:
+    """SQLite devuelve fechas sin zona; se normalizan antes de compararlas."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def generate_activation_code() -> str:
+    """Codigo de 8 caracteres (~40 bits) mostrado como ABCD-EFGH."""
+    raw = "".join(secrets.choice(ACTIVATION_ALPHABET) for _ in range(8))
+    return f"{raw[:4]}-{raw[4:]}"
+
+
+def normalize_activation_code(value: object) -> str:
+    text = re.sub(r"[^A-Za-z0-9]", "", str(value or "")).upper()
+    return f"{text[:4]}-{text[4:8]}" if len(text) == 8 else text
+
+
+def hash_activation_code(code: str) -> str:
+    return hashlib.sha256(normalize_activation_code(code).encode("utf-8")).hexdigest()
+
+
+def validate_password_policy(password: str, email: str = "", full_name: str = "") -> None:
+    """Lanza 400 si la contrasena no cumple la politica minima."""
+    value = password or ""
+    minimum = settings.password_min_length
+    if len(value) < minimum:
+        raise HTTPException(
+            status_code=400,
+            detail=f"La contrasena debe tener al menos {minimum} caracteres",
+        )
+    if len(value) > 128:
+        raise HTTPException(status_code=400, detail="La contrasena es demasiado larga")
+    classes = sum(
+        [
+            any(c.islower() for c in value),
+            any(c.isupper() for c in value),
+            any(c.isdigit() for c in value),
+            any(not c.isalnum() for c in value),
+        ]
+    )
+    if classes < 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Combina mayusculas, minusculas, numeros y un simbolo",
+        )
+    lowered = value.lower()
+    if lowered in COMMON_PASSWORDS:
+        raise HTTPException(status_code=400, detail="Esa contrasena es demasiado comun")
+    local_part = (email or "").split("@", 1)[0].lower()
+    if local_part and len(local_part) >= 4 and local_part in lowered:
+        raise HTTPException(status_code=400, detail="La contrasena no puede contener tu correo")
+    for chunk in (full_name or "").lower().split():
+        if len(chunk) >= 4 and chunk in lowered:
+            raise HTTPException(status_code=400, detail="La contrasena no puede contener tu nombre")
+
+
+def station_lockout_key(email: str, ip_address: str) -> tuple[str, str]:
+    return (ip_address[:45] or "unknown", (email or "")[:180])
+
+
+def check_station_lockout(db: Session, email: str, ip_address: str) -> None:
+    """Bloquea temporalmente tras demasiados intentos fallidos."""
+    ip_value, email_value = station_lockout_key(email, ip_address)
+    lockout = db.execute(
+        select(LoginLockout).where(
+            LoginLockout.ip_address == ip_value,
+            LoginLockout.email_attempted == email_value,
+        )
+    ).scalar_one_or_none()
+    locked_until = as_utc(lockout.locked_until) if lockout else None
+    if locked_until and locked_until > now_utc():
+        remaining = int((locked_until - now_utc()).total_seconds() // 60) + 1
+        raise HTTPException(
+            status_code=429,
+            detail=f"Demasiados intentos. Intenta de nuevo en {remaining} minutos",
+        )
+
+
+def register_station_attempt(db: Session, email: str, ip_address: str, success: bool) -> None:
+    ip_value, email_value = station_lockout_key(email, ip_address)
+    lockout = db.execute(
+        select(LoginLockout).where(
+            LoginLockout.ip_address == ip_value,
+            LoginLockout.email_attempted == email_value,
+        )
+    ).scalar_one_or_none()
+    if lockout is None:
+        lockout = LoginLockout(ip_address=ip_value, email_attempted=email_value, failed_count=0)
+        db.add(lockout)
+    if success:
+        lockout.failed_count = 0
+        lockout.locked_until = None
+    else:
+        lockout.failed_count = int(lockout.failed_count or 0) + 1
+        if lockout.failed_count >= settings.station_lockout_threshold:
+            lockout.locked_until = now_utc() + timedelta(minutes=settings.station_lockout_minutes)
+            lockout.failed_count = 0
+    lockout.updated_at = now_utc()
+
+
+def issue_activation_token(
+    db: Session,
+    credential: EmployeeCredential,
+    purpose: str,
+    created_by_user_id: str | None = None,
+) -> tuple[EmployeeActivationToken, str]:
+    """Invalida los codigos previos y emite uno nuevo. Devuelve (token, codigo)."""
+    db.execute(
+        sa_update(EmployeeActivationToken)
+        .where(
+            EmployeeActivationToken.credential_id == credential.id,
+            EmployeeActivationToken.used_at.is_(None),
+            EmployeeActivationToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=now_utc())
+    )
+    code = generate_activation_code()
+    token = EmployeeActivationToken(
+        company_id=credential.company_id,
+        employee_id=credential.employee_id,
+        credential_id=credential.id,
+        code_sha256=hash_activation_code(code),
+        purpose=purpose,
+        expires_at=now_utc() + timedelta(hours=settings.activation_ttl_hours),
+        created_by_user_id=created_by_user_id,
+    )
+    db.add(token)
+    db.flush()
+    return token, code
+
+
+def consume_activation_token(
+    db: Session, credential: EmployeeCredential, code: str
+) -> EmployeeActivationToken:
+    """Valida el codigo y lo marca como usado. Lanza 400/429 si no procede."""
+    token = db.execute(
+        select(EmployeeActivationToken)
+        .where(
+            EmployeeActivationToken.credential_id == credential.id,
+            EmployeeActivationToken.used_at.is_(None),
+            EmployeeActivationToken.revoked_at.is_(None),
+        )
+        .order_by(EmployeeActivationToken.created_at.desc())
+    ).scalars().first()
+
+    if token is None:
+        raise HTTPException(status_code=400, detail="No hay un codigo activo. Solicita uno nuevo")
+    if as_utc(token.expires_at) <= now_utc():
+        token.revoked_at = now_utc()
+        db.commit()
+        raise HTTPException(status_code=400, detail="El codigo caduco. Solicita uno nuevo")
+    if token.attempts >= settings.activation_max_attempts:
+        token.revoked_at = now_utc()
+        db.commit()
+        raise HTTPException(status_code=429, detail="Codigo bloqueado por intentos fallidos")
+
+    if not secrets.compare_digest(token.code_sha256, hash_activation_code(code)):
+        token.attempts = int(token.attempts or 0) + 1
+        db.commit()
+        raise HTTPException(status_code=400, detail="Codigo incorrecto")
+
+    token.used_at = now_utc()
+    return token
+
+
+def deliver_activation_code(
+    employee: Employee, company: Company, code: str, purpose: str
+) -> str:
+    hours = settings.activation_ttl_hours
+    if purpose == "reset":
+        return mailer.send_reset_email(employee.email, employee.full_name, company.name, code, hours)
+    return mailer.send_activation_email(employee.email, employee.full_name, company.name, code, hours)
+
+
+def record_delivery_result(token_id: str, status_value: str) -> None:
+    """Se ejecuta en segundo plano: el envio no debe bloquear la respuesta."""
+    session = SessionLocal()
+    try:
+        token = session.get(EmployeeActivationToken, token_id)
+        if token is None:
+            return
+        token.delivery_status = status_value
+        if status_value == mailer.SENT:
+            token.delivered_at = now_utc()
+        session.commit()
+    finally:
+        session.close()
+
+
+def send_and_record(token_id: str, employee_id: str, company_id: str, code: str, purpose: str) -> None:
+    session = SessionLocal()
+    try:
+        employee = session.get(Employee, employee_id)
+        company = session.get(Company, company_id)
+        if employee is None or company is None:
+            return
+        result = deliver_activation_code(employee, company, code, purpose)
+    finally:
+        session.close()
+    record_delivery_result(token_id, result)
 
 
 def percent(part: int | float, whole: int | float) -> float:
@@ -1578,10 +1817,42 @@ def bootstrap_data():
         db.commit()
 
 
+def ensure_new_columns() -> None:
+    """Anade columnas nuevas a tablas ya existentes.
+
+    create_all() crea tablas que faltan, pero nunca altera las existentes. Sin
+    esto, una base de datos anterior se quedaria sin los campos de activacion.
+    Es idempotente y sirve hasta que el proyecto adopte Alembic.
+    """
+    pending = {
+        "employee_credentials": [
+            ("must_change_password", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("password_updated_at", "TIMESTAMP WITH TIME ZONE"),
+            ("activated_at", "TIMESTAMP WITH TIME ZONE"),
+        ],
+    }
+    inspector = sa_inspect(engine)
+    is_sqlite = engine.dialect.name == "sqlite"
+    for table, columns in pending.items():
+        if table not in inspector.get_table_names():
+            continue
+        existing = {col["name"] for col in inspector.get_columns(table)}
+        for name, ddl in columns:
+            if name in existing:
+                continue
+            definition = ddl
+            if is_sqlite:
+                # SQLite no admite TIME ZONE ni DEFAULT FALSE en ADD COLUMN.
+                definition = ddl.replace(" WITH TIME ZONE", "").replace("FALSE", "0")
+            with engine.begin() as connection:
+                connection.execute(sa_text(f"ALTER TABLE {table} ADD COLUMN {name} {definition}"))
+
+
 @app.on_event("startup")
 def on_startup():
     os.makedirs(settings.storage_dir, exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    ensure_new_columns()
     bootstrap_data()
 
 
@@ -1699,6 +1970,210 @@ def admin_me(
     }
 
 
+def _station_event(
+    db: Session,
+    device: Device,
+    credential: EmployeeCredential | None,
+    email: str,
+    success: bool,
+    reason: str,
+    ip_address: str,
+    action: str,
+) -> None:
+    db.add(
+        StationLoginEvent(
+            company_id=device.company_id,
+            employee_id=credential.employee_id if credential else device.employee_id,
+            credential_id=credential.id if credential else None,
+            device_id=device.id,
+            email_attempted=email,
+            success=success,
+            failure_reason="" if success else reason,
+            occurred_at=now_utc(),
+            ip_address=ip_address[:80],
+            payload_json=json_text({"email": email, "action": action}),
+        )
+    )
+
+
+@app.post("/api/station/activate")
+def station_activate(
+    request: Request,
+    payload: StationActivatePayload,
+    background: BackgroundTasks,
+    device: Device = Depends(require_device),
+    db: Session = Depends(get_db),
+):
+    """Primer acceso: el asistente canjea su codigo y define su contrasena."""
+    email = clean_email(payload.email)
+    ip_address = client_ip(request)
+    check_station_lockout(db, email, ip_address)
+
+    credential = find_employee_credential(db, device.company_id, email)
+    employee = db.get(Employee, credential.employee_id) if credential else None
+
+    if credential is None or employee is None or employee.status != "active":
+        register_station_attempt(db, email, ip_address, False)
+        _station_event(db, device, None, email, False, "unknown_account", ip_address, "activate")
+        db.commit()
+        raise HTTPException(status_code=400, detail="Codigo o correo incorrecto")
+    if credential.status == "disabled":
+        register_station_attempt(db, email, ip_address, False)
+        _station_event(db, device, credential, email, False, "disabled", ip_address, "activate")
+        db.commit()
+        raise HTTPException(status_code=403, detail="La cuenta esta deshabilitada")
+
+    validate_password_policy(payload.new_password, email, employee.full_name)
+    try:
+        consume_activation_token(db, credential, payload.code)
+    except HTTPException:
+        register_station_attempt(db, email, ip_address, False)
+        _station_event(db, device, credential, email, False, "bad_code", ip_address, "activate")
+        db.commit()
+        raise
+
+    credential.password_hash = hash_password(payload.new_password)
+    credential.status = "active"
+    credential.must_change_password = False
+    credential.password_updated_at = now_utc()
+    credential.activated_at = credential.activated_at or now_utc()
+    register_station_attempt(db, email, ip_address, True)
+    _station_event(db, device, credential, email, True, "", ip_address, "activate")
+    db.add(
+        AuditLog(
+            company_id=device.company_id,
+            user_id=None,
+            action="station_account_activated",
+            entity_type="employee_credential",
+            entity_id=credential.id,
+            payload_json=json_text({"email": email, "device_id": device.id}),
+        )
+    )
+    db.commit()
+
+    background.add_task(
+        mailer.send_password_changed_email,
+        email,
+        employee.full_name,
+        device.company.name if device.company else "",
+        now_utc().strftime("%d/%m/%Y %H:%M UTC"),
+    )
+    return {"ok": True, "status": "active", "message": "Cuenta activada"}
+
+
+@app.post("/api/station/password")
+def station_change_password(
+    request: Request,
+    payload: StationPasswordPayload,
+    background: BackgroundTasks,
+    device: Device = Depends(require_device),
+    db: Session = Depends(get_db),
+):
+    """Boton de cambio de contrasena en la estacion de marcaje."""
+    email = clean_email(payload.email)
+    ip_address = client_ip(request)
+    check_station_lockout(db, email, ip_address)
+
+    credential = find_employee_credential(db, device.company_id, email)
+    employee = db.get(Employee, credential.employee_id) if credential else None
+    valid = (
+        credential is not None
+        and employee is not None
+        and credential.status == "active"
+        and employee.status == "active"
+        and verify_password_hash(payload.current_password, credential.password_hash)
+    )
+    if not valid:
+        register_station_attempt(db, email, ip_address, False)
+        _station_event(db, device, credential, email, False, "invalid_credentials", ip_address, "password_change")
+        db.commit()
+        raise HTTPException(status_code=401, detail="Correo o contrasena actual incorrecta")
+
+    validate_password_policy(payload.new_password, email, employee.full_name)
+    if verify_password_hash(payload.new_password, credential.password_hash):
+        raise HTTPException(status_code=400, detail="La contrasena nueva debe ser distinta de la actual")
+
+    credential.password_hash = hash_password(payload.new_password)
+    credential.must_change_password = False
+    credential.password_updated_at = now_utc()
+    # Cambiar la contrasena invalida cualquier codigo de recuperacion pendiente.
+    db.execute(
+        sa_update(EmployeeActivationToken)
+        .where(
+            EmployeeActivationToken.credential_id == credential.id,
+            EmployeeActivationToken.used_at.is_(None),
+            EmployeeActivationToken.revoked_at.is_(None),
+        )
+        .values(revoked_at=now_utc())
+    )
+    register_station_attempt(db, email, ip_address, True)
+    _station_event(db, device, credential, email, True, "", ip_address, "password_change")
+    db.add(
+        AuditLog(
+            company_id=device.company_id,
+            user_id=None,
+            action="station_password_changed",
+            entity_type="employee_credential",
+            entity_id=credential.id,
+            payload_json=json_text({"email": email, "device_id": device.id}),
+        )
+    )
+    db.commit()
+
+    background.add_task(
+        mailer.send_password_changed_email,
+        email,
+        employee.full_name,
+        device.company.name if device.company else "",
+        now_utc().strftime("%d/%m/%Y %H:%M UTC"),
+    )
+    return {"ok": True, "message": "Contrasena actualizada"}
+
+
+@app.post("/api/station/password/forgot")
+def station_forgot_password(
+    request: Request,
+    payload: StationForgotPayload,
+    background: BackgroundTasks,
+    device: Device = Depends(require_device),
+    db: Session = Depends(get_db),
+):
+    """Autoservicio: envia un codigo nuevo sin intervencion del administrador."""
+    email = clean_email(payload.email)
+    ip_address = client_ip(request)
+    check_station_lockout(db, email, ip_address)
+
+    credential = find_employee_credential(db, device.company_id, email)
+    employee = db.get(Employee, credential.employee_id) if credential else None
+
+    # Respuesta uniforme: no revela si el correo existe.
+    generic = {
+        "ok": True,
+        "message": "Si el correo esta registrado, recibiras un codigo en unos minutos",
+    }
+    if credential is None or employee is None or credential.status == "disabled":
+        register_station_attempt(db, email, ip_address, False)
+        _station_event(db, device, credential, email, False, "unknown_account", ip_address, "forgot")
+        db.commit()
+        return generic
+
+    token, code = issue_activation_token(db, credential, "reset", None)
+    _station_event(db, device, credential, email, True, "", ip_address, "forgot")
+    db.add(
+        AuditLog(
+            company_id=device.company_id,
+            user_id=None,
+            action="station_password_reset_requested",
+            entity_type="employee_credential",
+            entity_id=credential.id,
+            payload_json=json_text({"email": email, "device_id": device.id}),
+        )
+    )
+    db.commit()
+    background.add_task(send_and_record, token.id, employee.id, credential.company_id, code, "reset")
+    return generic
+
+
 @app.post("/api/station/login")
 def station_login(
     request: Request,
@@ -1739,15 +2214,32 @@ def station_login(
         db.commit()
         raise HTTPException(status_code=400, detail="Missing credentials")
 
+    check_station_lockout(db, email, client_ip_address)
+
     credential = find_employee_credential(db, device.company_id, email)
     employee = db.get(Employee, credential.employee_id) if credential else None
+
+    # Una cuenta sin activar no puede iniciar sesion: primero canjea su codigo.
+    if credential is not None and credential.status == "pending_activation":
+        register_station_attempt(db, email, client_ip_address, False)
+        _station_event(
+            db, device, credential, email, False, "activation_required", client_ip_address, "login"
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=403,
+            detail="Tu cuenta aun no esta activada. Usa el codigo que recibiste por correo",
+        )
+
     success = (
         credential is not None
         and employee is not None
         and credential.status == "active"
         and employee.status == "active"
+        and bool(credential.password_hash)
         and verify_password_hash(password, credential.password_hash)
     )
+    register_station_attempt(db, email, client_ip_address, success)
 
     db.add(
         LoginAttempt(
@@ -1802,6 +2294,13 @@ def station_login(
         "credential": {
             "id": credential.id,
             "email": credential.email,
+            # El agente debe forzar la pantalla de cambio cuando sea true.
+            "must_change_password": bool(credential.must_change_password),
+            "password_updated_at": (
+                credential.password_updated_at.isoformat()
+                if credential.password_updated_at
+                else None
+            ),
         },
         "device": {
             "id": device.id,
@@ -1896,6 +2395,7 @@ def create_department(
 @app.post("/api/settings/employees")
 def create_monitored_employee(
     payload: EmployeeCreatePayload,
+    background: BackgroundTasks,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -1937,7 +2437,9 @@ def create_monitored_employee(
         select(func.count()).select_from(Employee).where(Employee.company_id == company.id)
     ).scalar_one()
     employee_code = clean_text(payload.get("employee_code"), 80) or f"EMP-{int(next_count or 0) + 1:03d}"
-    password = generate_password()
+    if not email:
+        raise HTTPException(status_code=400, detail="El correo es obligatorio para enviar la activacion")
+
     employee = Employee(
         company_id=company.id,
         department_id=department_id,
@@ -1948,14 +2450,19 @@ def create_monitored_employee(
     )
     db.add(employee)
     db.flush()
+    # Sin contrasena: la define el propio asistente al activar su cuenta.
     credential = EmployeeCredential(
         company_id=company.id,
         employee_id=employee.id,
         email=email,
-        password_hash=hash_password(password),
-        status="active",
+        password_hash="",
+        status="pending_activation",
+        must_change_password=True,
     )
     db.add(credential)
+    db.flush()
+    token, code = issue_activation_token(db, credential, "activation", admin.user_id)
+
     db.add(
         AuditLog(
             company_id=company.id,
@@ -1967,23 +2474,79 @@ def create_monitored_employee(
                 {
                     "email": email,
                     "department_id": department_id,
-                    "email_delivery": "not_configured",
+                    "activation_token_id": token.id,
+                    "expires_at": token.expires_at.isoformat(),
                 }
             ),
         )
     )
     db.commit()
     db.refresh(employee)
-    return {
+
+    background.add_task(send_and_record, token.id, employee.id, company.id, code, "activation")
+
+    response = {
         "ok": True,
         "employee": serialize_employee(employee, department),
-        "credentials": {
+        "activation": {
             "email": email,
-            "password": password,
-            "delivery_status": "not_configured",
-            "note": "SMTP is not configured; password is returned once for local testing.",
+            "status": "pending_activation",
+            "expires_at": token.expires_at.isoformat(),
+            "delivery": "sending" if settings.smtp_configured else mailer.NOT_CONFIGURED,
         },
     }
+    # Sin SMTP el administrador quedaria bloqueado; fuera de produccion se
+    # devuelve el codigo una sola vez para poder probar el flujo completo.
+    if not settings.smtp_configured and settings.expose_activation_code_without_smtp:
+        response["activation"]["code"] = code
+        response["activation"]["note"] = (
+            "SMTP no configurado. Este codigo se muestra solo una vez y solo fuera de produccion."
+        )
+    return response
+
+
+@app.post("/api/settings/employees/{employee_id}/activation")
+def resend_activation(
+    employee_id: str,
+    background: BackgroundTasks,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Reenvia el codigo de activacion e invalida el anterior."""
+    company = resolve_admin_company(db, admin, None)
+    employee = require_company_owned(db, Employee, employee_id, company.id, "Employee")
+    credential = db.execute(
+        select(EmployeeCredential).where(EmployeeCredential.employee_id == employee.id)
+    ).scalar_one_or_none()
+    if credential is None:
+        raise HTTPException(status_code=404, detail="El empleado no tiene credencial de estacion")
+    if not employee.email:
+        raise HTTPException(status_code=400, detail="El empleado no tiene correo registrado")
+
+    purpose = "activation" if credential.status == "pending_activation" else "reset"
+    token, code = issue_activation_token(db, credential, purpose, admin.user_id)
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="station_activation_resent",
+            entity_type="employee",
+            entity_id=employee.id,
+            payload_json=json_text({"purpose": purpose, "activation_token_id": token.id}),
+        )
+    )
+    db.commit()
+    background.add_task(send_and_record, token.id, employee.id, company.id, code, purpose)
+
+    result = {
+        "ok": True,
+        "purpose": purpose,
+        "expires_at": token.expires_at.isoformat(),
+        "delivery": "sending" if settings.smtp_configured else mailer.NOT_CONFIGURED,
+    }
+    if not settings.smtp_configured and settings.expose_activation_code_without_smtp:
+        result["code"] = code
+    return result
 
 
 @app.patch("/api/settings/employees/{employee_id}")

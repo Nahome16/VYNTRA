@@ -161,11 +161,42 @@ class EmployeeCredential(Base):
     employee_id: Mapped[str] = mapped_column(ForeignKey("employees.id"), nullable=False)
     email: Mapped[str] = mapped_column(String(180), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    # active | pending_activation | disabled
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Obliga a definir contrasena propia en el siguiente ingreso.
+    must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    password_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     employee: Mapped[Employee] = relationship(back_populates="credentials")
+
+
+class EmployeeActivationToken(Base):
+    """Codigo de un solo uso para activar la cuenta o restablecer la contrasena.
+
+    Solo se guarda el hash del codigo: ni el administrador ni la base de datos
+    conservan el valor en claro.
+    """
+
+    __tablename__ = "employee_activation_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False)
+    employee_id: Mapped[str] = mapped_column(ForeignKey("employees.id"), nullable=False)
+    credential_id: Mapped[str] = mapped_column(ForeignKey("employee_credentials.id"), nullable=False)
+    code_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # activation | reset
+    purpose: Mapped[str] = mapped_column(String(20), nullable=False, default="activation")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    delivery_status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
 class ConsentRecord(Base):

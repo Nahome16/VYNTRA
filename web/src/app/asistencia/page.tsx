@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState, Panel, RefreshButton, StatCard, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
+import { usePreferences } from "@/components/preferences-provider";
 import { AttendanceEmployee, AttendanceOverviewResponse, AttendanceShift } from "@/lib/types";
 import { formatDuration, fullDate } from "@/lib/format";
 
@@ -74,8 +75,8 @@ function workedSeconds(shift?: AttendanceShift) {
   return Math.max(0, (shift.work_seconds || 0) - (shift.break_seconds || 0) - (shift.lunch_seconds || 0));
 }
 
-function employeeLabel(employee: AttendanceEmployee | undefined) {
-  return employee?.full_name || "Empleado no encontrado";
+function employeeLabel(employee: AttendanceEmployee | undefined, fallback: string) {
+  return employee?.full_name || fallback;
 }
 
 function initialsFor(name: string) {
@@ -122,6 +123,7 @@ function dateTimeFromInput(date: string, time: string) {
 
 export default function AttendancePage() {
   const { apiGet, apiPost, apiPatch, user } = useAuth();
+  const { t } = usePreferences();
   const [view, setView] = useState<AttendanceView>("history");
   const [overview, setOverview] = useState<AttendanceOverviewResponse | null>(null);
   const [selectedDepartment, setSelectedDepartment] = useState("");
@@ -145,7 +147,7 @@ export default function AttendancePage() {
 
   const loadAttendance = useCallback(async (range?: { dateFrom?: string; dateTo?: string }) => {
     setLoading(true);
-    setStatusText("Actualizando asistencia...");
+    setStatusText(t("Actualizando asistencia..."));
     const params = new URLSearchParams();
     const nextDateFrom = range?.dateFrom ?? dateFrom;
     const nextDateTo = range?.dateTo ?? dateTo;
@@ -159,13 +161,13 @@ export default function AttendancePage() {
         `/api/attendance/overview?${params.toString()}`,
       );
       setOverview(nextOverview);
-      setStatusText("Datos actualizados");
+      setStatusText(t("Datos actualizados"));
     } catch {
-      setStatusText("No se pudo cargar asistencia");
+      setStatusText(t("No se pudo cargar asistencia"));
     } finally {
       setLoading(false);
     }
-  }, [apiGet, dateFrom, dateTo, selectedDepartment, selectedEmployee]);
+  }, [apiGet, dateFrom, dateTo, selectedDepartment, selectedEmployee, t]);
 
   useEffect(() => {
     if (!user || didInitialLoad.current) return;
@@ -324,7 +326,7 @@ export default function AttendancePage() {
 
   async function saveSchedule() {
     if (!selectedAssociate) return;
-    setStatusText("Guardando horario...");
+    setStatusText(t("Guardando horario..."));
     try {
       await apiPatch(`/api/attendance/employees/${selectedAssociate.id}/schedule`, {
         start_time: scheduleStart,
@@ -332,19 +334,19 @@ export default function AttendancePage() {
         effective_from: detailDate,
       });
       await loadAttendance();
-      setStatusText("Horario actualizado");
+      setStatusText(t("Horario actualizado"));
     } catch {
-      setStatusText("No se pudo guardar el horario");
+      setStatusText(t("No se pudo guardar el horario"));
     }
   }
 
   async function saveShiftCorrection() {
     if (!selectedDayShift) return;
     if (correctionReason.trim().length < 3) {
-      setStatusText("Escribe el motivo de la correccion");
+      setStatusText(t("Escribe el motivo de la correccion"));
       return;
     }
-    setStatusText("Guardando correccion...");
+    setStatusText(t("Guardando correccion..."));
     try {
       await apiPatch(`/api/attendance/shifts/${selectedDayShift.id}`, {
         started_at: dateTimeFromInput(detailDate, entryTime),
@@ -356,19 +358,19 @@ export default function AttendancePage() {
         correction_reason: correctionReason,
       });
       await loadAttendance();
-      setStatusText("Asistencia corregida");
+      setStatusText(t("Asistencia corregida"));
     } catch {
-      setStatusText("No se pudo guardar la correccion");
+      setStatusText(t("No se pudo guardar la correccion"));
     }
   }
 
   async function createManualShift() {
     if (!selectedAssociate) return;
     if (correctionReason.trim().length < 3) {
-      setStatusText("Escribe el motivo para crear la jornada");
+      setStatusText(t("Escribe el motivo para crear la jornada"));
       return;
     }
-    setStatusText("Creando jornada manual...");
+    setStatusText(t("Creando jornada manual..."));
     try {
       await apiPost("/api/attendance/shifts", {
         employee_id: selectedAssociate.id,
@@ -382,68 +384,68 @@ export default function AttendancePage() {
         correction_reason: correctionReason,
       });
       await loadAttendance({ dateFrom, dateTo });
-      setStatusText("Jornada manual creada");
+      setStatusText(t("Jornada manual creada"));
     } catch {
-      setStatusText("No se pudo crear la jornada manual");
+      setStatusText(t("No se pudo crear la jornada manual"));
     }
   }
 
   return (
     <AppShell
-      title="Asistencia"
-      description={`${user?.company || "Empresa"} - control de jornada, ausencias, break y lunch.`}
+      title={t("Asistencia")}
+      description={`${user?.company || t("Empresa")} - ${t("control de jornada, ausencias, break y lunch.")}`}
       actions={<RefreshButton loading={loading} onClick={loadAttendance} />}
     >
       <div className="attendance-toolbar">
         <div className="tabs">
           {(Object.keys(viewLabels) as AttendanceView[]).map((key) => (
             <button className={view === key ? "active" : ""} key={key} onClick={() => setView(key)}>
-              {viewLabels[key]}
+              {t(viewLabels[key])}
             </button>
           ))}
         </div>
         <div className="filter-row">
           <label>
-            Desde
+            {t("Desde")}
             <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
           </label>
           <label>
-            Hasta
+            {t("Hasta")}
             <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
           </label>
           <label>
-            Departamento
+            {t("Departamento")}
             <select value={selectedDepartment} onChange={(event) => setSelectedDepartment(event.target.value)}>
-              <option value="">Todos</option>
+              <option value="">{t("Todos")}</option>
               {departments.map((department) => (
                 <option value={department.id} key={department.id}>{department.name}</option>
               ))}
             </select>
           </label>
           <label>
-            Empleado
+            {t("Empleado")}
             <select value={selectedEmployee} onChange={(event) => setSelectedEmployee(event.target.value)}>
-              <option value="">Todos</option>
+              <option value="">{t("Todos")}</option>
               {employees.map((employee) => (
                 <option value={employee.id} key={employee.id}>{employee.full_name}</option>
               ))}
             </select>
           </label>
-          <button className="secondary-button" onClick={() => void loadAttendance()} disabled={loading}>Aplicar</button>
+          <button className="secondary-button" onClick={() => void loadAttendance()} disabled={loading}>{t("Aplicar")}</button>
         </div>
       </div>
 
       {!overview ? (
-        <Panel title="Estado">
-          <EmptyState>{statusText || "Cargando asistencia..."}</EmptyState>
+        <Panel title={t("Estado")}>
+          <EmptyState>{statusText || t("Cargando asistencia...")}</EmptyState>
         </Panel>
       ) : (
         <>
           <section className="stats-grid">
-            <StatCard label="Activos ahora" value={`${stats.activeNow}`} detail="Jornada abierta" tone="good" />
-            <StatCard label="Ausentes hoy" value={`${stats.absentToday}`} detail="Sin entrada registrada" tone={stats.absentToday ? "bad" : "plain"} />
-            <StatCard label="Break" value={formatDuration(stats.breakSeconds)} detail="Pausas cortas" />
-            <StatCard label="Lunch" value={formatDuration(stats.lunchSeconds)} detail="Almuerzo registrado" />
+            <StatCard label={t("Activos ahora")} value={`${stats.activeNow}`} detail={t("Jornada abierta")} tone="good" />
+            <StatCard label={t("Ausentes hoy")} value={`${stats.absentToday}`} detail={t("Sin entrada registrada")} tone={stats.absentToday ? "bad" : "plain"} />
+            <StatCard label={t("Break")} value={formatDuration(stats.breakSeconds)} detail={t("Pausas cortas")} />
+            <StatCard label={t("Lunch")} value={formatDuration(stats.lunchSeconds)} detail={t("Almuerzo registrado")} />
           </section>
 
           {view === "live" ? (
@@ -459,13 +461,13 @@ export default function AttendancePage() {
                   >
                     <div>
                       <strong>{employee.full_name}</strong>
-                      <span>{employee.department || "Sin departamento"}</span>
+                      <span>{employee.department || t("Sin departamento")}</span>
                     </div>
-                    <span className={`badge attendance-${status.tone}`}>{status.label}</span>
+                    <span className={`badge attendance-${status.tone}`}>{t(status.label)}</span>
                     <dl>
-                      <div><dt>Entrada</dt><dd>{timeOnly(shift?.started_at || null)}</dd></div>
-                      <div><dt>Salida</dt><dd>{timeOnly(shift?.ended_at || null)}</dd></div>
-                      <div><dt>Activo</dt><dd>{formatDuration(workedSeconds(shift))}</dd></div>
+                      <div><dt>{t("Entrada")}</dt><dd>{timeOnly(shift?.started_at || null)}</dd></div>
+                      <div><dt>{t("Salida")}</dt><dd>{timeOnly(shift?.ended_at || null)}</dd></div>
+                      <div><dt>{t("Activo")}</dt><dd>{formatDuration(workedSeconds(shift))}</dd></div>
                     </dl>
                   </article>
                 );
@@ -474,18 +476,18 @@ export default function AttendancePage() {
           ) : null}
 
           {view === "history" ? (
-            <Panel title="Reporte global de asistencia" meta={`${employees.length} asociados`}>
+            <Panel title={t("Reporte global de asistencia")} meta={`${employees.length} ${t("asociados")}`}>
               {employeeReportRows.length ? (
                 <table>
                   <thead>
                     <tr>
-                      <th>Asociado</th>
-                      <th>Departamento</th>
-                      <th>Dias asistidos</th>
-                      <th>Total horas</th>
-                      <th>Tardanzas</th>
-                      <th>Estado hoy</th>
-                      <th>Acciones</th>
+                      <th>{t("Asociado")}</th>
+                      <th>{t("Departamento")}</th>
+                      <th>{t("Dias asistidos")}</th>
+                      <th>{t("Total horas")}</th>
+                      <th>{t("Tardanzas")}</th>
+                      <th>{t("Estado hoy")}</th>
+                      <th>{t("Acciones")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -496,24 +498,24 @@ export default function AttendancePage() {
                             <span>{initialsFor(row.employee.full_name)}</span>
                             <div>
                               <strong>{row.employee.full_name}</strong>
-                              <small>{row.employee.email || "Sin correo laboral"}</small>
+                              <small>{row.employee.email || t("Sin correo laboral")}</small>
                             </div>
                           </div>
                         </td>
-                        <td><span className="soft-pill">{row.employee.department || "Sin departamento"}</span></td>
-                        <td><strong>{row.records.length}</strong><small className="table-muted"> registros</small></td>
+                        <td><span className="soft-pill">{row.employee.department || t("Sin departamento")}</span></td>
+                        <td><strong>{row.records.length}</strong><small className="table-muted"> {t("registros")}</small></td>
                         <td><span className="time-pill">{formatDuration(row.hours)}</span></td>
                         <td>
                           {row.tardy ? (
                             <span className="badge attendance-bad">{row.tardy}</span>
                           ) : (
-                            <span className="table-muted">Ninguna</span>
+                            <span className="table-muted">{t("Ninguna")}</span>
                           )}
                         </td>
-                        <td><span className={`badge attendance-${row.latestStatus.tone}`}>{row.latestStatus.label}</span></td>
+                        <td><span className={`badge attendance-${row.latestStatus.tone}`}>{t(row.latestStatus.label)}</span></td>
                         <td>
                           <button className="row-action" onClick={() => setSelectedAssociateId(row.employee.id)}>
-                            Detalles
+                            {t("Detalles")}
                           </button>
                         </td>
                       </tr>
@@ -521,7 +523,7 @@ export default function AttendancePage() {
                   </tbody>
                 </table>
               ) : (
-                <EmptyState>No hay asociados para este filtro.</EmptyState>
+                <EmptyState>{t("No hay asociados para este filtro.")}</EmptyState>
               )}
             </Panel>
           ) : null}
@@ -532,13 +534,13 @@ export default function AttendancePage() {
                 <article className="group-card" key={row.department}>
                   <div className="panel-title">
                     <h2>{row.department}</h2>
-                    <span>{row.employees} empleados</span>
+                    <span>{row.employees} {t("empleados")}</span>
                   </div>
                   <div className="mini-stats">
-                    <div><span>Jornadas</span><strong>{row.started}</strong></div>
-                    <div><span>Finalizadas</span><strong>{row.finished}</strong></div>
-                    <div><span>Activo</span><strong>{formatDuration(row.workSeconds)}</strong></div>
-                    <div><span>Lunch</span><strong>{formatDuration(row.lunchSeconds)}</strong></div>
+                    <div><span>{t("Jornadas")}</span><strong>{row.started}</strong></div>
+                    <div><span>{t("Finalizadas")}</span><strong>{row.finished}</strong></div>
+                    <div><span>{t("Activo")}</span><strong>{formatDuration(row.workSeconds)}</strong></div>
+                    <div><span>{t("Lunch")}</span><strong>{formatDuration(row.lunchSeconds)}</strong></div>
                   </div>
                 </article>
               ))}
@@ -547,27 +549,27 @@ export default function AttendancePage() {
 
           {view === "summary" ? (
             <section className="summary-grid">
-              <Panel title="Resumen del rango" meta={`${dateFrom} - ${dateTo}`}>
+              <Panel title={t("Resumen del rango")} meta={`${dateFrom} - ${dateTo}`}>
                 <div className="mini-stats">
-                  <div><span>Empleados</span><strong>{stats.totalEmployees}</strong></div>
-                  <div><span>Jornadas iniciadas</span><strong>{stats.started}</strong></div>
-                  <div><span>Jornadas finalizadas</span><strong>{stats.finished}</strong></div>
-                  <div><span>Tiempo activo</span><strong>{formatDuration(stats.workSeconds)}</strong></div>
-                  <div><span>Break total</span><strong>{formatDuration(stats.breakSeconds)}</strong></div>
-                  <div><span>Lunch total</span><strong>{formatDuration(stats.lunchSeconds)}</strong></div>
+                  <div><span>{t("Empleados")}</span><strong>{stats.totalEmployees}</strong></div>
+                  <div><span>{t("Jornadas iniciadas")}</span><strong>{stats.started}</strong></div>
+                  <div><span>{t("Jornadas finalizadas")}</span><strong>{stats.finished}</strong></div>
+                  <div><span>{t("Tiempo activo")}</span><strong>{formatDuration(stats.workSeconds)}</strong></div>
+                  <div><span>{t("Break total")}</span><strong>{formatDuration(stats.breakSeconds)}</strong></div>
+                  <div><span>{t("Lunch total")}</span><strong>{formatDuration(stats.lunchSeconds)}</strong></div>
                 </div>
               </Panel>
-              <Panel title="Eventos recientes" meta="timeline">
+              <Panel title={t("Eventos recientes")} meta="timeline">
                 <div className="timeline-list">
                   {shifts.flatMap((shift) =>
                     shift.events.map((event) => ({
                       ...event,
-                      employee: employeeLabel(employeeMap.get(shift.employee_id)),
+                      employee: employeeLabel(employeeMap.get(shift.employee_id), t("Empleado no encontrado")),
                       shiftDate: shift.shift_date,
                     })),
                   ).slice(-12).reverse().map((event) => (
                     <article className="timeline-item" key={event.id}>
-                      <span>{eventLabels[event.event_type] || event.event_type}</span>
+                      <span>{eventLabels[event.event_type] ? t(eventLabels[event.event_type]) : event.event_type}</span>
                       <strong>{event.employee}</strong>
                       <small>{fullDate(event.shiftDate)} - {timeOnly(event.occurred_at)}</small>
                     </article>
@@ -581,8 +583,8 @@ export default function AttendancePage() {
             <div className="detail-modal" role="dialog" aria-modal="true" onClick={() => setSelectedAssociateId("")}>
               <section className="detail-modal-panel" onClick={(event) => event.stopPropagation()}>
                 <header className="detail-modal-header">
-                  <h2>Detalles del asociado</h2>
-                  <button aria-label="Cerrar detalle" onClick={() => setSelectedAssociateId("")}>x</button>
+                  <h2>{t("Detalles del asociado")}</h2>
+                  <button aria-label={t("Cerrar detalle")} onClick={() => setSelectedAssociateId("")}>x</button>
                 </header>
                 <div className="detail-modal-body">
                   <aside className="associate-panel">
@@ -592,50 +594,50 @@ export default function AttendancePage() {
                         <span className={`associate-status attendance-${selectedAssociateStatus.tone}`} />
                       </div>
                       <h2>{selectedAssociate.full_name}</h2>
-                      <p>{selectedAssociate.department || "Sin departamento"}</p>
+                      <p>{selectedAssociate.department || t("Sin departamento")}</p>
                       <div className="schedule-box editable">
-                        <span>Horario asignado</span>
+                        <span>{t("Horario asignado")}</span>
                         <div className="time-edit-row">
                           <input
-                            aria-label="Hora de entrada asignada"
+                            aria-label={t("Hora de entrada asignada")}
                             type="time"
                             value={scheduleStart}
                             onChange={(event) => setScheduleStart(event.target.value)}
                           />
                           <input
-                            aria-label="Hora de salida asignada"
+                            aria-label={t("Hora de salida asignada")}
                             type="time"
                             value={scheduleEnd}
                             onChange={(event) => setScheduleEnd(event.target.value)}
                           />
                         </div>
                         <button className="row-action" type="button" onClick={saveSchedule}>
-                          Guardar horario
+                          {t("Guardar horario")}
                         </button>
                       </div>
                     </section>
 
                     <section className="associate-month">
-                      <h3>Resumen del mes</h3>
+                      <h3>{t("Resumen del mes")}</h3>
                       <div className="associate-metrics">
-                        <div><span>Puntuales</span><strong className="metric-good">{selectedAssociateStats.punctual}</strong></div>
-                        <div><span>Tardanzas</span><strong className="metric-bad">{selectedAssociateStats.tardy}</strong></div>
-                        <div><span>Jornadas</span><strong>{selectedAssociateStats.completed}</strong></div>
-                        <div><span>Activo</span><strong>{formatDuration(selectedAssociateStats.workSeconds)}</strong></div>
-                        <div><span>Break</span><strong>{formatDuration(selectedAssociateStats.breakSeconds)}</strong></div>
-                        <div><span>Lunch</span><strong>{formatDuration(selectedAssociateStats.lunchSeconds)}</strong></div>
+                        <div><span>{t("Puntuales")}</span><strong className="metric-good">{selectedAssociateStats.punctual}</strong></div>
+                        <div><span>{t("Tardanzas")}</span><strong className="metric-bad">{selectedAssociateStats.tardy}</strong></div>
+                        <div><span>{t("Jornadas")}</span><strong>{selectedAssociateStats.completed}</strong></div>
+                        <div><span>{t("Activo")}</span><strong>{formatDuration(selectedAssociateStats.workSeconds)}</strong></div>
+                        <div><span>{t("Break")}</span><strong>{formatDuration(selectedAssociateStats.breakSeconds)}</strong></div>
+                        <div><span>{t("Lunch")}</span><strong>{formatDuration(selectedAssociateStats.lunchSeconds)}</strong></div>
                       </div>
                     </section>
                   </aside>
 
                   <section className="modal-history">
                     <div className="panel-title">
-                      <h2>Historico detallado de actividad</h2>
+                      <h2>{t("Historico detallado de actividad")}</h2>
                       <span>{detailDate}</span>
                     </div>
                     <div className="detail-date-filter">
                       <label>
-                        Fecha
+                        {t("Fecha")}
                         <input
                           type="date"
                           value={detailDate}
@@ -651,10 +653,10 @@ export default function AttendancePage() {
                           <div className="activity-day-header">
                             <div>
                               <strong>{shortDate(selectedDayShift.shift_date)}</strong>
-                              <span>Total: {formatDuration(workedSeconds(selectedDayShift))}</span>
+                              <span>{t("Total")}: {formatDuration(workedSeconds(selectedDayShift))}</span>
                             </div>
                             <span className={`badge attendance-${statusForShift(selectedDayShift).tone}`}>
-                              {statusForShift(selectedDayShift).label}
+                              {t(statusForShift(selectedDayShift).label)}
                             </span>
                           </div>
                           <div className="day-track">
@@ -694,14 +696,14 @@ export default function AttendancePage() {
                           event.preventDefault();
                           void saveShiftCorrection();
                         }}>
-                          <label>Entrada<input type="time" value={entryTime} onChange={(event) => setEntryTime(event.target.value)} /></label>
-                          <label>Salida<input type="time" value={exitTime} onChange={(event) => setExitTime(event.target.value)} /></label>
-                          <label>Inicio break<input type="time" value={breakStartTime} onChange={(event) => setBreakStartTime(event.target.value)} /></label>
-                          <label>Fin break<input type="time" value={breakEndTime} onChange={(event) => setBreakEndTime(event.target.value)} /></label>
-                          <label>Inicio lunch<input type="time" value={lunchStartTime} onChange={(event) => setLunchStartTime(event.target.value)} /></label>
-                          <label>Fin lunch<input type="time" value={lunchEndTime} onChange={(event) => setLunchEndTime(event.target.value)} /></label>
-                          <label className="form-wide">Motivo<input value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="Ej. Correccion aprobada por RRHH" required /></label>
-                          <button className="secondary-button" type="submit">Guardar correccion</button>
+                          <label>{t("Entrada")}<input type="time" value={entryTime} onChange={(event) => setEntryTime(event.target.value)} /></label>
+                          <label>{t("Salida")}<input type="time" value={exitTime} onChange={(event) => setExitTime(event.target.value)} /></label>
+                          <label>{t("Inicio break")}<input type="time" value={breakStartTime} onChange={(event) => setBreakStartTime(event.target.value)} /></label>
+                          <label>{t("Fin break")}<input type="time" value={breakEndTime} onChange={(event) => setBreakEndTime(event.target.value)} /></label>
+                          <label>{t("Inicio lunch")}<input type="time" value={lunchStartTime} onChange={(event) => setLunchStartTime(event.target.value)} /></label>
+                          <label>{t("Fin lunch")}<input type="time" value={lunchEndTime} onChange={(event) => setLunchEndTime(event.target.value)} /></label>
+                          <label className="form-wide">{t("Motivo")}<input value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder={t("Ej. Correccion aprobada por RRHH")} required /></label>
+                          <button className="secondary-button" type="submit">{t("Guardar correccion")}</button>
                         </form>
                       </div>
                     ) : (
@@ -709,15 +711,15 @@ export default function AttendancePage() {
                         event.preventDefault();
                         void createManualShift();
                       }}>
-                        <label className="form-wide">Estado<input disabled value="No hay jornada registrada en esta fecha" /></label>
-                        <label>Entrada<input type="time" value={entryTime} onChange={(event) => setEntryTime(event.target.value)} required /></label>
-                        <label>Salida<input type="time" value={exitTime} onChange={(event) => setExitTime(event.target.value)} /></label>
-                        <label>Inicio break<input type="time" value={breakStartTime} onChange={(event) => setBreakStartTime(event.target.value)} /></label>
-                        <label>Fin break<input type="time" value={breakEndTime} onChange={(event) => setBreakEndTime(event.target.value)} /></label>
-                        <label>Inicio lunch<input type="time" value={lunchStartTime} onChange={(event) => setLunchStartTime(event.target.value)} /></label>
-                        <label>Fin lunch<input type="time" value={lunchEndTime} onChange={(event) => setLunchEndTime(event.target.value)} /></label>
-                        <label className="form-wide">Motivo<input value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="Ej. Registro manual aprobado" required /></label>
-                        <button className="secondary-button" type="submit">Crear jornada manual</button>
+                        <label className="form-wide">{t("Estado")}<input disabled value={t("No hay jornada registrada en esta fecha")} /></label>
+                        <label>{t("Entrada")}<input type="time" value={entryTime} onChange={(event) => setEntryTime(event.target.value)} required /></label>
+                        <label>{t("Salida")}<input type="time" value={exitTime} onChange={(event) => setExitTime(event.target.value)} /></label>
+                        <label>{t("Inicio break")}<input type="time" value={breakStartTime} onChange={(event) => setBreakStartTime(event.target.value)} /></label>
+                        <label>{t("Fin break")}<input type="time" value={breakEndTime} onChange={(event) => setBreakEndTime(event.target.value)} /></label>
+                        <label>{t("Inicio lunch")}<input type="time" value={lunchStartTime} onChange={(event) => setLunchStartTime(event.target.value)} /></label>
+                        <label>{t("Fin lunch")}<input type="time" value={lunchEndTime} onChange={(event) => setLunchEndTime(event.target.value)} /></label>
+                        <label className="form-wide">{t("Motivo")}<input value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder={t("Ej. Registro manual aprobado")} required /></label>
+                        <button className="secondary-button" type="submit">{t("Crear jornada manual")}</button>
                       </form>
                     )}
                   </section>

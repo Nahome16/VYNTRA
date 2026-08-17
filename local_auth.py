@@ -118,11 +118,19 @@ def autenticar_credenciales(correo: str, password: str, cfg, agent_version: str 
             }
         if allow_local_fallback and response.status_code >= 500 and verificar_credenciales(correo, password):
             return {"ok": True, "source": "local_fallback", "email": correo}
+        try:
+            detail = str(response.json().get("detail") or "")
+        except ValueError:
+            detail = ""
         return {
             "ok": False,
             "source": "backend",
-            "reason": "invalid_credentials",
+            "reason": (
+                "activation_required" if response.status_code == 403 and "activada" in detail
+                else "invalid_credentials"
+            ),
             "status_code": response.status_code,
+            "message": detail,
         }
 
     local_ok = verificar_credenciales(correo, password)
@@ -132,3 +140,86 @@ def autenticar_credenciales(correo: str, password: str, cfg, agent_version: str 
         "email": correo,
         "reason": "" if local_ok else "invalid_credentials",
     }
+
+
+# ==========================================================================
+# Autoservicio de credenciales (activacion, cambio y recuperacion)
+#
+# Estas operaciones SIEMPRE requieren el backend: no existe fallback local
+# porque implican escribir la credencial del empleado.
+# ==========================================================================
+
+def _backend_config(cfg):
+    enabled = bool(getattr(cfg, "evidence_backend_enabled", False))
+    base_url = str(getattr(cfg, "evidence_backend_url", "") or "").rstrip("/")
+    device_token = str(getattr(cfg, "evidence_device_token", "") or "").strip()
+    timeout = int(getattr(cfg, "evidence_request_timeout", 30) or 30)
+    ready = enabled and bool(base_url) and bool(device_token)
+    return ready, base_url, device_token, timeout
+
+
+def _post_backend(cfg, path: str, payload: dict) -> dict:
+    """POST autenticado con el token del equipo. Devuelve {ok, message, status}."""
+    ready, base_url, device_token, timeout = _backend_config(cfg)
+    if not ready:
+        return {
+            "ok": False,
+            "reason": "backend_disabled",
+            "message": (
+                "Esta opcion requiere conexion con el servidor de VYNTRA. "
+                "Contacta a tu supervisor."
+            ),
+        }
+    try:
+        response = requests.post(
+            f"{base_url}{path}",
+            headers={"X-Device-Token": device_token},
+            json=payload,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        return {
+            "ok": False,
+            "reason": "backend_unavailable",
+            "message": "No se pudo conectar con el servidor. Intenta de nuevo.",
+            "detail": str(exc)[:220],
+        }
+    try:
+        data = response.json()
+    except ValueError:
+        data = {}
+    if response.status_code < 400:
+        return {"ok": True, "status": response.status_code, **data}
+    return {
+        "ok": False,
+        "status": response.status_code,
+        "reason": "rejected",
+        # El backend responde en espanol con el motivo exacto (codigo caducado,
+        # politica de contrasena, bloqueos). Se muestra tal cual al usuario.
+        "message": str(data.get("detail") or "No se pudo completar la operacion."),
+    }
+
+
+def activar_cuenta(correo: str, codigo: str, nueva_contrasena: str, cfg) -> dict:
+    """Canjea el codigo recibido por correo y define la contrasena personal."""
+    return _post_backend(cfg, "/api/station/activate", {
+        "email": (correo or "").strip().lower(),
+        "code": (codigo or "").strip(),
+        "new_password": nueva_contrasena or "",
+    })
+
+
+def cambiar_contrasena(correo: str, actual: str, nueva: str, cfg) -> dict:
+    """Cambia la contrasena verificando la actual."""
+    return _post_backend(cfg, "/api/station/password", {
+        "email": (correo or "").strip().lower(),
+        "current_password": actual or "",
+        "new_password": nueva or "",
+    })
+
+
+def solicitar_codigo(correo: str, cfg) -> dict:
+    """Pide un codigo de recuperacion; el backend lo envia por correo."""
+    return _post_backend(cfg, "/api/station/password/forgot", {
+        "email": (correo or "").strip().lower(),
+    })

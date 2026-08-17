@@ -1,4 +1,7 @@
+"use client";
+
 import { ReactNode } from "react";
+import { useT } from "@/components/preferences-provider";
 
 export function StatCard({
   label,
@@ -57,9 +60,10 @@ export function RefreshButton({
   loading: boolean;
   onClick: () => void;
 }) {
+  const t = useT();
   return (
     <button className="secondary-button" onClick={onClick} disabled={loading}>
-      {loading ? "Actualizando" : "Actualizar"}
+      {loading ? t("Actualizando") : t("Actualizar")}
     </button>
   );
 }

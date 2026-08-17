@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState, RefreshButton, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
+import { usePreferences } from "@/components/preferences-provider";
 import { AccessCode, CatalogsResponse, Employee, ProductivityRule, UncategorizedItem } from "@/lib/types";
 
 const sectionLabels = {
@@ -36,11 +37,11 @@ function classificationLabel(value: string) {
   return labels[value] || value;
 }
 
-function scopeLabel(rule: ProductivityRule) {
-  if (rule.employee) return `Empleado: ${rule.employee}`;
-  if (rule.department) return `Departamento: ${rule.department}`;
-  if (rule.position) return `Puesto: ${rule.position}`;
-  return "General";
+function scopeLabel(rule: ProductivityRule, t: (text: string) => string) {
+  if (rule.employee) return `${t("Empleado")}: ${rule.employee}`;
+  if (rule.department) return `${t("Departamento")}: ${rule.department}`;
+  if (rule.position) return `${t("Puesto")}: ${rule.position}`;
+  return t("General");
 }
 
 function initialsFor(name: string) {
@@ -68,6 +69,7 @@ function isCodeCurrent(code: AccessCode) {
 
 export default function SettingsPage() {
   const { apiGet, apiPatch, apiPost, user } = useAuth();
+  const { t } = usePreferences();
   const [activeSection, setActiveSection] = useState<SectionKey>("usuarios");
   const [catalogs, setCatalogs] = useState<CatalogsResponse | null>(null);
   const [rules, setRules] = useState<ProductivityRule[]>([]);
@@ -85,7 +87,12 @@ export default function SettingsPage() {
   const [employeeEmail, setEmployeeEmail] = useState("");
   const [employeeDepartmentId, setEmployeeDepartmentId] = useState("");
   const [newDepartment, setNewDepartment] = useState("");
-  const [generatedCredential, setGeneratedCredential] = useState<{ email: string; password: string } | null>(null);
+  const [generatedCredential, setGeneratedCredential] = useState<{
+    email: string;
+    code: string;
+    expiresAt: string;
+    delivery: string;
+  } | null>(null);
 
   const [accessSearch, setAccessSearch] = useState("");
   const [accessDate, setAccessDate] = useState("");
@@ -115,7 +122,7 @@ export default function SettingsPage() {
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
-    setStatusText("Actualizando ajustes...");
+    setStatusText(t("Actualizando ajustes..."));
     try {
       const [nextCatalogs, nextRules, nextUncategorized, nextCodes] = await Promise.all([
         apiGet<CatalogsResponse>("/api/productivity/catalogs"),
@@ -134,13 +141,13 @@ export default function SettingsPage() {
           nextCatalogs.employees[0]?.id ||
           "",
       );
-      setStatusText("Datos actualizados");
+      setStatusText(t("Datos actualizados"));
     } catch {
-      setStatusText("No se pudieron cargar ajustes");
+      setStatusText(t("No se pudieron cargar ajustes"));
     } finally {
       setLoading(false);
     }
-  }, [apiGet]);
+  }, [apiGet, t]);
 
   useEffect(() => {
     if (!user) return;
@@ -172,8 +179,12 @@ export default function SettingsPage() {
     [accessCodes],
   );
   const summaryPills = useMemo(
-    () => [`${activeEmployees} usuarios activos`, `${rules.length} reglas`, `${activeCodes} codigos vigentes`],
-    [activeCodes, activeEmployees, rules.length],
+    () => [
+      `${activeEmployees} ${t("usuarios activos")}`,
+      `${rules.length} ${t("reglas")}`,
+      `${activeCodes} ${t("codigos vigentes")}`,
+    ],
+    [activeCodes, activeEmployees, rules.length, t],
   );
 
   const filteredEmployees = useMemo(() => {
@@ -204,22 +215,22 @@ export default function SettingsPage() {
       app: rule.executable_name || "*",
       title: rule.title_contains || "*",
       classification: rule.classification,
-      scope: scopeLabel(rule),
+      scope: scopeLabel(rule, t),
       department_id: rule.department_id,
       rule,
     }));
     const pendingRows: RuleRow[] = uncategorized.map((item, index) => ({
       kind: "pending",
       id: `${item.executable_name}-${item.title_text}-${index}`,
-      app: item.executable_name || "(desconocido)",
-      title: item.title_text || "(sin titulo)",
+      app: item.executable_name || t("(desconocido)"),
+      title: item.title_text || t("(sin titulo)"),
       classification: "uncategorized",
-      scope: "Pendiente",
+      scope: t("Pendiente"),
       department_id: null,
       item,
     }));
     return pendingOnly ? pendingRows : [...existingRules, ...pendingRows];
-  }, [pendingOnly, rules, uncategorized]);
+  }, [pendingOnly, rules, t, uncategorized]);
 
   const filteredRuleRows = useMemo(() => {
     const needle = ruleSearch.trim().toLowerCase();
@@ -228,10 +239,10 @@ export default function SettingsPage() {
         !ruleDepartmentFilter ||
         (ruleDepartmentFilter === "general" ? row.department_id === null : row.department_id === ruleDepartmentFilter);
       const matchesClassification = !ruleClassificationFilter || row.classification === ruleClassificationFilter;
-      const matchesSearch = matchesNeedle([row.app, row.title, row.scope, classificationLabel(row.classification)], needle);
+      const matchesSearch = matchesNeedle([row.app, row.title, row.scope, t(classificationLabel(row.classification))], needle);
       return matchesDepartment && matchesClassification && matchesSearch;
     });
-  }, [ruleClassificationFilter, ruleDepartmentFilter, ruleRows, ruleSearch]);
+  }, [ruleClassificationFilter, ruleDepartmentFilter, ruleRows, ruleSearch, t]);
 
   function openEmployeeModal(employee?: Employee) {
     setEditingEmployee(employee || null);
@@ -255,7 +266,7 @@ export default function SettingsPage() {
 
   async function handleSaveEmployee(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setStatusText(editingEmployee ? "Actualizando usuario monitoreado..." : "Creando usuario monitoreado...");
+    setStatusText(editingEmployee ? t("Actualizando usuario monitoreado...") : t("Creando usuario monitoreado..."));
     setGeneratedCredential(null);
     try {
       if (editingEmployee) {
@@ -276,13 +287,19 @@ export default function SettingsPage() {
             : current,
         );
         closeEmployeeModal();
-        setStatusText("Usuario actualizado");
+        setStatusText(t("Usuario actualizado"));
         return;
       }
 
       const response = await apiPost<{
         employee: Employee;
-        credentials: { email: string; password: string; delivery_status: string };
+        activation: {
+          email: string;
+          expires_at: string;
+          delivery: string;
+          code?: string;
+          note?: string;
+        };
       }>("/api/settings/employees", {
         full_name: employeeName,
         email: employeeEmail,
@@ -290,17 +307,23 @@ export default function SettingsPage() {
         new_department: newDepartment || null,
       });
       setGeneratedCredential({
-        email: response.credentials.email,
-        password: response.credentials.password,
+        email: response.activation.email,
+        code: response.activation.code || "",
+        expiresAt: response.activation.expires_at,
+        delivery: response.activation.delivery,
       });
       setEmployeeName("");
       setEmployeeEmail("");
       setEmployeeDepartmentId("");
       setNewDepartment("");
       await loadSettings();
-      setStatusText("Usuario creado. Guarda la credencial generada antes de cerrar.");
+      setStatusText(
+        response.activation.delivery === "not_configured"
+          ? t("Usuario creado. Falta configurar el correo saliente: entrega el codigo manualmente.")
+          : t("Usuario creado. El codigo de activacion va en camino a su correo."),
+      );
     } catch {
-      setStatusText("No se pudo guardar el usuario. Revisa correo duplicado o formato invalido.");
+      setStatusText(t("No se pudo guardar el usuario. Revisa correo duplicado o formato invalido."));
     }
   }
 
@@ -314,7 +337,7 @@ export default function SettingsPage() {
     setAccessEmployeeId(defaultEmployeeId);
     setAccessValidMinutes(type === "overtime" ? "120" : "60");
     setAccessAssignedMinutes(type === "overtime" ? "120" : "");
-    setAccessReason(type === "overtime" ? "Designar horas extra" : "Reabrir estacion de marcaje");
+    setAccessReason(type === "overtime" ? t("Designar horas extra") : t("Reabrir estacion de marcaje"));
     setAccessMenuOpen(false);
     setShowAccessModal(true);
   }
@@ -327,10 +350,10 @@ export default function SettingsPage() {
   async function handleCreateAccessCode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!accessEmployeeId) {
-      setStatusText("Selecciona o crea un usuario antes de generar codigo");
+      setStatusText(t("Selecciona o crea un usuario antes de generar codigo"));
       return;
     }
-    setStatusText("Generando codigo...");
+    setStatusText(t("Generando codigo..."));
     try {
       const response = await apiPost<{ code: AccessCode }>("/api/settings/access-codes", {
         type: accessDraftType,
@@ -341,9 +364,9 @@ export default function SettingsPage() {
       });
       setAccessCodes((current) => [response.code, ...current.filter((code) => code.id !== response.code.id)]);
       closeAccessModal();
-      setStatusText("Codigo generado y agregado a la tabla");
+      setStatusText(t("Codigo generado y agregado a la tabla"));
     } catch {
-      setStatusText("No se pudo generar el codigo");
+      setStatusText(t("No se pudo generar el codigo"));
     }
   }
 
@@ -383,7 +406,7 @@ export default function SettingsPage() {
 
   async function handleSaveRule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setStatusText(editingRule ? "Actualizando regla..." : "Creando regla productiva...");
+    setStatusText(editingRule ? t("Actualizando regla...") : t("Creando regla productiva..."));
     const payload = {
       executable_name: ruleExecutable,
       title_contains: ruleTitle,
@@ -401,21 +424,21 @@ export default function SettingsPage() {
         const response = await apiPatch<{ rule: ProductivityRule }>(`/api/productivity/rules/${editingRule.id}`, payload);
         setRules((current) => current.map((rule) => (rule.id === editingRule.id ? response.rule : rule)));
         closeRuleModal();
-        setStatusText("Regla actualizada");
+        setStatusText(t("Regla actualizada"));
         return;
       }
       await apiPost("/api/productivity/rules", payload);
       closeRuleModal();
       await loadSettings();
-      setStatusText("Regla creada y reclasificacion encolada");
+      setStatusText(t("Regla creada y reclasificacion encolada"));
     } catch {
-      setStatusText("No se pudo guardar la regla. Debe tener app o titulo y un alcance valido.");
+      setStatusText(t("No se pudo guardar la regla. Debe tener app o titulo y un alcance valido."));
     }
   }
 
   async function updateRuleClassification(row: RuleRow, classification: RuleClassification) {
     if (classification === row.classification) return;
-    setStatusText("Actualizando clasificacion...");
+    setStatusText(t("Actualizando clasificacion..."));
     try {
       if (row.kind === "rule") {
         const response = await apiPatch<{ rule: ProductivityRule }>(`/api/productivity/rules/${row.id}`, {
@@ -439,15 +462,15 @@ export default function SettingsPage() {
         setUncategorized((current) => current.filter((item) => item !== row.item));
         await loadSettings();
       }
-      setStatusText("Clasificacion actualizada");
+      setStatusText(t("Clasificacion actualizada"));
     } catch {
-      setStatusText("No se pudo actualizar la clasificacion");
+      setStatusText(t("No se pudo actualizar la clasificacion"));
     }
   }
 
   async function toggleEmployeeStatus(employee: Employee) {
     const status = employee.status === "active" ? "inactive" : "active";
-    setStatusText("Actualizando estado del usuario...");
+    setStatusText(t("Actualizando estado del usuario..."));
     try {
       const response = await apiPatch<{ employee: Employee }>(`/api/settings/employees/${employee.id}`, { status });
       setCatalogs((current) =>
@@ -460,25 +483,25 @@ export default function SettingsPage() {
             }
           : current,
       );
-      setStatusText(status === "active" ? "Usuario activado" : "Usuario desactivado");
+      setStatusText(status === "active" ? t("Usuario activado") : t("Usuario desactivado"));
     } catch {
-      setStatusText("No se pudo actualizar el estado del usuario");
+      setStatusText(t("No se pudo actualizar el estado del usuario"));
     }
   }
 
   return (
     <AppShell
-      title="Ajustes"
-      description={`${user?.company || "Empresa"} - usuarios, accesos y reglas por empresa.`}
+      title={t("Ajustes")}
+      description={`${user?.company || t("Empresa")} - ${t("usuarios, accesos y reglas por empresa.")}`}
       actions={<RefreshButton loading={loading} onClick={loadSettings} />}
     >
       <section className="settings-board">
         <div className="settings-board-header">
           <div>
-            <h2>Ajustes</h2>
-            <p>{user?.company || "Empresa"} - usuarios, accesos y reglas</p>
+            <h2>{t("Ajustes")}</h2>
+            <p>{user?.company || t("Empresa")} - {t("usuarios, accesos y reglas")}</p>
           </div>
-          <div className="settings-board-tabs" role="tablist" aria-label="Secciones de ajustes">
+          <div className="settings-board-tabs" role="tablist" aria-label={t("Secciones de ajustes")}>
             {(Object.keys(sectionLabels) as SectionKey[]).map((key) => (
               <button
                 aria-selected={activeSection === key}
@@ -488,13 +511,13 @@ export default function SettingsPage() {
                 role="tab"
                 type="button"
               >
-                {sectionLabels[key]}
+                {t(sectionLabels[key])}
               </button>
             ))}
           </div>
         </div>
 
-        <div className="settings-summary-pills" aria-label="Resumen de sistema">
+        <div className="settings-summary-pills" aria-label={t("Resumen de sistema")}>
           {summaryPills.map((pill) => (
             <button key={pill} type="button">
               {pill}
@@ -513,7 +536,7 @@ export default function SettingsPage() {
                     setEmployeePage(1);
                     setEmployeeSearch(event.target.value);
                   }}
-                  placeholder="Buscar empleado..."
+                  placeholder={t("Buscar empleado...")}
                 />
               </div>
               <select
@@ -523,13 +546,13 @@ export default function SettingsPage() {
                   setEmployeeDepartmentFilter(event.target.value);
                 }}
               >
-                <option value="">Departamento</option>
+                <option value="">{t("Departamento")}</option>
                 {departments.map((department) => (
                   <option value={department.id} key={department.id}>{department.name}</option>
                 ))}
               </select>
               <button className="settings-primary-action" type="button" onClick={() => openEmployeeModal()}>
-                + Agregar
+                {t("+ Agregar")}
               </button>
             </div>
 
@@ -537,11 +560,11 @@ export default function SettingsPage() {
               <table>
                 <thead>
                   <tr>
-                    <th>Codigo</th>
-                    <th>Empleado</th>
-                    <th>Depto.</th>
-                    <th>Estado</th>
-                    <th aria-label="Acciones" />
+                    <th>{t("Codigo")}</th>
+                    <th>{t("Empleado")}</th>
+                    <th>{t("Depto.")}</th>
+                    <th>{t("Estado")}</th>
+                    <th aria-label={t("Acciones")} />
                   </tr>
                 </thead>
                 <tbody>
@@ -555,25 +578,25 @@ export default function SettingsPage() {
                             <span>{initialsFor(employee.full_name)}</span>
                             <div>
                               <strong>{employee.full_name}</strong>
-                              <small>{employee.email || "Sin correo"}</small>
+                              <small>{employee.email || t("Sin correo")}</small>
                             </div>
                           </div>
                         </td>
-                        <td>{employee.department_id ? departmentMap.get(employee.department_id) || "Sin departamento" : "Sin departamento"}</td>
+                        <td>{employee.department_id ? departmentMap.get(employee.department_id) || t("Sin departamento") : t("Sin departamento")}</td>
                         <td>
                           <button
                             className={`settings-toggle ${status === "active" ? "active" : ""}`}
                             type="button"
                             onClick={() => void toggleEmployeeStatus(employee)}
-                            aria-label={`Cambiar estado de ${employee.full_name}`}
-                            title={status === "active" ? "Desactivar usuario" : "Activar usuario"}
+                            aria-label={`${t("Cambiar estado de")} ${employee.full_name}`}
+                            title={status === "active" ? t("Desactivar usuario") : t("Activar usuario")}
                           >
                             <span />
                           </button>
                         </td>
                         <td>
                           <button className="row-action" type="button" onClick={() => openEmployeeModal(employee)}>
-                            Editar
+                            {t("Editar")}
                           </button>
                         </td>
                       </tr>
@@ -581,16 +604,16 @@ export default function SettingsPage() {
                   })}
                 </tbody>
               </table>
-              {!visibleEmployees.length ? <EmptyState>No hay usuarios para el filtro actual.</EmptyState> : null}
+              {!visibleEmployees.length ? <EmptyState>{t("No hay usuarios para el filtro actual.")}</EmptyState> : null}
             </div>
 
             <div className="settings-pagination">
               <button type="button" disabled={employeePage <= 1} onClick={() => setEmployeePage((page) => Math.max(1, page - 1))}>
-                Anterior
+                {t("Anterior")}
               </button>
               <span>{employeePage} / {employeePageCount}</span>
               <button type="button" disabled={employeePage >= employeePageCount} onClick={() => setEmployeePage((page) => Math.min(employeePageCount, page + 1))}>
-                Siguiente
+                {t("Siguiente")}
               </button>
             </div>
           </>
@@ -601,21 +624,21 @@ export default function SettingsPage() {
             <div className="settings-actionbar settings-access-bar">
               <div className="settings-search">
                 <span aria-hidden="true">⌕</span>
-                <input value={accessSearch} onChange={(event) => setAccessSearch(event.target.value)} placeholder="Buscar empleado, codigo o tipo..." />
+                <input value={accessSearch} onChange={(event) => setAccessSearch(event.target.value)} placeholder={t("Buscar empleado, codigo o tipo...")} />
               </div>
-              <input type="date" value={accessDate} onChange={(event) => setAccessDate(event.target.value)} aria-label="Fecha" />
+              <input type="date" value={accessDate} onChange={(event) => setAccessDate(event.target.value)} aria-label={t("Fecha")} />
               <div className="settings-dropdown">
                 <button className="settings-primary-action" type="button" onClick={() => setAccessMenuOpen((open) => !open)}>
-                  + Generar ▾
+                  {t("+ Generar")} ▾
                 </button>
                 {accessMenuOpen ? (
                   <div className="settings-dropdown-menu">
-                    <span>Elegir tipo de codigo</span>
+                    <span>{t("Elegir tipo de codigo")}</span>
                     <button type="button" onClick={() => openAccessModal("station_reopen")}>
-                      Reabrir estacion de marcaje
+                      {t("Reabrir estacion de marcaje")}
                     </button>
                     <button type="button" onClick={() => openAccessModal("overtime")}>
-                      Designar horas extra
+                      {t("Designar horas extra")}
                     </button>
                   </div>
                 ) : null}
@@ -626,10 +649,10 @@ export default function SettingsPage() {
               <table>
                 <thead>
                   <tr>
-                    <th>Empleado</th>
-                    <th>Tipo</th>
-                    <th>Codigo</th>
-                    <th>Valido hasta</th>
+                    <th>{t("Empleado")}</th>
+                    <th>{t("Tipo")}</th>
+                    <th>{t("Codigo")}</th>
+                    <th>{t("Valido hasta")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -637,7 +660,7 @@ export default function SettingsPage() {
                     return (
                       <tr key={code.id}>
                         <td>{code.employee || code.email}</td>
-                        <td><span className={`settings-type settings-type-${code.type}`}>{code.type_label || accessTypeLabels[code.type]}</span></td>
+                        <td><span className={`settings-type settings-type-${code.type}`}>{code.type_label || t(accessTypeLabels[code.type])}</span></td>
                         <td><strong>{code.code}</strong></td>
                         <td>{new Date(code.valid_until).toLocaleString("es-NI")}</td>
                       </tr>
@@ -645,9 +668,9 @@ export default function SettingsPage() {
                   })}
                 </tbody>
               </table>
-              {!filteredAccessCodes.length ? <EmptyState>No hay codigos para el filtro actual.</EmptyState> : null}
+              {!filteredAccessCodes.length ? <EmptyState>{t("No hay codigos para el filtro actual.")}</EmptyState> : null}
             </div>
-            <p className="settings-note">Elige un tipo en + Generar, completa usuario y vigencia, y luego se agrega a la tabla.</p>
+            <p className="settings-note">{t("Elige un tipo en + Generar, completa usuario y vigencia, y luego se agrega a la tabla.")}</p>
           </>
         ) : null}
 
@@ -656,16 +679,16 @@ export default function SettingsPage() {
             <div className="settings-actionbar settings-rules-bar">
               <div className="settings-search">
                 <span aria-hidden="true">⌕</span>
-                <input value={ruleSearch} onChange={(event) => setRuleSearch(event.target.value)} placeholder="Buscar app, titulo o persona..." />
+                <input value={ruleSearch} onChange={(event) => setRuleSearch(event.target.value)} placeholder={t("Buscar app, titulo o persona...")} />
               </div>
               <div className="settings-dropdown">
                 <button className="row-action settings-filter-trigger" type="button" onClick={() => setRuleFilterMenuOpen((open) => !open)}>
-                  Filtros ▾
+                  {t("Filtros")} ▾
                 </button>
                 {ruleFilterMenuOpen ? (
                   <div className="settings-dropdown-menu settings-filter-menu">
-                    <span>Filtrar consulta</span>
-                    <label>Departamento
+                    <span>{t("Filtrar consulta")}</span>
+                    <label>{t("Departamento")}
                       <select
                         value={ruleDepartmentFilter}
                         onChange={(event) => {
@@ -673,15 +696,15 @@ export default function SettingsPage() {
                           setPendingOnly(false);
                         }}
                       >
-                        <option value="">Sin filtro</option>
-                        <option value="general">General</option>
+                        <option value="">{t("Sin filtro")}</option>
+                        <option value="general">{t("General")}</option>
                         {departments.map((department) => (
                           <option value={department.id} key={department.id}>{department.name}</option>
                         ))}
                       </select>
                     </label>
                     {showClassificationFilter || ruleClassificationFilter ? (
-                      <label>Clasificacion
+                      <label>{t("Clasificacion")}
                         <select
                           value={ruleClassificationFilter}
                           onChange={(event) => {
@@ -689,15 +712,15 @@ export default function SettingsPage() {
                             setPendingOnly(false);
                           }}
                         >
-                          <option value="">Sin filtro</option>
+                          <option value="">{t("Sin filtro")}</option>
                           {classifications.map((classification) => (
-                            <option value={classification} key={classification}>{classificationLabel(classification)}</option>
+                            <option value={classification} key={classification}>{t(classificationLabel(classification))}</option>
                           ))}
                         </select>
                       </label>
                     ) : (
                       <button type="button" onClick={() => setShowClassificationFilter(true)}>
-                        + Agregar filtro de clasificacion
+                        {t("+ Agregar filtro de clasificacion")}
                       </button>
                     )}
                     <button
@@ -709,20 +732,20 @@ export default function SettingsPage() {
                         setPendingOnly(false);
                       }}
                     >
-                      Limpiar filtros
+                      {t("Limpiar filtros")}
                     </button>
                   </div>
                 ) : null}
               </div>
               <button className="settings-primary-action" type="button" onClick={() => openRuleModal()}>
-                + Nueva regla
+                {t("+ Nueva regla")}
               </button>
             </div>
             {ruleDepartmentFilter || ruleClassificationFilter ? (
               <div className="settings-filter-chips">
                 {ruleDepartmentFilter ? (
                   <button type="button" onClick={() => setRuleDepartmentFilter("")}>
-                    Depto: {ruleDepartmentFilter === "general" ? "General" : departmentMap.get(ruleDepartmentFilter) || "Departamento"} x
+                    {t("Depto")}: {ruleDepartmentFilter === "general" ? t("General") : departmentMap.get(ruleDepartmentFilter) || t("Departamento")} x
                   </button>
                 ) : null}
                 {ruleClassificationFilter ? (
@@ -734,7 +757,7 @@ export default function SettingsPage() {
                       setPendingOnly(false);
                     }}
                   >
-                    Clasificacion: {classificationLabel(ruleClassificationFilter)} x
+                    {t("Clasificacion")}: {t(classificationLabel(ruleClassificationFilter))} x
                   </button>
                 ) : null}
               </div>
@@ -751,17 +774,17 @@ export default function SettingsPage() {
                 });
               }}
             >
-              {uncategorized.length} pendientes de clasificar
+              {uncategorized.length} {t("pendientes de clasificar")}
             </button>
 
             <div className="settings-table-shell">
               <table>
                 <thead>
                   <tr>
-                    <th>App / titulo</th>
-                    <th>Clasificacion</th>
-                    <th>Alcance</th>
-                    <th aria-label="Acciones" />
+                    <th>{t("App / titulo")}</th>
+                    <th>{t("Clasificacion")}</th>
+                    <th>{t("Alcance")}</th>
+                    <th aria-label={t("Acciones")} />
                   </tr>
                 </thead>
                 <tbody>
@@ -776,11 +799,11 @@ export default function SettingsPage() {
                           className={`settings-classification-select badge-${row.classification}`}
                           value={row.classification}
                           onChange={(event) => void updateRuleClassification(row, event.target.value as RuleClassification)}
-                          title="Cambiar clasificacion"
+                          title={t("Cambiar clasificacion")}
                         >
                           {classifications.map((classification) => (
                             <option value={classification} key={classification}>
-                              {classificationLabel(classification)}
+                              {t(classificationLabel(classification))}
                             </option>
                           ))}
                         </select>
@@ -789,7 +812,7 @@ export default function SettingsPage() {
                       <td>
                         {row.kind === "rule" ? (
                           <button className="row-action" type="button" onClick={() => openRuleModal(row.rule)}>
-                            Editar
+                            {t("Editar")}
                           </button>
                         ) : null}
                       </td>
@@ -797,9 +820,9 @@ export default function SettingsPage() {
                   ))}
                 </tbody>
               </table>
-              {!filteredRuleRows.length ? <EmptyState>No hay reglas para el filtro actual.</EmptyState> : null}
+              {!filteredRuleRows.length ? <EmptyState>{t("No hay reglas para el filtro actual.")}</EmptyState> : null}
             </div>
-            <p className="settings-note">Filtros combinables. Click en la etiqueta para reclasificar sin salir de la tabla.</p>
+            <p className="settings-note">{t("Filtros combinables. Click en la etiqueta para reclasificar sin salir de la tabla.")}</p>
           </>
         ) : null}
 
@@ -810,29 +833,44 @@ export default function SettingsPage() {
         <div className="settings-modal" role="dialog" aria-modal="true" onClick={closeEmployeeModal}>
           <form className="settings-modal-panel" onSubmit={handleSaveEmployee} onClick={(event) => event.stopPropagation()}>
             <header>
-              <h2>{editingEmployee ? "Editar usuario" : "Agregar usuario"}</h2>
-              <button type="button" onClick={closeEmployeeModal} aria-label="Cerrar">x</button>
+              <h2>{editingEmployee ? t("Editar usuario") : t("Agregar usuario")}</h2>
+              <button type="button" onClick={closeEmployeeModal} aria-label={t("Cerrar")}>x</button>
             </header>
-            <label>Nombre completo<input value={employeeName} onChange={(event) => setEmployeeName(event.target.value)} placeholder="Empleado nuevo" required /></label>
-            <label>Correo electronico<input type="email" value={employeeEmail} onChange={(event) => setEmployeeEmail(event.target.value)} placeholder="empleado@empresa.com" required /></label>
-            <label>Departamento existente
+            <label>{t("Nombre completo")}<input value={employeeName} onChange={(event) => setEmployeeName(event.target.value)} placeholder={t("Empleado nuevo")} required /></label>
+            <label>{t("Correo electronico")}<input type="email" value={employeeEmail} onChange={(event) => setEmployeeEmail(event.target.value)} placeholder="empleado@empresa.com" required /></label>
+            <label>{t("Departamento existente")}
               <select value={employeeDepartmentId} onChange={(event) => setEmployeeDepartmentId(event.target.value)}>
-                <option value="">Sin asignar</option>
+                <option value="">{t("Sin asignar")}</option>
                 {departments.map((department) => (
                   <option value={department.id} key={department.id}>{department.name}</option>
                 ))}
               </select>
             </label>
-            <label>Nuevo departamento<input value={newDepartment} onChange={(event) => setNewDepartment(event.target.value)} placeholder="Ej. Finanzas" /></label>
+            <label>{t("Nuevo departamento")}<input value={newDepartment} onChange={(event) => setNewDepartment(event.target.value)} placeholder={t("Ej. Finanzas")} /></label>
             <footer>
-              <button className="row-action" type="button" onClick={closeEmployeeModal}>Cancelar</button>
-              <button className="settings-primary-action" type="submit">Guardar</button>
+              <button className="row-action" type="button" onClick={closeEmployeeModal}>{t("Cancelar")}</button>
+              <button className="settings-primary-action" type="submit">{t("Guardar")}</button>
             </footer>
             {generatedCredential ? (
               <div className="credential-box">
-                <span>Credencial generada</span>
+                <span>
+                  {generatedCredential.delivery === "not_configured"
+                    ? t("Correo saliente no configurado")
+                    : t("Invitacion enviada")}
+                </span>
                 <strong>{generatedCredential.email}</strong>
-                <code>{generatedCredential.password}</code>
+                {generatedCredential.code ? (
+                  <>
+                    <code>{generatedCredential.code}</code>
+                    <small>
+                      {t("Entrega este codigo al asistente. Es de un solo uso y el sistema no volvera a mostrarlo. El definira su propia contrasena en la estacion.")}
+                    </small>
+                  </>
+                ) : (
+                  <small>
+                    {t("El asistente recibira su codigo de activacion por correo y definira su propia contrasena. Tu no necesitas conocerla ni guardarla.")}
+                  </small>
+                )}
               </div>
             ) : null}
           </form>
@@ -843,30 +881,30 @@ export default function SettingsPage() {
         <div className="settings-modal" role="dialog" aria-modal="true" onClick={closeAccessModal}>
           <form className="settings-modal-panel" onSubmit={handleCreateAccessCode} onClick={(event) => event.stopPropagation()}>
             <header>
-              <h2>{accessTypeLabels[accessDraftType]}</h2>
-              <button type="button" onClick={closeAccessModal} aria-label="Cerrar">x</button>
+              <h2>{t(accessTypeLabels[accessDraftType])}</h2>
+              <button type="button" onClick={closeAccessModal} aria-label={t("Cerrar")}>x</button>
             </header>
-            <label>Usuario
+            <label>{t("Usuario")}
               <select value={accessEmployeeId} onChange={(event) => setAccessEmployeeId(event.target.value)} required>
-                <option value="">Selecciona usuario</option>
+                <option value="">{t("Selecciona usuario")}</option>
                 {employees.map((employee) => (
                   <option value={employee.id} key={employee.id} disabled={employee.status !== "active"}>
-                    {employee.full_name}{employee.status !== "active" ? " (inactivo)" : ""}
+                    {employee.full_name}{employee.status !== "active" ? ` ${t("(inactivo)")}` : ""}
                   </option>
                 ))}
               </select>
             </label>
-            <label>Vigencia del codigo
+            <label>{t("Vigencia del codigo")}
               <select value={accessValidMinutes} onChange={(event) => setAccessValidMinutes(event.target.value)}>
-                <option value="30">30 minutos</option>
-                <option value="60">1 hora</option>
-                <option value="120">2 horas</option>
-                <option value="240">4 horas</option>
-                <option value="480">8 horas</option>
+                <option value="30">{t("30 minutos")}</option>
+                <option value="60">{t("1 hora")}</option>
+                <option value="120">{t("2 horas")}</option>
+                <option value="240">{t("4 horas")}</option>
+                <option value="480">{t("8 horas")}</option>
               </select>
             </label>
             {accessDraftType === "overtime" ? (
-              <label>Minutos autorizados
+              <label>{t("Minutos autorizados")}
                 <input
                   type="number"
                   min="5"
@@ -877,12 +915,12 @@ export default function SettingsPage() {
                 />
               </label>
             ) : null}
-            <label>Motivo
-              <input value={accessReason} onChange={(event) => setAccessReason(event.target.value)} placeholder="Motivo del codigo" />
+            <label>{t("Motivo")}
+              <input value={accessReason} onChange={(event) => setAccessReason(event.target.value)} placeholder={t("Motivo del codigo")} />
             </label>
             <footer>
-              <button className="row-action" type="button" onClick={closeAccessModal}>Cancelar</button>
-              <button className="settings-primary-action" type="submit">Generar codigo</button>
+              <button className="row-action" type="button" onClick={closeAccessModal}>{t("Cancelar")}</button>
+              <button className="settings-primary-action" type="submit">{t("Generar codigo")}</button>
             </footer>
           </form>
         </div>
@@ -892,10 +930,10 @@ export default function SettingsPage() {
         <div className="settings-modal" role="dialog" aria-modal="true" onClick={closeRuleModal}>
           <form className="settings-modal-panel" onSubmit={handleSaveRule} onClick={(event) => event.stopPropagation()}>
             <header>
-              <h2>{editingRule ? "Editar regla" : "Nueva regla"}</h2>
-              <button type="button" onClick={closeRuleModal} aria-label="Cerrar">x</button>
+              <h2>{editingRule ? t("Editar regla") : t("Nueva regla")}</h2>
+              <button type="button" onClick={closeRuleModal} aria-label={t("Cerrar")}>x</button>
             </header>
-            <label>Aplicar a
+            <label>{t("Aplicar a")}
               <select
                 value={ruleScope}
                 onChange={(event) => {
@@ -904,13 +942,13 @@ export default function SettingsPage() {
                   setRuleEmployeeId("");
                 }}
               >
-                <option value="company">General empresa</option>
-                <option value="department">Departamento</option>
-                <option value="employee">Empleado</option>
+                <option value="company">{t("General empresa")}</option>
+                <option value="department">{t("Departamento")}</option>
+                <option value="employee">{t("Empleado")}</option>
               </select>
             </label>
             {ruleScope !== "company" ? (
-              <label>Departamento
+              <label>{t("Departamento")}
                 <select
                   value={ruleDepartmentId}
                   onChange={(event) => {
@@ -919,7 +957,7 @@ export default function SettingsPage() {
                   }}
                   required={ruleScope === "department"}
                 >
-                  <option value="">Selecciona departamento</option>
+                  <option value="">{t("Selecciona departamento")}</option>
                   {departments.map((department) => (
                     <option value={department.id} key={department.id}>{department.name}</option>
                   ))}
@@ -927,28 +965,28 @@ export default function SettingsPage() {
               </label>
             ) : null}
             {ruleScope === "employee" ? (
-              <label>Empleado
+              <label>{t("Empleado")}
                 <select value={ruleEmployeeId} onChange={(event) => setRuleEmployeeId(event.target.value)} required>
-                  <option value="">Selecciona empleado</option>
+                  <option value="">{t("Selecciona empleado")}</option>
                   {scopedEmployees.map((employee) => (
                     <option value={employee.id} key={employee.id}>{employee.full_name}</option>
                   ))}
                 </select>
               </label>
             ) : null}
-            <label>Ejecutable de app<input value={ruleExecutable} onChange={(event) => setRuleExecutable(event.target.value)} placeholder="chrome.exe, EXCEL.EXE" /></label>
-            <label>Titulo contiene<input value={ruleTitle} onChange={(event) => setRuleTitle(event.target.value)} placeholder="Netflix, Google Docs, CRM" /></label>
-            <label>Clasificacion
+            <label>{t("Ejecutable de app")}<input value={ruleExecutable} onChange={(event) => setRuleExecutable(event.target.value)} placeholder="chrome.exe, EXCEL.EXE" /></label>
+            <label>{t("Titulo contiene")}<input value={ruleTitle} onChange={(event) => setRuleTitle(event.target.value)} placeholder="Netflix, Google Docs, CRM" /></label>
+            <label>{t("Clasificacion")}
               <select value={ruleClassification} onChange={(event) => setRuleClassification(event.target.value as RuleClassification)}>
                 {classifications.map((classification) => (
-                  <option value={classification} key={classification}>{classificationLabel(classification)}</option>
+                  <option value={classification} key={classification}>{t(classificationLabel(classification))}</option>
                 ))}
               </select>
             </label>
-            <label>Notas<input value={ruleNotes} onChange={(event) => setRuleNotes(event.target.value)} placeholder="Motivo de la regla" /></label>
+            <label>{t("Notas")}<input value={ruleNotes} onChange={(event) => setRuleNotes(event.target.value)} placeholder={t("Motivo de la regla")} /></label>
             <footer>
-              <button className="row-action" type="button" onClick={closeRuleModal}>Cancelar</button>
-              <button className="settings-primary-action" type="submit">Guardar</button>
+              <button className="row-action" type="button" onClick={closeRuleModal}>{t("Cancelar")}</button>
+              <button className="settings-primary-action" type="submit">{t("Guardar")}</button>
             </footer>
           </form>
         </div>

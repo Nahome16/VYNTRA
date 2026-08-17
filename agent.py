@@ -158,12 +158,25 @@ class LoginWindow(ctk.CTk):
             height=40, corner_radius=8,
         ).pack(fill="x")
 
+        enlaces = ctk.CTkFrame(cont, fg_color="transparent")
+        enlaces.pack(fill="x", pady=(10, 0))
+        ctk.CTkButton(
+            enlaces, text="Activar cuenta", command=self._abrir_activacion,
+            fg_color="transparent", hover_color=APP_BG, text_color=PRIMARY,
+            height=28, width=10, font=ctk.CTkFont(size=12),
+        ).pack(side="left")
+        ctk.CTkButton(
+            enlaces, text="Olvide mi contrasena", command=self._abrir_recuperacion,
+            fg_color="transparent", hover_color=APP_BG, text_color=PRIMARY,
+            height=28, width=10, font=ctk.CTkFont(size=12),
+        ).pack(side="right")
+
         ctk.CTkLabel(
             cont,
             text=f"¿Problemas para entrar? Contacta a {self.cfg.correo_contacto}",
             font=ctk.CTkFont(size=11),
             text_color=TEXT_FAINT,
-        ).pack(anchor="w", pady=(14, 0))
+        ).pack(anchor="w", pady=(8, 0))
 
     def _campo(self, parent, etiqueta, placeholder, show=None):
         ctk.CTkLabel(parent, text=etiqueta, font=ctk.CTkFont(size=12, weight="bold"),
@@ -196,6 +209,17 @@ class LoginWindow(ctk.CTk):
                         "auth_source": auth_result.get("source", "local"),
                     },
                 )
+            credencial = (auth_result.get("payload") or {}).get("credential") or {}
+            if credencial.get("must_change_password"):
+                # El backend exige definir contrasena propia antes de continuar.
+                self.error_lbl.configure(
+                    text="Debes definir una contrasena nueva para continuar.",
+                )
+                CredentialDialog(
+                    self, self.cfg, mode="change", email=self.authenticated_email,
+                    forced=True, on_success=self._continuar_tras_cambio,
+                )
+                return
             self.decision = True
             self.destroy()
         else:
@@ -216,12 +240,227 @@ class LoginWindow(ctk.CTk):
                 self.error_lbl.configure(
                     text="No se pudo conectar con el servidor de VYNTRA. Intenta de nuevo."
                 )
+            elif reason == "activation_required":
+                self.error_lbl.configure(
+                    text="Tu cuenta aun no esta activada. Usa el boton "
+                         "\"Activar cuenta\" con el codigo que recibiste por correo."
+                )
             else:
-                self.error_lbl.configure(text="Correo o contrasena incorrectos.")
+                self.error_lbl.configure(
+                    text=auth_result.get("message") or "Correo o contrasena incorrectos."
+                )
+
+    def _continuar_tras_cambio(self):
+        self.decision = True
+        self.after(1500, self.destroy)
 
     def _salir(self):
         self.decision = False
         self.destroy()
+
+    def _abrir_activacion(self):
+        CredentialDialog(self, self.cfg, mode="activate",
+                         email=self.entry_correo.get().strip())
+
+    def _abrir_recuperacion(self):
+        CredentialDialog(self, self.cfg, mode="forgot",
+                         email=self.entry_correo.get().strip())
+
+
+# ==========================================================================
+# Autoservicio de credenciales
+# ==========================================================================
+class CredentialDialog(ctk.CTkToplevel):
+    """Dialogo modal para activar la cuenta, cambiar la contrasena o
+    recuperarla. El agente nunca guarda ni conoce contrasenas: solo las
+    envia al backend por HTTPS con el token del equipo.
+
+    Modos:
+      - "activate": correo + codigo recibido + contrasena nueva.
+      - "forgot":   correo -> se envia un codigo; luego pasa a "activate".
+      - "change":   correo + contrasena actual + contrasena nueva.
+    """
+
+    TITULOS = {
+        "activate": ("Activar cuenta",
+                     "Escribe el codigo que recibiste por correo y define tu "
+                     "contrasena personal. Nadie mas la conocera."),
+        "forgot": ("Recuperar acceso",
+                   "Te enviaremos un codigo de un solo uso a tu correo "
+                   "registrado para definir una contrasena nueva."),
+        "change": ("Cambiar contrasena",
+                   "Confirma tu contrasena actual y define la nueva. "
+                   "Recibiras un aviso por correo al completar el cambio."),
+    }
+
+    def __init__(self, parent, cfg, mode: str = "activate", email: str = "",
+                 on_success=None, forced: bool = False):
+        super().__init__(parent)
+        self.cfg = cfg
+        self.mode = mode
+        self.on_success = on_success
+        self.forced = forced  # cambio obligatorio: no se puede cerrar sin completar
+        self.result_ok = False
+
+        self.title("VYNTRA - " + self.TITULOS[mode][0])
+        self.geometry("440x520")
+        self.resizable(False, True)
+        self.configure(fg_color=APP_BG)
+        self.transient(parent)
+        self.grab_set()
+        if forced:
+            self.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        self._campos = {}
+        self._build(email)
+
+    # ------------------------------------------------------------------ UI
+    def _build(self, email: str):
+        for widget in self.winfo_children():
+            widget.destroy()
+        self._campos = {}
+
+        titulo, ayuda = self.TITULOS[self.mode]
+        body = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=12,
+                            border_width=1, border_color=BORDER)
+        body.pack(fill="both", expand=True, padx=18, pady=18)
+        cont = ctk.CTkFrame(body, fg_color="transparent")
+        cont.pack(fill="both", expand=True, padx=22, pady=20)
+
+        ctk.CTkLabel(cont, text=titulo,
+                     font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color=TEXT_DARK).pack(anchor="w")
+        ctk.CTkLabel(cont, text=ayuda, font=ctk.CTkFont(size=12),
+                     text_color=TEXT_MUTED, wraplength=350,
+                     justify="left").pack(anchor="w", pady=(6, 12))
+
+        self._campo(cont, "correo", "Correo electronico",
+                    "tu.correo@empresa.com", valor=email)
+        if self.mode == "activate":
+            self._campo(cont, "codigo", "Codigo de activacion", "ABCD-EFGH")
+        if self.mode == "change":
+            self._campo(cont, "actual", "Contrasena actual", "", show="*")
+        if self.mode in ("activate", "change"):
+            self._campo(cont, "nueva", "Contrasena nueva",
+                        "Minimo 10 caracteres", show="*")
+            self._campo(cont, "confirmar", "Confirmar contrasena nueva",
+                        "", show="*")
+            ctk.CTkLabel(
+                cont,
+                text="Combina mayusculas, minusculas, numeros y un simbolo.",
+                font=ctk.CTkFont(size=11), text_color=TEXT_FAINT,
+                wraplength=350, justify="left",
+            ).pack(anchor="w", pady=(4, 0))
+
+        self.msg_lbl = ctk.CTkLabel(cont, text="", font=ctk.CTkFont(size=12),
+                                    text_color=DANGER, wraplength=350,
+                                    justify="left")
+        self.msg_lbl.pack(anchor="w", pady=(8, 0))
+
+        acciones = {"activate": "Activar cuenta",
+                    "forgot": "Enviar codigo",
+                    "change": "Cambiar contrasena"}
+        self.btn_accion = ctk.CTkButton(
+            cont, text=acciones[self.mode], command=self._ejecutar,
+            fg_color=PRIMARY, hover_color=PRIMARY_DARK, text_color="#FFFFFF",
+            height=42, corner_radius=8,
+            font=ctk.CTkFont(size=13, weight="bold"),
+        )
+        self.btn_accion.pack(fill="x", pady=(14, 8))
+
+        if not self.forced:
+            ctk.CTkButton(
+                cont, text="Cerrar", command=self.destroy,
+                fg_color=SURFACE, hover_color=APP_BG, text_color=TEXT_BODY,
+                border_width=1, border_color=BORDER_STRONG,
+                height=36, corner_radius=8,
+            ).pack(fill="x")
+
+        if self.mode == "forgot":
+            ctk.CTkButton(
+                cont, text="Ya tengo un codigo", command=self._ir_a_activar,
+                fg_color="transparent", hover_color=APP_BG,
+                text_color=PRIMARY, height=30,
+            ).pack(anchor="w", pady=(6, 0))
+
+    def _campo(self, parent, clave, etiqueta, placeholder, valor="", show=None):
+        ctk.CTkLabel(parent, text=etiqueta,
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color=TEXT_BODY).pack(anchor="w", pady=(8, 4))
+        entry = ctk.CTkEntry(parent, placeholder_text=placeholder, show=show,
+                             fg_color=SURFACE_ALT, border_color=BORDER_STRONG,
+                             text_color=TEXT_DARK, height=36)
+        if valor:
+            entry.insert(0, valor)
+        entry.pack(fill="x")
+        self._campos[clave] = entry
+        return entry
+
+    def _valor(self, clave):
+        entry = self._campos.get(clave)
+        return entry.get() if entry else ""
+
+    def _aviso(self, texto, error=True):
+        self.msg_lbl.configure(text=texto,
+                               text_color=DANGER if error else SUCCESS)
+
+    def _ir_a_activar(self):
+        self.mode = "activate"
+        correo = self._valor("correo").strip()
+        self.title("VYNTRA - " + self.TITULOS["activate"][0])
+        self._build(correo)
+
+    # ------------------------------------------------------------- acciones
+    def _ejecutar(self):
+        correo = self._valor("correo").strip()
+        if not correo or "@" not in correo:
+            self._aviso("Escribe tu correo electronico.")
+            return
+
+        if self.mode == "forgot":
+            resultado = local_auth.solicitar_codigo(correo, self.cfg)
+            if resultado.get("ok"):
+                self._aviso("Si el correo esta registrado recibiras un codigo "
+                            "en unos minutos. Al tenerlo, continua aqui.",
+                            error=False)
+                self.after(1800, self._ir_a_activar)
+            else:
+                self._aviso(resultado.get("message") or
+                            "No se pudo solicitar el codigo.")
+            return
+
+        nueva = self._valor("nueva")
+        if nueva != self._valor("confirmar"):
+            self._aviso("Las contrasenas nuevas no coinciden.")
+            return
+
+        if self.mode == "activate":
+            codigo = self._valor("codigo").strip()
+            if not codigo:
+                self._aviso("Escribe el codigo que recibiste por correo.")
+                return
+            resultado = local_auth.activar_cuenta(correo, codigo, nueva, self.cfg)
+        else:  # change
+            resultado = local_auth.cambiar_contrasena(
+                correo, self._valor("actual"), nueva, self.cfg)
+
+        if resultado.get("ok"):
+            self.result_ok = True
+            exito = ("Cuenta activada. Ya puedes iniciar sesion."
+                     if self.mode == "activate"
+                     else "Contrasena actualizada correctamente.")
+            self._aviso(exito, error=False)
+            append_event("station_credential_" + self.mode, {
+                "email": correo.lower(),
+                "occurred_at": datetime.datetime.now().isoformat(),
+                "agent_version": VERSION,
+            })
+            if self.on_success:
+                self.on_success()
+            self.after(1400, self.destroy)
+        else:
+            self._aviso(resultado.get("message") or
+                        "No se pudo completar la operacion.")
 
 
 # ==========================================================================
@@ -608,6 +847,16 @@ class StationWindow(ctk.CTk):
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             der,
+            text="Cambiar contrasena",
+            height=34,
+            corner_radius=14,
+            fg_color="#2F5AC7",
+            hover_color=PRIMARY,
+            command=self._modal_cambiar_contrasena,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            der,
             text="?",
             width=34,
             height=34,
@@ -617,6 +866,9 @@ class StationWindow(ctk.CTk):
             command=self._modal_incidencia,
             font=ctk.CTkFont(size=14, weight="bold"),
         ).pack(side="left")
+
+    def _modal_cambiar_contrasena(self):
+        CredentialDialog(self, self.cfg, mode="change", email=self.auth_email)
 
     def _panel_reloj(self, parent):
         parent.grid_columnconfigure(0, weight=1)

@@ -12,6 +12,7 @@ credentials.previous.json
 backend/.env
 backend/storage/
 backend/data/
+backend/*.db
 capturas/
 
 # Build artifacts

@@ -40,3 +40,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Config de red local (antivirus/proxy que intercepta TLS): nunca al repo,
+# rompe npm install en CI/Vercel. Ver .npmrc.example.
+.npmrc
+.certs/
+*.crt
+*.cer
+*.pem

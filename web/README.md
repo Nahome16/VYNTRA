@@ -25,6 +25,7 @@ admin@vyntra.local / Vyntra2026
 ## Nota de entorno
 
 Si `npm install` falla con `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, el equipo o la red
-esta interceptando/verificando certificados. Resolver el certificado raiz local
-antes de instalar dependencias; no se recomienda desactivar `strict-ssl` para
-produccion.
+esta interceptando el trafico TLS (antivirus o proxy). Copia `.npmrc.example`
+como `.npmrc` y apunta `cafile` al certificado raiz del interceptor. Ese
+archivo es local de cada maquina y esta ignorado por git: nunca debe subirse
+al repositorio, porque rompe la instalacion en CI/Vercel.

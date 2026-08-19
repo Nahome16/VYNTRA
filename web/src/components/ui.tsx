@@ -67,7 +67,11 @@ export function RefreshButton({
   const t = useT();
   return (
     <button className="secondary-button" onClick={onClick} disabled={loading}>
-      {loading ? t("Actualizando") : t("Actualizar")}
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 5v4h4" />
+        <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 19v-4h-4" />
+      </svg>
+      <span>{loading ? t("Actualizando") : t("Actualizar")}</span>
     </button>
   );
 }

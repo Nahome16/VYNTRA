@@ -20,6 +20,9 @@ const en: Record<string, string> = {
   "Cambiar a modo oscuro": "Switch to dark mode",
   "Cambiar a modo claro": "Switch to light mode",
   "Cambiar idioma": "Change language",
+  "Abrir menu": "Open menu",
+  "Cerrar menu": "Close menu",
+  "Navegacion principal": "Main navigation",
   Español: "Spanish",
   Inglés: "English",
 

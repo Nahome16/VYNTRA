@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 
@@ -74,6 +74,7 @@ export function AppShell({
   const router = useRouter();
   const { ready, user, logout } = useAuth();
   const { t, theme, toggleTheme, language, toggleLanguage } = usePreferences();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const darkOn = theme === "dark";
 
   useEffect(() => {
@@ -89,15 +90,36 @@ export function AppShell({
   }
 
   return (
-    <main className="app-shell">
-      <aside className="sidebar">
-        <div className="brand-row">
-          <div className="brand-mark">V</div>
-          <div>
-            <strong>VYNTRA</strong>
-            <span>Control</span>
+    <main className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}>
+      <button
+        type="button"
+        className="sidebar-backdrop"
+        aria-label={t("Cerrar menu")}
+        onClick={() => setSidebarOpen(false)}
+      />
+
+      <aside className="sidebar" aria-label={t("Navegacion principal")}>
+        <div className="sidebar-head">
+          <div className="brand-row">
+            <div className="brand-mark">V</div>
+            <div>
+              <strong>VYNTRA</strong>
+              <span>Control</span>
+            </div>
           </div>
+
+          <button
+            type="button"
+            className="shell-icon-button sidebar-close"
+            aria-label={t("Cerrar menu")}
+            onClick={() => setSidebarOpen(false)}
+          >
+            <svg {...iconProps}>
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
         </div>
+
         <nav>
           {navItems.map((item) => (
             <Link
@@ -105,48 +127,13 @@ export function AppShell({
               key={item.href}
               aria-current={pathname.startsWith(item.href) ? "page" : undefined}
               className={pathname.startsWith(item.href) ? "active" : ""}
+              onClick={() => setSidebarOpen(false)}
             >
               {item.icon}
               {t(item.label)}
             </Link>
           ))}
         </nav>
-
-        <div className="pref-row">
-          <button
-            type="button"
-            className="pref-button"
-            onClick={toggleTheme}
-            aria-pressed={darkOn}
-            title={darkOn ? t("Cambiar a modo claro") : t("Cambiar a modo oscuro")}
-          >
-            {darkOn ? (
-              <svg {...iconProps}>
-                <circle cx="12" cy="12" r="4.2" />
-                <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-              </svg>
-            ) : (
-              <svg {...iconProps}>
-                <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
-              </svg>
-            )}
-            <span>{darkOn ? t("Modo claro") : t("Modo oscuro")}</span>
-          </button>
-
-          <button
-            type="button"
-            className="pref-button lang"
-            onClick={toggleLanguage}
-            title={t("Cambiar idioma")}
-            aria-label={t("Cambiar idioma")}
-          >
-            <svg {...iconProps}>
-              <circle cx="12" cy="12" r="9" />
-              <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
-            </svg>
-            <span>{language === "es" ? "ES" : "EN"}</span>
-          </button>
-        </div>
 
         <div className="user-box">
           <span>{user.company}</span>
@@ -158,11 +145,61 @@ export function AppShell({
 
       <section className="content">
         <header className="topbar">
-          <div>
-            <h1>{title}</h1>
-            <p>{description}</p>
+          <div className="topbar-heading">
+            <button
+              type="button"
+              className="shell-icon-button mobile-menu-button"
+              aria-label={t("Abrir menu")}
+              aria-expanded={sidebarOpen}
+              onClick={() => setSidebarOpen(true)}
+            >
+              <svg {...iconProps}>
+                <path d="M4 7h16M4 12h16M4 17h16" />
+              </svg>
+            </button>
+            <div>
+              <h1>{title}</h1>
+              <p>{description}</p>
+            </div>
           </div>
-          {actions}
+
+          <div className="topbar-actions">
+            <button
+              type="button"
+              className="shell-icon-button"
+              onClick={toggleTheme}
+              aria-pressed={darkOn}
+              aria-label={darkOn ? t("Cambiar a modo claro") : t("Cambiar a modo oscuro")}
+              title={darkOn ? t("Cambiar a modo claro") : t("Cambiar a modo oscuro")}
+            >
+              {darkOn ? (
+                <svg {...iconProps}>
+                  <circle cx="12" cy="12" r="4.2" />
+                  <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+                </svg>
+              ) : (
+                <svg {...iconProps}>
+                  <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+                </svg>
+              )}
+            </button>
+
+            <button
+              type="button"
+              className="shell-icon-button lang"
+              onClick={toggleLanguage}
+              title={t("Cambiar idioma")}
+              aria-label={t("Cambiar idioma")}
+            >
+              <svg {...iconProps}>
+                <circle cx="12" cy="12" r="9" />
+                <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+              </svg>
+              <span>{language === "es" ? "ES" : "EN"}</span>
+            </button>
+
+            {actions ? <div className="page-actions">{actions}</div> : null}
+          </div>
         </header>
         {children}
       </section>

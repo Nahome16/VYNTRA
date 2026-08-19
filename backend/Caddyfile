@@ -1,5 +1,15 @@
 {
-	email admin@yourdomain.com
+	email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+	encode gzip zstd
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	reverse_proxy web:3000
 }
 
 {$API_DOMAIN} {

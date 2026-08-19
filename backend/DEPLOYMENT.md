@@ -1,40 +1,38 @@
 # VYNTRA Production Deployment
 
-Esta guia asume una VM Ubuntu 24.04 LTS con Docker instalado.
+Esta guia despliega VYNTRA Control en una VM Ubuntu 24.04 LTS con Docker:
 
-## 1. Comprar infraestructura
+- `web`: panel administrativo Next.js.
+- `api`: backend FastAPI.
+- `db`: PostgreSQL.
+- `caddy`: proxy publico con HTTPS automatico.
 
-Recomendado para primera produccion:
+## 1. Infraestructura minima
 
-- Dominio y DNS: Cloudflare
-- VPS: DigitalOcean, Hetzner o Hostinger VPS
-- Sistema: Ubuntu 24.04 LTS
-- RAM minima: 4 GB
-- CPU minima: 2 vCPU
-- Disco minimo: 80 GB
+- Dominio administrado en Cloudflare u otro DNS.
+- VPS Ubuntu 24.04 LTS.
+- 2 vCPU.
+- 4 GB RAM.
+- 80 GB disco.
+- Puertos abiertos: `22`, `80`, `443`.
 
 ## 2. DNS
 
-Crear un registro DNS:
+Crear dos registros `A` apuntando a la IP publica de la VM:
 
 ```text
-Tipo: A
-Nombre: api
-Valor: IP_PUBLICA_DE_LA_VM
-Proxy Cloudflare: DNS only al inicio
+app.tudominio.com -> IP_PUBLICA_DE_LA_VM
+api.tudominio.com -> IP_PUBLICA_DE_LA_VM
 ```
 
-Ejemplo:
-
-```text
-api.tudominio.com -> 123.123.123.123
-```
+Al inicio usar `DNS only` si el DNS esta en Cloudflare. Cuando HTTPS ya este
+funcionando se puede evaluar activar proxy.
 
 ## 3. Instalar Docker en la VM
 
 ```bash
 sudo apt update
-sudo apt install -y ca-certificates curl gnupg
+sudo apt install -y ca-certificates curl gnupg git
 sudo install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 sudo chmod a+r /etc/apt/keyrings/docker.gpg
@@ -46,44 +44,88 @@ sudo usermod -aG docker $USER
 
 Cerrar sesion SSH y volver a entrar.
 
-## 4. Subir backend
+## 4. Subir el proyecto
 
-Copiar la carpeta `backend` a la VM.
-
-Ejemplo con SCP desde tu PC:
-
-```powershell
-scp -r "C:\Users\Yoga\OneDrive\Desktop\VYNTRA\backend" usuario@IP_PUBLICA:/opt/vyntra-backend
-```
-
-## 5. Configurar entorno
-
-En la VM:
+Opcion recomendada:
 
 ```bash
-cd /opt/vyntra-backend
-cp .env.production.example .env.production
-nano .env.production
+sudo mkdir -p /opt/vyntra
+sudo chown $USER:$USER /opt/vyntra
+git clone https://github.com/Nahome16/VYNTRA.git /opt/vyntra
+cd /opt/vyntra/backend
 ```
 
-Cambiar:
+Si se sube por SCP, copiar el repositorio completo, no solo `backend`, porque
+produccion tambien construye `../web`.
 
-- `API_DOMAIN`
-- `POSTGRES_PASSWORD`
-- `DATABASE_URL`
-- `BOOTSTRAP_DEVICE_NAME`
-- `BOOTSTRAP_DEVICE_TOKEN`
+## 5. Crear secretos
 
-Para generar token:
+Generar token de dispositivo:
 
 ```bash
 python3 scripts/generate_device_token.py
 ```
 
-## 6. Levantar produccion
+Generar hashes PBKDF2 para el admin inicial y el empleado inicial:
 
 ```bash
+python3 scripts/hash_password.py
+```
+
+Generar `JWT_SECRET`, `ADMIN_API_TOKEN` y `POSTGRES_PASSWORD` con valores
+largos y aleatorios.
+
+## 6. Configurar entorno
+
+```bash
+cd /opt/vyntra/backend
+cp .env.production.example .env.production
+nano .env.production
+```
+
+Valores obligatorios:
+
+```text
+APP_DOMAIN=app.tudominio.com
+API_DOMAIN=api.tudominio.com
+ACME_EMAIL=admin@tudominio.com
+POSTGRES_PASSWORD=...
+DATABASE_URL=postgresql+psycopg://vyntra:POSTGRES_PASSWORD@db:5432/vyntra
+JWT_SECRET=...
+ADMIN_API_TOKEN=...
+CORS_ALLOWED_ORIGINS=https://app.tudominio.com
+BOOTSTRAP_ADMIN_EMAIL=admin@empresa.com
+BOOTSTRAP_ADMIN_PASSWORD_HASH=...
+BOOTSTRAP_EMPLOYEE_LOGIN_EMAIL=empleado@empresa.com
+BOOTSTRAP_EMPLOYEE_PASSWORD_HASH=...
+BOOTSTRAP_DEVICE_NAME=first-device
+BOOTSTRAP_DEVICE_TOKEN=...
+```
+
+Para el primer arranque, si se necesita crear la empresa/admin/dispositivo
+inicial, usar:
+
+```text
+ALLOW_BOOTSTRAP=true
+```
+
+Despues de confirmar que el dispositivo inicial ya existe, cambiarlo a:
+
+```text
+ALLOW_BOOTSTRAP=false
+```
+
+## 7. Levantar produccion
+
+```bash
+cd /opt/vyntra/backend
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+
+Si se quiere validar la configuracion con el ejemplo antes de crear secretos:
+
+```bash
+VYNTRA_ENV_FILE=.env.production.example docker compose -f docker-compose.prod.yml --env-file .env.production.example config
 ```
 
 Ver logs:
@@ -92,42 +134,80 @@ Ver logs:
 docker compose -f docker-compose.prod.yml logs -f
 ```
 
-Probar:
+## 8. Probar
 
 ```bash
 curl https://api.tudominio.com/health
 ```
 
-## 7. Despues del primer arranque
-
-Cuando el primer dispositivo ya exista:
+Abrir:
 
 ```text
-ALLOW_BOOTSTRAP=false
+https://app.tudominio.com
 ```
 
-Luego:
+Validar:
 
-```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+- Login administrativo.
+- Dashboard.
+- Empleados.
+- Asistencia.
+- Ajustes.
+- Incidencias.
+- Carga de evidencia desde un agente de prueba.
+
+## 9. Nota sobre builds en redes con antivirus/proxy
+
+Si el build local de Docker falla descargando paquetes con errores como
+`CERTIFICATE_VERIFY_FAILED`, la causa normalmente es una red, antivirus o proxy
+interceptando TLS. En una VM de produccion normal no deberia ocurrir.
+
+Para validar localmente en esa red, configurar Docker para confiar en el
+certificado raiz corporativo/de antivirus desde la configuracion del motor, sin
+commitear certificados personales al repositorio.
+
+## 10. Agente de escritorio
+
+Crear una configuracion de produccion desde:
+
+```text
+installer/config.production.template.ini
 ```
 
-## 8. Firewall
+Valores clave:
 
-Abrir solo:
+```text
+[Server]
+Url = https://api.tudominio.com
 
-- 22 SSH
-- 80 HTTP
-- 443 HTTPS
+[EvidenceBackend]
+Enabled = true
+Url = https://api.tudominio.com
+DeviceToken = TOKEN_UNICO_DEL_EQUIPO
 
-## 9. Backups minimos
+[StationAuth]
+AllowLocalFallback = false
+```
+
+Cada PC debe usar un `DeviceToken` unico.
+
+## 11. Backups minimos
 
 Base de datos:
 
 ```bash
-docker exec -t vyntra-backend-db-1 pg_dump -U vyntra vyntra > vyntra_backup.sql
+docker compose -f docker-compose.prod.yml exec -T db pg_dump -U vyntra vyntra > vyntra_backup.sql
 ```
 
 Evidencias:
 
-Respaldar el volumen `evidence_data` o migrar a storage S3-compatible.
+Respaldar el volumen `evidence_data` o migrar evidencias a storage externo.
+
+## 12. Actualizar produccion
+
+```bash
+cd /opt/vyntra
+git pull
+cd backend
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```

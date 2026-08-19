@@ -18,18 +18,29 @@ services:
     build: .
     restart: unless-stopped
     env_file:
-      - .env.production
+      - ${VYNTRA_ENV_FILE:-.env.production}
     volumes:
       - evidence_data:/data/evidence
     depends_on:
       db:
         condition: service_healthy
 
+  web:
+    build:
+      context: ../web
+    restart: unless-stopped
+    environment:
+      VYNTRA_API_URL: http://api:8000
+    depends_on:
+      - api
+
   caddy:
     image: caddy:2
     restart: unless-stopped
-    env_file:
-      - .env.production
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL}
+      API_DOMAIN: ${API_DOMAIN}
+      APP_DOMAIN: ${APP_DOMAIN}
     ports:
       - "80:80"
       - "443:443"
@@ -39,6 +50,7 @@ services:
       - caddy_config:/config
     depends_on:
       - api
+      - web
 
 volumes:
   postgres_data:

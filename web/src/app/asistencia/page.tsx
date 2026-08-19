@@ -71,7 +71,7 @@ function statusForShift(shift?: AttendanceShift) {
 
 function workedSeconds(shift?: AttendanceShift) {
   if (!shift) return 0;
-  return Math.max(0, (shift.work_seconds || 0) - (shift.break_seconds || 0) - (shift.lunch_seconds || 0));
+  return Math.max(0, (shift.work_seconds || 0) - (shift.break_seconds || 0) - (shift.lunch_seconds || 0) + (shift.justified_seconds || 0));
 }
 
 function employeeLabel(employee: AttendanceEmployee | undefined) {
@@ -218,7 +218,8 @@ export default function AttendancePage() {
     const workSeconds = selectedAssociateShifts.reduce((sum, shift) => sum + workedSeconds(shift), 0);
     const breakSeconds = selectedAssociateShifts.reduce((sum, shift) => sum + shift.break_seconds, 0);
     const lunchSeconds = selectedAssociateShifts.reduce((sum, shift) => sum + shift.lunch_seconds, 0);
-    return { completed, punctual, tardy, workSeconds, breakSeconds, lunchSeconds };
+    const justifiedSeconds = selectedAssociateShifts.reduce((sum, shift) => sum + (shift.justified_seconds || 0), 0);
+    return { completed, punctual, tardy, workSeconds, breakSeconds, lunchSeconds, justifiedSeconds };
   }, [selectedAssociate, selectedAssociateShifts]);
   const selectedDayShift = useMemo(
     () => selectedAssociateShifts.find((shift) => shift.shift_date === detailDate),
@@ -247,8 +248,9 @@ export default function AttendancePage() {
     const absentToday = employees.filter((employee) => !latestTodayByEmployee.get(employee.id)?.started_at).length;
     const breakSeconds = shifts.reduce((sum, shift) => sum + shift.break_seconds, 0);
     const lunchSeconds = shifts.reduce((sum, shift) => sum + shift.lunch_seconds, 0);
+    const justifiedSeconds = shifts.reduce((sum, shift) => sum + (shift.justified_seconds || 0), 0);
     const workSeconds = shifts.reduce((sum, shift) => sum + workedSeconds(shift), 0);
-    return { totalEmployees, started, finished, activeNow, absentToday, breakSeconds, lunchSeconds, workSeconds };
+    return { totalEmployees, started, finished, activeNow, absentToday, breakSeconds, lunchSeconds, justifiedSeconds, workSeconds };
   }, [employees, shifts, latestTodayByEmployee]);
 
   const groupStats = useMemo(() => {
@@ -444,6 +446,7 @@ export default function AttendancePage() {
             <StatCard label="Ausentes hoy" value={`${stats.absentToday}`} detail="Sin entrada registrada" tone={stats.absentToday ? "bad" : "plain"} />
             <StatCard label="Break" value={formatDuration(stats.breakSeconds)} detail="Pausas cortas" />
             <StatCard label="Lunch" value={formatDuration(stats.lunchSeconds)} detail="Almuerzo registrado" />
+            <StatCard label="Justificado" value={formatDuration(stats.justifiedSeconds)} detail="Incidencias aprobadas" tone={stats.justifiedSeconds ? "good" : "plain"} />
           </section>
 
           {view === "live" ? (
@@ -555,6 +558,7 @@ export default function AttendancePage() {
                   <div><span>Tiempo activo</span><strong>{formatDuration(stats.workSeconds)}</strong></div>
                   <div><span>Break total</span><strong>{formatDuration(stats.breakSeconds)}</strong></div>
                   <div><span>Lunch total</span><strong>{formatDuration(stats.lunchSeconds)}</strong></div>
+                  <div><span>Justificado</span><strong>{formatDuration(stats.justifiedSeconds)}</strong></div>
                 </div>
               </Panel>
               <Panel title="Eventos recientes" meta="timeline">
@@ -622,6 +626,7 @@ export default function AttendancePage() {
                         <div><span>Tardanzas</span><strong className="metric-bad">{selectedAssociateStats.tardy}</strong></div>
                         <div><span>Jornadas</span><strong>{selectedAssociateStats.completed}</strong></div>
                         <div><span>Activo</span><strong>{formatDuration(selectedAssociateStats.workSeconds)}</strong></div>
+                        <div><span>Justificado</span><strong>{formatDuration(selectedAssociateStats.justifiedSeconds)}</strong></div>
                         <div><span>Break</span><strong>{formatDuration(selectedAssociateStats.breakSeconds)}</strong></div>
                         <div><span>Lunch</span><strong>{formatDuration(selectedAssociateStats.lunchSeconds)}</strong></div>
                       </div>

@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+rules_cache.json
 
 # Local credentials and tokens
 token.json

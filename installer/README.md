@@ -6,6 +6,7 @@ Esta carpeta contiene los insumos para preparar el instalador del agente.
 
 - `config.production.template.ini`: plantilla para generar `config.ini` por cliente/equipo.
 - `build_agent.ps1`: compila el agente con PyInstaller.
+- `install_agent_wizard.ps1`: instalador visual para soporte o instalacion manual.
 - `install_agent_autostart.ps1`: instala la carpeta compilada y registra el arranque automatico.
 - `uninstall_agent_autostart.ps1`: elimina la tarea programada y, opcionalmente, la carpeta instalada.
 
@@ -29,7 +30,13 @@ Esta carpeta contiene los insumos para preparar el instalador del agente.
 dist\VYNTRAAgent
 ```
 
-5. En cada PC, instalar el agente y registrar autoarranque:
+5. En cada PC, instalar el agente y registrar autoarranque con el asistente visual:
+
+```powershell
+.\installer\install_agent_wizard.ps1
+```
+
+Tambien se puede usar el modo tecnico/silencioso:
 
 ```powershell
 .\installer\install_agent_autostart.ps1

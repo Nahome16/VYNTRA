@@ -4,11 +4,13 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState, RefreshButton, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
+import { IncidentsPanel } from "@/components/incidents-panel";
 import { AccessCode, CatalogsResponse, Employee, ProductivityRule, UncategorizedItem } from "@/lib/types";
 
 const sectionLabels = {
   usuarios: "Usuarios monitoreados",
   accesos: "Accesos",
+  incidencias: "Incidencias",
   reglas: "Reglas",
 } as const;
 
@@ -21,10 +23,29 @@ type RuleRow =
   | { kind: "rule"; id: string; app: string; title: string; classification: string; scope: string; department_id: string | null; rule: ProductivityRule }
   | { kind: "pending"; id: string; app: string; title: string; classification: "uncategorized"; scope: string; department_id: null; item: UncategorizedItem };
 
+function isSectionKey(value: string): value is SectionKey {
+  return value in sectionLabels;
+}
+
 const accessTypeLabels: Record<AccessType, string> = {
   station_reopen: "Reabrir",
   overtime: "Horas extra",
 };
+
+function accessStatusLabel(code: AccessCode) {
+  if (code.status === "issued" && new Date(code.valid_until).getTime() <= Date.now()) {
+    return "Vencido";
+  }
+  const labels: Record<string, string> = {
+    issued: "Pendiente",
+    sent: "Enviado",
+    active: "Activo",
+    used: "Usado",
+    expired: "Vencido",
+    revoked: "Revocado",
+  };
+  return labels[code.status] || code.status;
+}
 
 function classificationLabel(value: string) {
   const labels: Record<string, string> = {
@@ -85,7 +106,7 @@ export default function SettingsPage() {
   const [employeeEmail, setEmployeeEmail] = useState("");
   const [employeeDepartmentId, setEmployeeDepartmentId] = useState("");
   const [newDepartment, setNewDepartment] = useState("");
-  const [generatedCredential, setGeneratedCredential] = useState<{ email: string; password: string } | null>(null);
+  const [generatedCredential, setGeneratedCredential] = useState<{ email: string; password: string; password_change_required?: boolean } | null>(null);
 
   const [accessSearch, setAccessSearch] = useState("");
   const [accessDate, setAccessDate] = useState("");
@@ -149,6 +170,19 @@ export default function SettingsPage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [loadSettings, user]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const hashSection = window.location.hash.replace("#", "");
+      if (isSectionKey(hashSection)) setActiveSection(hashSection);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  function selectSection(section: SectionKey) {
+    setActiveSection(section);
+    window.history.replaceState(null, "", `#${section}`);
+  }
 
   const departments = useMemo(() => catalogs?.departments || [], [catalogs]);
   const employees = useMemo(() => catalogs?.employees || [], [catalogs]);
@@ -282,17 +316,18 @@ export default function SettingsPage() {
 
       const response = await apiPost<{
         employee: Employee;
-        credentials: { email: string; password: string; delivery_status: string };
+        credentials: { email: string; password: string; delivery_status: string; password_change_required?: boolean };
       }>("/api/settings/employees", {
         full_name: employeeName,
         email: employeeEmail,
         department_id: employeeDepartmentId || null,
         new_department: newDepartment || null,
       });
-      setGeneratedCredential({
-        email: response.credentials.email,
-        password: response.credentials.password,
-      });
+        setGeneratedCredential({
+          email: response.credentials.email,
+          password: response.credentials.password,
+          password_change_required: response.credentials.password_change_required,
+        });
       setEmployeeName("");
       setEmployeeEmail("");
       setEmployeeDepartmentId("");
@@ -332,7 +367,7 @@ export default function SettingsPage() {
     }
     setStatusText("Generando codigo...");
     try {
-      const response = await apiPost<{ code: AccessCode }>("/api/settings/access-codes", {
+      const response = await apiPost<{ code: AccessCode; delivery_status?: string }>("/api/settings/access-codes", {
         type: accessDraftType,
         employee_id: accessEmployeeId,
         valid_minutes: Number(accessValidMinutes),
@@ -341,7 +376,11 @@ export default function SettingsPage() {
       });
       setAccessCodes((current) => [response.code, ...current.filter((code) => code.id !== response.code.id)]);
       closeAccessModal();
-      setStatusText("Codigo generado y agregado a la tabla");
+      setStatusText(
+        response.delivery_status === "not_configured"
+          ? "Codigo generado. Queda pendiente de entrega por correo cuando SMTP este configurado."
+          : "Codigo generado y agregado a la tabla"
+      );
     } catch {
       setStatusText("No se pudo generar el codigo");
     }
@@ -469,14 +508,14 @@ export default function SettingsPage() {
   return (
     <AppShell
       title="Ajustes"
-      description={`${user?.company || "Empresa"} - usuarios, accesos y reglas por empresa.`}
+      description={`${user?.company || "Empresa"} - usuarios, accesos, incidencias y reglas por empresa.`}
       actions={<RefreshButton loading={loading} onClick={loadSettings} />}
     >
       <section className="settings-board">
         <div className="settings-board-header">
           <div>
             <h2>Ajustes</h2>
-            <p>{user?.company || "Empresa"} - usuarios, accesos y reglas</p>
+            <p>{user?.company || "Empresa"} - usuarios, accesos, incidencias y reglas</p>
           </div>
           <div className="settings-board-tabs" role="tablist" aria-label="Secciones de ajustes">
             {(Object.keys(sectionLabels) as SectionKey[]).map((key) => (
@@ -484,7 +523,7 @@ export default function SettingsPage() {
                 aria-selected={activeSection === key}
                 className={activeSection === key ? "active" : ""}
                 key={key}
-                onClick={() => setActiveSection(key)}
+                onClick={() => selectSection(key)}
                 role="tab"
                 type="button"
               >
@@ -629,6 +668,7 @@ export default function SettingsPage() {
                     <th>Empleado</th>
                     <th>Tipo</th>
                     <th>Codigo</th>
+                    <th>Estado</th>
                     <th>Valido hasta</th>
                   </tr>
                 </thead>
@@ -639,6 +679,7 @@ export default function SettingsPage() {
                         <td>{code.employee || code.email}</td>
                         <td><span className={`settings-type settings-type-${code.type}`}>{code.type_label || accessTypeLabels[code.type]}</span></td>
                         <td><strong>{code.code}</strong></td>
+                        <td><span className={`settings-access-status settings-access-status-${code.status}`}>{accessStatusLabel(code)}</span></td>
                         <td>{new Date(code.valid_until).toLocaleString("es-NI")}</td>
                       </tr>
                     );
@@ -647,7 +688,7 @@ export default function SettingsPage() {
               </table>
               {!filteredAccessCodes.length ? <EmptyState>No hay codigos para el filtro actual.</EmptyState> : null}
             </div>
-            <p className="settings-note">Elige un tipo en + Generar, completa usuario y vigencia, y luego se agrega a la tabla.</p>
+            <p className="settings-note">Elige un tipo en + Generar, completa usuario y vigencia. La estacion consume el codigo una sola vez contra el servidor.</p>
           </>
         ) : null}
 
@@ -803,7 +844,11 @@ export default function SettingsPage() {
           </>
         ) : null}
 
-        <StatusLine>{statusText}</StatusLine>
+        {activeSection === "incidencias" ? (
+          <IncidentsPanel active={activeSection === "incidencias"} />
+        ) : null}
+
+        {activeSection !== "incidencias" ? <StatusLine>{statusText}</StatusLine> : null}
       </section>
 
       {showEmployeeModal ? (
@@ -833,6 +878,7 @@ export default function SettingsPage() {
                 <span>Credencial generada</span>
                 <strong>{generatedCredential.email}</strong>
                 <code>{generatedCredential.password}</code>
+                {generatedCredential.password_change_required ? <small>Temporal: el usuario debera cambiarla al primer ingreso.</small> : null}
               </div>
             ) : null}
           </form>

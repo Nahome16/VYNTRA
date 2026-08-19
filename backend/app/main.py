@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import base64
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -18,7 +19,7 @@ from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, Form, HTTPExc
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -46,6 +47,7 @@ from app.models import (
     EmployeeSchedule,
     EvidenceFile,
     EvidenceUploadAttempt,
+    Incident,
     LoginAttempt,
     Position,
     ProductivityBlock,
@@ -56,6 +58,7 @@ from app.models import (
     OvertimeAuthorization,
     StationRestoreCode,
     StationLoginEvent,
+    TimeAdjustment,
     User,
     WindowTitleCatalog,
     new_id,
@@ -100,6 +103,22 @@ class StationLoginPayload(StrictPayload):
     agent_version: str | None = Field(default=None, max_length=40)
 
 
+class StationPasswordChangePayload(StrictPayload):
+    email: str = Field(..., min_length=3, max_length=180)
+    current_password: str = Field(..., min_length=1, max_length=256)
+    new_password: str = Field(..., min_length=8, max_length=256)
+
+
+class StationPasswordResetRequestPayload(StrictPayload):
+    email: str = Field(..., min_length=3, max_length=180)
+
+
+class StationPasswordResetConfirmPayload(StrictPayload):
+    email: str = Field(..., min_length=3, max_length=180)
+    reset_code: str = Field(..., min_length=4, max_length=20)
+    new_password: str = Field(..., min_length=8, max_length=256)
+
+
 class DepartmentPayload(StrictPayload):
     company_id: str | None = Field(default=None, max_length=36)
     name: str = Field(..., min_length=2, max_length=120)
@@ -133,6 +152,11 @@ class RestoreCodePayload(StrictPayload):
 class AccessCodePayload(RestoreCodePayload):
     type: Literal["station_reopen", "overtime"]
     assigned_minutes: int | None = Field(default=None, ge=5, le=1440)
+
+
+class ConsumeAccessCodePayload(StrictPayload):
+    code: str = Field(..., min_length=4, max_length=80)
+    type: Literal["station_reopen", "overtime"]
 
 
 class ProductivityRulePayload(StrictPayload):
@@ -195,9 +219,17 @@ class AgentEventsPayload(StrictPayload):
     events: list[dict] = Field(..., max_length=200)
 
 
+class IncidentResolutionPayload(StrictPayload):
+    status: Literal["approved", "rejected", "closed"]
+    resolution_notes: str | None = Field(default=None, max_length=2000)
+
+
 RATE_LIMITS = {
     ("POST", "/api/admin/login"): (8, 300),
     ("POST", "/api/station/login"): (20, 300),
+    ("POST", "/api/station/password/change"): (8, 300),
+    ("POST", "/api/station/password-reset/request"): (5, 300),
+    ("POST", "/api/station/password-reset/confirm"): (8, 300),
     ("POST", "/api/evidence/upload"): (60, 60),
     ("POST", "/api/agent/events"): (120, 60),
 }
@@ -209,6 +241,8 @@ IP_SCOPES = (
     ("/api/productivity", settings.admin_allowed_ips),
     ("/api/employees", settings.admin_allowed_ips),
     ("/api/attendance", settings.admin_allowed_ips),
+    ("/api/incidents", settings.admin_allowed_ips),
+    ("/api/station", settings.agent_allowed_ips),
     ("/api/agent", settings.agent_allowed_ips),
     ("/api/evidence", settings.agent_allowed_ips),
 )
@@ -309,6 +343,24 @@ def generate_password(length: int = 14) -> str:
             and any(char in "!@#$%*?" for char in password)
         ):
             return password
+
+
+def validate_password_policy(password: str):
+    signs = "!@#$%*?_-."
+    if len(password or "") < 8:
+        raise HTTPException(status_code=400, detail="Password must have at least 8 characters")
+    if not any(char.islower() for char in password):
+        raise HTTPException(status_code=400, detail="Password must include a lowercase letter")
+    if not any(char.isupper() for char in password):
+        raise HTTPException(status_code=400, detail="Password must include an uppercase letter")
+    if not any(char.isdigit() for char in password):
+        raise HTTPException(status_code=400, detail="Password must include a number")
+    if not any(char in signs for char in password):
+        raise HTTPException(status_code=400, detail="Password must include a special character")
+
+
+def generate_reset_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
 
 
 def hash_password(password: str) -> str:
@@ -460,7 +512,12 @@ def serialize_employee_for_attendance(
     }
 
 
-def serialize_shift_for_attendance(shift: Shift, events_by_shift: dict[str, list[ShiftEvent]]) -> dict:
+def serialize_shift_for_attendance(
+    shift: Shift,
+    events_by_shift: dict[str, list[ShiftEvent]],
+    justified_by_shift: dict[str, int] | None = None,
+) -> dict:
+    justified_by_shift = justified_by_shift or {}
     return {
         "id": shift.id,
         "company_id": shift.company_id,
@@ -474,6 +531,7 @@ def serialize_shift_for_attendance(shift: Shift, events_by_shift: dict[str, list
         "break_seconds": shift.break_seconds,
         "lunch_seconds": shift.lunch_seconds,
         "idle_seconds": shift.idle_seconds,
+        "justified_seconds": int(justified_by_shift.get(shift.id, 0) or 0),
         "events": [
             {
                 "id": event.id,
@@ -553,18 +611,61 @@ def serialize_access_code(kind: str, code: StationRestoreCode | OvertimeAuthoriz
     return {**base, "type": kind, "type_label": labels[kind]}
 
 
-def productivity_totals(blocks: list[ProductivityBlock]) -> dict:
+def _as_aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def serialize_incident(db: Session, incident: Incident) -> dict:
+    employee = db.get(Employee, incident.employee_id)
+    device = db.get(Device, incident.device_id) if incident.device_id else None
+    try:
+        payload = json.loads(incident.payload_json or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    adjustment = db.execute(
+        select(TimeAdjustment).where(TimeAdjustment.incident_id == incident.id)
+    ).scalar_one_or_none()
+    return {
+        "id": incident.id,
+        "company_id": incident.company_id,
+        "employee_id": incident.employee_id,
+        "employee": employee.full_name if employee else None,
+        "employee_code": employee.employee_code if employee else None,
+        "device_id": incident.device_id,
+        "device": device.name if device else None,
+        "incident_type": incident.incident_type,
+        "status": incident.status,
+        "title": incident.title,
+        "description": incident.description,
+        "requested_at": incident.requested_at.isoformat() if incident.requested_at else None,
+        "resolved_at": incident.resolved_at.isoformat() if incident.resolved_at else None,
+        "resolution_notes": incident.resolution_notes,
+        "time_adjustment": serialize_time_adjustment(adjustment) if adjustment else None,
+        "payload": payload,
+    }
+
+
+def row_metric(row, key: str) -> int | float:
+    if isinstance(row, dict):
+        return row.get(key, 0) or 0
+    return getattr(row, key, 0) or 0
+
+
+def productivity_totals(blocks: list[ProductivityBlock | dict]) -> dict:
     totals = {
-        "total_seconds": sum(row.total_seconds for row in blocks),
-        "active_seconds": sum(row.active_seconds for row in blocks),
-        "productive_seconds": sum(row.productive_seconds for row in blocks),
-        "neutral_seconds": sum(row.neutral_seconds for row in blocks),
-        "non_productive_seconds": sum(row.non_productive_seconds for row in blocks),
-        "uncategorized_seconds": sum(row.uncategorized_seconds for row in blocks),
-        "idle_seconds": sum(row.idle_seconds for row in blocks),
-        "break_seconds": sum(row.break_seconds for row in blocks),
-        "lunch_seconds": sum(row.lunch_seconds for row in blocks),
-        "break_lunch_seconds": sum(row.break_lunch_seconds for row in blocks),
+        "total_seconds": sum(int(row_metric(row, "total_seconds")) for row in blocks),
+        "active_seconds": sum(int(row_metric(row, "active_seconds")) for row in blocks),
+        "productive_seconds": sum(int(row_metric(row, "productive_seconds")) for row in blocks),
+        "neutral_seconds": sum(int(row_metric(row, "neutral_seconds")) for row in blocks),
+        "non_productive_seconds": sum(int(row_metric(row, "non_productive_seconds")) for row in blocks),
+        "uncategorized_seconds": sum(int(row_metric(row, "uncategorized_seconds")) for row in blocks),
+        "idle_seconds": sum(int(row_metric(row, "idle_seconds")) for row in blocks),
+        "break_seconds": sum(int(row_metric(row, "break_seconds")) for row in blocks),
+        "lunch_seconds": sum(int(row_metric(row, "lunch_seconds")) for row in blocks),
+        "break_lunch_seconds": sum(int(row_metric(row, "break_lunch_seconds")) for row in blocks),
+        "justified_seconds": sum(int(row_metric(row, "justified_seconds")) for row in blocks),
     }
     active = totals["active_seconds"]
     total = totals["total_seconds"]
@@ -581,6 +682,243 @@ def productivity_totals(blocks: list[ProductivityBlock]) -> dict:
         }
     )
     return totals
+
+
+def serialize_productivity_block(row: ProductivityBlock) -> dict:
+    return {
+        "id": row.id,
+        "employee_id": row.employee_id,
+        "department_id": row.department_id_snapshot,
+        "block_date": row.block_date,
+        "block_start": row.block_start,
+        "total_seconds": row.total_seconds,
+        "active_seconds": row.active_seconds,
+        "productive_seconds": row.productive_seconds,
+        "neutral_seconds": row.neutral_seconds,
+        "non_productive_seconds": row.non_productive_seconds,
+        "uncategorized_seconds": row.uncategorized_seconds,
+        "idle_seconds": row.idle_seconds,
+        "break_seconds": row.break_seconds,
+        "lunch_seconds": row.lunch_seconds,
+        "break_lunch_seconds": row.break_lunch_seconds,
+        "justified_seconds": 0,
+        "productivity_pct": row.productivity_pct,
+        "acceptable_pct": row.acceptable_pct,
+        "non_productive_pct": row.non_productive_pct,
+        "neutral_pct": row.neutral_pct,
+        "uncategorized_pct": row.uncategorized_pct,
+        "idle_pct": row.idle_pct,
+        "break_pct": row.break_pct,
+        "lunch_pct": row.lunch_pct,
+    }
+
+
+def serialize_time_adjustment(row: TimeAdjustment) -> dict:
+    return {
+        "id": row.id,
+        "company_id": row.company_id,
+        "employee_id": row.employee_id,
+        "device_id": row.device_id,
+        "incident_id": row.incident_id,
+        "adjustment_type": row.adjustment_type,
+        "status": row.status,
+        "started_at": row.started_at.isoformat(),
+        "ended_at": row.ended_at.isoformat(),
+        "seconds": row.seconds,
+        "productivity_classification": row.productivity_classification,
+        "reason": row.reason,
+        "notes": row.notes,
+    }
+
+
+def setting_int(db: Session, company_id: str, key: str, default: int) -> int:
+    row = db.execute(
+        select(CompanySetting).where(
+            CompanySetting.company_id == company_id,
+            CompanySetting.key == key,
+        )
+    ).scalar_one_or_none()
+    if not row:
+        return default
+    try:
+        return int(row.value)
+    except ValueError:
+        return default
+
+
+def block_start_for(ts: datetime, block_minutes: int) -> datetime:
+    ts = _as_aware_utc(ts)
+    minute = (ts.minute // block_minutes) * block_minutes
+    return ts.replace(minute=minute, second=0, microsecond=0)
+
+
+def incident_adjustment_window(incident: Incident) -> tuple[datetime, datetime, int]:
+    try:
+        payload = json.loads(incident.payload_json or "{}")
+    except json.JSONDecodeError:
+        payload = {}
+    evidence = payload.get("evidencia_tecnica") or {}
+    if not isinstance(evidence, dict):
+        evidence = {}
+    try:
+        minutes = int(evidence.get("minutos_estimados") or payload.get("minutos_estimados") or 0)
+    except (TypeError, ValueError):
+        minutes = 0
+    minutes = max(1, min(minutes or 15, 1440))
+    started_at = (
+        parse_optional_client_datetime(evidence.get("inicio_sugerido"))
+        or parse_optional_client_datetime(payload.get("inicio_sugerido"))
+    )
+    ended_at = (
+        parse_optional_client_datetime(evidence.get("fin_sugerido"))
+        or parse_optional_client_datetime(payload.get("fin_sugerido"))
+    )
+    if not started_at and incident.requested_at:
+        started_at = _as_aware_utc(incident.requested_at) - timedelta(minutes=minutes)
+    if not started_at:
+        started_at = now_utc() - timedelta(minutes=minutes)
+    if not ended_at:
+        ended_at = started_at + timedelta(minutes=minutes)
+    started_at = _as_aware_utc(started_at)
+    ended_at = _as_aware_utc(ended_at)
+    if ended_at <= started_at:
+        ended_at = started_at + timedelta(minutes=minutes)
+    seconds = max(60, min(int((ended_at - started_at).total_seconds()), 86400))
+    ended_at = started_at + timedelta(seconds=seconds)
+    return started_at, ended_at, seconds
+
+
+def upsert_time_adjustment_for_incident(
+    db: Session,
+    incident: Incident,
+    admin: AdminPrincipal,
+    resolution_notes: str,
+) -> TimeAdjustment:
+    started_at, ended_at, seconds = incident_adjustment_window(incident)
+    adjustment = db.execute(
+        select(TimeAdjustment).where(TimeAdjustment.incident_id == incident.id)
+    ).scalar_one_or_none()
+    if adjustment is None:
+        adjustment = TimeAdjustment(
+            company_id=incident.company_id,
+            employee_id=incident.employee_id,
+            device_id=incident.device_id,
+            incident_id=incident.id,
+            created_by_user_id=admin.user_id,
+            started_at=started_at,
+            ended_at=ended_at,
+            seconds=seconds,
+        )
+        db.add(adjustment)
+    adjustment.status = "active"
+    adjustment.adjustment_type = "justified_time"
+    adjustment.started_at = started_at
+    adjustment.ended_at = ended_at
+    adjustment.seconds = seconds
+    adjustment.productivity_classification = "neutral"
+    adjustment.reason = clean_text(incident.title or incident.incident_type, 180)
+    adjustment.notes = clean_text(resolution_notes, 2000)
+    adjustment.updated_at = now_utc()
+    return adjustment
+
+
+def void_time_adjustment_for_incident(db: Session, incident: Incident) -> TimeAdjustment | None:
+    adjustment = db.execute(
+        select(TimeAdjustment).where(TimeAdjustment.incident_id == incident.id)
+    ).scalar_one_or_none()
+    if adjustment:
+        adjustment.status = "voided"
+        adjustment.updated_at = now_utc()
+    return adjustment
+
+
+def query_active_time_adjustments(
+    db: Session,
+    company_id: str,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    employee_id: str | None = None,
+    department_id: str | None = None,
+) -> list[TimeAdjustment]:
+    query = select(TimeAdjustment).where(
+        TimeAdjustment.company_id == company_id,
+        TimeAdjustment.status == "active",
+    )
+    if employee_id:
+        query = query.where(TimeAdjustment.employee_id == employee_id)
+    if department_id:
+        employee_ids = [
+            row.id
+            for row in db.execute(
+                select(Employee).where(
+                    Employee.company_id == company_id,
+                    Employee.department_id == department_id,
+                )
+            ).scalars()
+        ]
+        query = query.where(TimeAdjustment.employee_id.in_(employee_ids or [""]))
+    if date_from:
+        query = query.where(TimeAdjustment.ended_at >= parse_client_datetime(f"{date_from}T00:00:00+00:00"))
+    if date_to:
+        query = query.where(TimeAdjustment.started_at <= parse_client_datetime(f"{date_to}T23:59:59+00:00"))
+    return db.execute(query.order_by(TimeAdjustment.started_at)).scalars().all()
+
+
+def adjustment_virtual_blocks(
+    db: Session,
+    adjustments: list[TimeAdjustment],
+    employees: dict[str, Employee],
+) -> list[dict]:
+    rows: list[dict] = []
+    for adjustment in adjustments:
+        block_minutes = setting_int(db, adjustment.company_id, "productivity_block_minutes", 30)
+        current = _as_aware_utc(adjustment.started_at)
+        interval_end = _as_aware_utc(adjustment.ended_at)
+        remaining = max(0, int((interval_end - current).total_seconds()))
+        employee = employees.get(adjustment.employee_id)
+        department_id = employee.department_id if employee else None
+        while remaining > 0:
+            block_start = block_start_for(current, block_minutes)
+            block_end = block_start + timedelta(minutes=block_minutes)
+            seconds_to_boundary = (block_end - current).total_seconds()
+            if seconds_to_boundary <= 0:
+                current = block_end
+                continue
+            seconds = min(remaining, max(1, int(math.ceil(seconds_to_boundary))))
+            rows.append(
+                {
+                    "id": f"adjustment:{adjustment.id}:{block_start:%Y%m%d%H%M}",
+                    "employee_id": adjustment.employee_id,
+                    "department_id": department_id,
+                    "block_date": block_start.date().isoformat(),
+                    "block_start": block_start.strftime("%H:%M"),
+                    "total_seconds": seconds,
+                    "active_seconds": seconds,
+                    "productive_seconds": 0,
+                    "neutral_seconds": seconds,
+                    "non_productive_seconds": 0,
+                    "uncategorized_seconds": 0,
+                    "idle_seconds": 0,
+                    "break_seconds": 0,
+                    "lunch_seconds": 0,
+                    "break_lunch_seconds": 0,
+                    "justified_seconds": seconds,
+                }
+            )
+            current += timedelta(seconds=seconds)
+            remaining -= seconds
+    for row in rows:
+        active = row["active_seconds"]
+        total = row["total_seconds"]
+        row["productivity_pct"] = percent(row["productive_seconds"], active)
+        row["acceptable_pct"] = percent(row["productive_seconds"] + row["neutral_seconds"], active)
+        row["non_productive_pct"] = percent(row["non_productive_seconds"], active)
+        row["neutral_pct"] = percent(row["neutral_seconds"], active)
+        row["uncategorized_pct"] = percent(row["uncategorized_seconds"], active)
+        row["idle_pct"] = percent(row["idle_seconds"], total)
+        row["break_pct"] = percent(row["break_seconds"], total)
+        row["lunch_pct"] = percent(row["lunch_seconds"], total)
+    return rows
 
 
 def update_shift_event(
@@ -1272,6 +1610,67 @@ def store_consent_record(
     )
 
 
+def incident_title(incident_type: str) -> str:
+    return {
+        "correccion_marcaje": "Correccion de marcaje",
+        "permiso_vacaciones": "Permisos o vacaciones",
+        "tiempo_perdido": "Tiempo perdido por sistema",
+        "system_lost_time": "Tiempo perdido por sistema",
+    }.get(incident_type, "Incidencia")
+
+
+def store_incident_event(
+    db: Session,
+    device: Device,
+    event: dict,
+    payload: dict,
+) -> Incident | None:
+    employee_id = device.employee_id
+    if not employee_id:
+        return None
+    employee = db.get(Employee, employee_id)
+    if employee is None:
+        return None
+
+    source_event_id = str(event.get("id") or "")[:36] or None
+    if source_event_id:
+        existing = db.execute(
+            select(Incident).where(
+                Incident.company_id == device.company_id,
+                Incident.payload_json.contains(source_event_id),
+            )
+        ).scalar_one_or_none()
+        if existing:
+            return existing
+
+    incident_type = clean_text(payload.get("tipo") or payload.get("incident_type"), 80)
+    title = clean_text(payload.get("titulo") or incident_title(incident_type), 180)
+    description = clean_text(payload.get("motivo") or payload.get("description"), 2000)
+    requested_at = (
+        parse_optional_client_datetime(payload.get("requested_at"))
+        or parse_optional_client_datetime(payload.get("fechaHora"))
+        or parse_optional_client_datetime(event.get("created_at"))
+        or now_utc()
+    )
+    incident_payload = dict(payload)
+    if source_event_id:
+        incident_payload["source_event_id"] = source_event_id
+
+    incident = Incident(
+        company_id=device.company_id,
+        employee_id=employee.id,
+        device_id=device.id,
+        incident_type=incident_type or "general",
+        status="pending",
+        title=title,
+        description=description,
+        requested_at=requested_at,
+        payload_json=json_text(incident_payload),
+    )
+    db.add(incident)
+    return incident
+
+
 def store_activity_samples(
     db: Session,
     device: Device,
@@ -1373,6 +1772,8 @@ def process_agent_event(db: Session, device: Device, event: dict, client_ip: str
         store_station_login_event(db, device, event, payload, client_ip)
     elif event_type == "consent_saved":
         store_consent_record(db, device, event, payload)
+    elif event_type in {"incident_submitted", "incidence_created"}:
+        store_incident_event(db, device, event, payload)
 
     shift_event_types = {
         "shift_started",
@@ -1531,6 +1932,13 @@ def bootstrap_data():
                 )
             ).scalar_one_or_none()
             if credential is None:
+                credential = db.execute(
+                    select(EmployeeCredential).where(
+                        EmployeeCredential.company_id == company.id,
+                        EmployeeCredential.employee_id == employee.id,
+                    )
+                ).scalar_one_or_none()
+            if credential is None:
                 db.add(
                     EmployeeCredential(
                         company_id=company.id,
@@ -1578,10 +1986,39 @@ def bootstrap_data():
         db.commit()
 
 
+def ensure_employee_credential_schema():
+    columns = {
+        "password_change_required": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "password_changed_at": "TIMESTAMP WITH TIME ZONE",
+        "reset_code_hash": "VARCHAR(128) NOT NULL DEFAULT ''",
+        "reset_code_expires_at": "TIMESTAMP WITH TIME ZONE",
+        "reset_requested_at": "TIMESTAMP WITH TIME ZONE",
+        "reset_verified_at": "TIMESTAMP WITH TIME ZONE",
+        "reset_attempts": "INTEGER NOT NULL DEFAULT 0",
+    }
+    with engine.begin() as conn:
+        existing = {
+            row[0]
+            for row in conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'employee_credentials'
+                    """
+                )
+            )
+        }
+        for column, ddl in columns.items():
+            if column not in existing:
+                conn.execute(text(f"ALTER TABLE employee_credentials ADD COLUMN {column} {ddl}"))
+
+
 @app.on_event("startup")
 def on_startup():
     os.makedirs(settings.storage_dir, exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    ensure_employee_credential_schema()
     bootstrap_data()
 
 
@@ -1802,11 +2239,265 @@ def station_login(
         "credential": {
             "id": credential.id,
             "email": credential.email,
+            "password_change_required": bool(credential.password_change_required),
         },
         "device": {
             "id": device.id,
             "name": device.name,
         },
+    }
+
+
+@app.post("/api/station/password/change")
+def station_change_password(
+    payload: StationPasswordChangePayload,
+    device: Device = Depends(require_device),
+    db: Session = Depends(get_db),
+):
+    email = clean_email(payload.email)
+    credential = find_employee_credential(db, device.company_id, email)
+    employee = db.get(Employee, credential.employee_id) if credential else None
+    if (
+        credential is None
+        or employee is None
+        or credential.status != "active"
+        or employee.status != "active"
+        or not verify_password_hash(payload.current_password, credential.password_hash)
+    ):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    validate_password_policy(payload.new_password)
+    if verify_password_hash(payload.new_password, credential.password_hash):
+        raise HTTPException(status_code=400, detail="New password must be different")
+
+    changed_at = now_utc()
+    credential.password_hash = hash_password(payload.new_password)
+    credential.password_change_required = False
+    credential.password_changed_at = changed_at
+    credential.reset_code_hash = ""
+    credential.reset_code_expires_at = None
+    credential.reset_requested_at = None
+    credential.reset_verified_at = None
+    credential.reset_attempts = 0
+    device.employee_id = credential.employee_id
+    device.last_seen_at = changed_at
+    db.add(
+        AuditLog(
+            company_id=device.company_id,
+            device_id=device.id,
+            action="station_password_changed",
+            entity_type="employee_credential",
+            entity_id=credential.id,
+            payload_json=json_text({"email": email, "employee_id": employee.id}),
+        )
+    )
+    db.commit()
+    return {"ok": True, "password_change_required": False}
+
+
+@app.post("/api/station/password-reset/request")
+def station_password_reset_request(
+    payload: StationPasswordResetRequestPayload,
+    device: Device = Depends(require_device),
+    db: Session = Depends(get_db),
+):
+    email = clean_email(payload.email)
+    credential = find_employee_credential(db, device.company_id, email)
+    reset_code = ""
+    delivery_status = "not_configured"
+    if credential and credential.status == "active":
+        reset_code = generate_reset_code()
+        credential.reset_code_hash = hash_token(reset_code)
+        credential.reset_code_expires_at = now_utc() + timedelta(minutes=10)
+        credential.reset_requested_at = now_utc()
+        credential.reset_verified_at = None
+        credential.reset_attempts = 0
+        db.add(
+            AuditLog(
+                company_id=device.company_id,
+                device_id=device.id,
+                action="station_password_reset_requested",
+                entity_type="employee_credential",
+                entity_id=credential.id,
+                payload_json=json_text({"email": email, "delivery_status": delivery_status}),
+            )
+        )
+    else:
+        db.add(
+            AuditLog(
+                company_id=device.company_id,
+                device_id=device.id,
+                action="station_password_reset_requested_unknown",
+                entity_type="employee_credential",
+                entity_id="",
+                payload_json=json_text({"email": email}),
+            )
+        )
+    db.commit()
+    response = {
+        "ok": True,
+        "delivery_status": delivery_status,
+        "message": "If the account exists, a verification code was sent.",
+    }
+    if reset_code:
+        response["reset_code"] = reset_code
+        response["note"] = "SMTP is not configured; reset code is returned for local testing."
+    return response
+
+
+@app.post("/api/station/password-reset/confirm")
+def station_password_reset_confirm(
+    payload: StationPasswordResetConfirmPayload,
+    device: Device = Depends(require_device),
+    db: Session = Depends(get_db),
+):
+    email = clean_email(payload.email)
+    credential = find_employee_credential(db, device.company_id, email)
+    employee = db.get(Employee, credential.employee_id) if credential else None
+    if credential is None or employee is None or credential.status != "active":
+        raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+
+    expires_at = credential.reset_code_expires_at
+    if (
+        not credential.reset_code_hash
+        or expires_at is None
+        or now_utc() > _as_aware_utc(expires_at)
+        or credential.reset_attempts >= 5
+    ):
+        raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+
+    if not secrets.compare_digest(credential.reset_code_hash, hash_token(payload.reset_code.strip())):
+        credential.reset_attempts += 1
+        db.commit()
+        raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+
+    validate_password_policy(payload.new_password)
+    verified_at = now_utc()
+    credential.password_hash = hash_password(payload.new_password)
+    credential.password_change_required = False
+    credential.password_changed_at = verified_at
+    credential.reset_code_hash = ""
+    credential.reset_code_expires_at = None
+    credential.reset_verified_at = verified_at
+    credential.reset_attempts = 0
+    device.employee_id = credential.employee_id
+    device.last_seen_at = verified_at
+    db.add(
+        AuditLog(
+            company_id=device.company_id,
+            device_id=device.id,
+            action="station_password_reset_confirmed",
+            entity_type="employee_credential",
+            entity_id=credential.id,
+            payload_json=json_text({"email": email, "employee_id": employee.id}),
+        )
+    )
+    db.commit()
+    return {"ok": True, "password_change_required": False}
+
+
+@app.post("/api/station/access-codes/consume")
+def consume_station_access_code(
+    payload: ConsumeAccessCodePayload,
+    device: Device = Depends(require_device),
+    db: Session = Depends(get_db),
+):
+    if not device.employee_id:
+        raise HTTPException(status_code=400, detail="Device has no authenticated employee")
+
+    employee = db.get(Employee, device.employee_id)
+    if employee is None:
+        raise HTTPException(status_code=400, detail="Employee not found for device")
+
+    code_value = clean_text(payload.code, 80).upper()
+    access_type = clean_text(payload.type, 40)
+    issued_now = now_utc()
+
+    def reject(reason: str, entity_type: str = "", entity_id: str = ""):
+        db.add(
+            AuditLog(
+                company_id=device.company_id,
+                user_id=None,
+                device_id=device.id,
+                action="station_access_code_rejected",
+                entity_type=entity_type,
+                entity_id=entity_id,
+                payload_json=json_text(
+                    {
+                        "employee_id": employee.id,
+                        "type": access_type,
+                        "reason": reason,
+                    }
+                ),
+            )
+        )
+        db.commit()
+        raise HTTPException(status_code=400, detail="Invalid, expired or already used access code")
+
+    if access_type == "overtime":
+        access_code = db.execute(
+            select(OvertimeAuthorization).where(
+                OvertimeAuthorization.company_id == device.company_id,
+                OvertimeAuthorization.employee_id == employee.id,
+                OvertimeAuthorization.code == code_value,
+            )
+        ).scalar_one_or_none()
+        entity_type = "overtime_authorization"
+    else:
+        access_code = db.execute(
+            select(StationRestoreCode).where(
+                StationRestoreCode.company_id == device.company_id,
+                StationRestoreCode.employee_id == employee.id,
+                StationRestoreCode.code == code_value,
+            )
+        ).scalar_one_or_none()
+        entity_type = "station_restore_code"
+
+    if access_code is None:
+        reject("not_found")
+
+    if access_code.status != "issued":
+        reject("not_issued", entity_type, access_code.id)
+
+    if issued_now < _as_aware_utc(access_code.valid_from):
+        reject("not_yet_valid", entity_type, access_code.id)
+
+    if issued_now > _as_aware_utc(access_code.valid_until):
+        access_code.status = "expired"
+        reject("expired", entity_type, access_code.id)
+
+    access_code.device_id = device.id
+    if access_type == "overtime":
+        access_code.status = "active"
+        access_code.started_at = issued_now
+        audit_action = "overtime_code_consumed"
+    else:
+        access_code.status = "used"
+        access_code.used_at = issued_now
+        audit_action = "station_restore_code_consumed"
+
+    db.add(
+        AuditLog(
+            company_id=device.company_id,
+            user_id=None,
+            device_id=device.id,
+            action=audit_action,
+            entity_type=entity_type,
+            entity_id=access_code.id,
+            payload_json=json_text(
+                {
+                    "employee_id": employee.id,
+                    "type": access_type,
+                    "valid_until": access_code.valid_until.isoformat(),
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(access_code)
+    return {
+        "ok": True,
+        "authorization": serialize_access_code(access_type, access_code, employee),
     }
 
 
@@ -1953,6 +2644,7 @@ def create_monitored_employee(
         employee_id=employee.id,
         email=email,
         password_hash=hash_password(password),
+        password_change_required=True,
         status="active",
     )
     db.add(credential)
@@ -1968,6 +2660,7 @@ def create_monitored_employee(
                     "email": email,
                     "department_id": department_id,
                     "email_delivery": "not_configured",
+                    "password_change_required": True,
                 }
             ),
         )
@@ -1980,6 +2673,7 @@ def create_monitored_employee(
         "credentials": {
             "email": email,
             "password": password,
+            "password_change_required": True,
             "delivery_status": "not_configured",
             "note": "SMTP is not configured; password is returned once for local testing.",
         },
@@ -2280,6 +2974,79 @@ def create_access_code(
     }
 
 
+@app.get("/api/incidents")
+def list_incidents(
+    company_id: str | None = None,
+    status_filter: str | None = None,
+    employee_id: str | None = None,
+    incident_type: str | None = None,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    company = resolve_admin_company(db, admin, company_id)
+    query = select(Incident).where(Incident.company_id == company.id)
+    if status_filter:
+        query = query.where(Incident.status == clean_text(status_filter, 40))
+    if employee_id:
+        query = query.where(Incident.employee_id == clean_text(employee_id, 36))
+    if incident_type:
+        query = query.where(Incident.incident_type == clean_text(incident_type, 80))
+    incidents = db.execute(
+        query.order_by(Incident.requested_at.desc(), Incident.id.desc()).limit(200)
+    ).scalars().all()
+    return {
+        "company": {"id": company.id, "name": company.name},
+        "count": len(incidents),
+        "incidents": [serialize_incident(db, incident) for incident in incidents],
+    }
+
+
+@app.patch("/api/incidents/{incident_id}")
+def resolve_incident(
+    incident_id: str,
+    payload: IncidentResolutionPayload,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    incident = db.get(Incident, incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    company = resolve_admin_company(db, admin, incident.company_id)
+    incident.status = payload.status
+    incident.resolution_notes = clean_text(payload.resolution_notes, 2000)
+    incident.resolved_at = now_utc()
+    adjustment = None
+    if incident.status == "approved":
+        adjustment = upsert_time_adjustment_for_incident(
+            db,
+            incident,
+            admin,
+            incident.resolution_notes,
+        )
+    else:
+        adjustment = void_time_adjustment_for_incident(db, incident)
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="incident_resolved",
+            entity_type="incident",
+            entity_id=incident.id,
+            payload_json=json_text(
+                {
+                    "status": incident.status,
+                    "resolution_notes": incident.resolution_notes,
+                    "time_adjustment_id": adjustment.id if adjustment else None,
+                    "time_adjustment_status": adjustment.status if adjustment else None,
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(incident)
+    return {"ok": True, "incident": serialize_incident(db, incident)}
+
+
 @app.get("/api/productivity/rules")
 def list_productivity_rules(
     company_id: str | None = None,
@@ -2541,14 +3308,23 @@ def productivity_dashboard(
         query = query.where(ProductivityBlock.department_id_snapshot == department_id)
 
     blocks = db.execute(query.order_by(ProductivityBlock.block_date, ProductivityBlock.block_start)).scalars().all()
-    totals = productivity_totals(blocks)
+    employee_query = select(Employee).where(Employee.company_id == company.id)
+    if employee_id:
+        employee_query = employee_query.where(Employee.id == employee_id)
+    if department_id:
+        employee_query = employee_query.where(Employee.department_id == department_id)
+    employees = {row.id: row for row in db.execute(employee_query).scalars()}
+    adjustments = query_active_time_adjustments(db, company.id, date_from, date_to, employee_id, department_id)
+    block_rows = [serialize_productivity_block(row) for row in blocks] + adjustment_virtual_blocks(db, adjustments, employees)
+    block_rows.sort(key=lambda row: (row["block_date"], row["block_start"], row["employee_id"], row["id"]))
+    totals = productivity_totals(block_rows)
 
     by_day: dict[str, dict] = {}
-    for block in blocks:
+    for block in block_rows:
         day = by_day.setdefault(
-            block.block_date,
+            block["block_date"],
             {
-                "block_date": block.block_date,
+                "block_date": block["block_date"],
                 "total_seconds": 0,
                 "active_seconds": 0,
                 "productive_seconds": 0,
@@ -2559,6 +3335,7 @@ def productivity_dashboard(
                 "break_seconds": 0,
                 "lunch_seconds": 0,
                 "break_lunch_seconds": 0,
+                "justified_seconds": 0,
             },
         )
         for key in [
@@ -2572,8 +3349,9 @@ def productivity_dashboard(
             "break_seconds",
             "lunch_seconds",
             "break_lunch_seconds",
+            "justified_seconds",
         ]:
-            day[key] += getattr(block, key)
+            day[key] += int(block.get(key, 0) or 0)
 
     days = []
     for day in by_day.values():
@@ -2596,31 +3374,8 @@ def productivity_dashboard(
         },
         "totals": totals,
         "days": days,
-        "blocks": [
-            {
-                "id": row.id,
-                "employee_id": row.employee_id,
-                "department_id": row.department_id_snapshot,
-                "block_date": row.block_date,
-                "block_start": row.block_start,
-                "total_seconds": row.total_seconds,
-                "active_seconds": row.active_seconds,
-                "productive_seconds": row.productive_seconds,
-                "neutral_seconds": row.neutral_seconds,
-                "non_productive_seconds": row.non_productive_seconds,
-                "uncategorized_seconds": row.uncategorized_seconds,
-                "idle_seconds": row.idle_seconds,
-                "break_seconds": row.break_seconds,
-                "lunch_seconds": row.lunch_seconds,
-                "break_lunch_seconds": row.break_lunch_seconds,
-                "productivity_pct": row.productivity_pct,
-                "acceptable_pct": row.acceptable_pct,
-                "idle_pct": row.idle_pct,
-                "break_pct": row.break_pct,
-                "lunch_pct": row.lunch_pct,
-            }
-            for row in blocks
-        ],
+        "adjustments": [serialize_time_adjustment(row) for row in adjustments],
+        "blocks": block_rows,
     }
 
 
@@ -2652,14 +3407,21 @@ def employee_detail(
     blocks = db.execute(
         block_query.order_by(ProductivityBlock.block_date, ProductivityBlock.block_start)
     ).scalars().all()
-    totals = productivity_totals(blocks)
+    adjustments = query_active_time_adjustments(db, company.id, date_from, date_to, employee.id)
+    block_rows = [serialize_productivity_block(row) for row in blocks] + adjustment_virtual_blocks(
+        db,
+        adjustments,
+        {employee.id: employee},
+    )
+    block_rows.sort(key=lambda row: (row["block_date"], row["block_start"], row["id"]))
+    totals = productivity_totals(block_rows)
 
     days_by_date: dict[str, dict] = {}
-    for block in blocks:
+    for block in block_rows:
         day = days_by_date.setdefault(
-            block.block_date,
+            block["block_date"],
             {
-                "date": block.block_date,
+                "date": block["block_date"],
                 "active_seconds": 0,
                 "productive_seconds": 0,
                 "neutral_seconds": 0,
@@ -2667,15 +3429,17 @@ def employee_detail(
                 "idle_seconds": 0,
                 "break_seconds": 0,
                 "lunch_seconds": 0,
+                "justified_seconds": 0,
             },
         )
-        day["active_seconds"] += block.active_seconds
-        day["productive_seconds"] += block.productive_seconds
-        day["neutral_seconds"] += block.neutral_seconds
-        day["non_productive_seconds"] += block.non_productive_seconds
-        day["idle_seconds"] += block.idle_seconds
-        day["break_seconds"] += block.break_seconds
-        day["lunch_seconds"] += block.lunch_seconds
+        day["active_seconds"] += int(block.get("active_seconds", 0) or 0)
+        day["productive_seconds"] += int(block.get("productive_seconds", 0) or 0)
+        day["neutral_seconds"] += int(block.get("neutral_seconds", 0) or 0)
+        day["non_productive_seconds"] += int(block.get("non_productive_seconds", 0) or 0)
+        day["idle_seconds"] += int(block.get("idle_seconds", 0) or 0)
+        day["break_seconds"] += int(block.get("break_seconds", 0) or 0)
+        day["lunch_seconds"] += int(block.get("lunch_seconds", 0) or 0)
+        day["justified_seconds"] += int(block.get("justified_seconds", 0) or 0)
 
     activity_query = (
         select(
@@ -2727,34 +3491,8 @@ def employee_detail(
             }
             for row in app_rows
         ],
-        "blocks": [
-            {
-                "id": row.id,
-                "employee_id": row.employee_id,
-                "department_id": row.department_id_snapshot,
-                "block_date": row.block_date,
-                "block_start": row.block_start,
-                "total_seconds": row.total_seconds,
-                "active_seconds": row.active_seconds,
-                "productive_seconds": row.productive_seconds,
-                "neutral_seconds": row.neutral_seconds,
-                "non_productive_seconds": row.non_productive_seconds,
-                "uncategorized_seconds": row.uncategorized_seconds,
-                "idle_seconds": row.idle_seconds,
-                "break_seconds": row.break_seconds,
-                "lunch_seconds": row.lunch_seconds,
-                "break_lunch_seconds": row.break_lunch_seconds,
-                "productivity_pct": row.productivity_pct,
-                "acceptable_pct": row.acceptable_pct,
-                "non_productive_pct": row.non_productive_pct,
-                "neutral_pct": row.neutral_pct,
-                "uncategorized_pct": row.uncategorized_pct,
-                "idle_pct": row.idle_pct,
-                "break_pct": row.break_pct,
-                "lunch_pct": row.lunch_pct,
-            }
-            for row in blocks
-        ],
+        "adjustments": [serialize_time_adjustment(row) for row in adjustments],
+        "blocks": block_rows,
         "evidence": [
             {
                 "id": row.id,
@@ -2828,6 +3566,17 @@ def attendance_overview(
         employee.id: latest_employee_schedule(db, employee.id, date_to or date_from)
         for employee in employees
     }
+    adjustments = query_active_time_adjustments(db, company.id, date_from, date_to, employee_id, department_id)
+    shift_by_employee_date = {
+        (shift.employee_id, shift.shift_date): shift.id
+        for shift in shifts
+    }
+    justified_by_shift: dict[str, int] = {}
+    for adjustment in adjustments:
+        shift_key = (adjustment.employee_id, adjustment.started_at.date().isoformat())
+        shift_id = shift_by_employee_date.get(shift_key)
+        if shift_id:
+            justified_by_shift[shift_id] = justified_by_shift.get(shift_id, 0) + adjustment.seconds
 
     return {
         "company": {"id": company.id, "name": company.name},
@@ -2846,7 +3595,8 @@ def attendance_overview(
             )
             for employee in employees
         ],
-        "shifts": [serialize_shift_for_attendance(shift, events_by_shift) for shift in shifts],
+        "time_adjustments": [serialize_time_adjustment(row) for row in adjustments],
+        "shifts": [serialize_shift_for_attendance(shift, events_by_shift, justified_by_shift) for shift in shifts],
     }
 
 

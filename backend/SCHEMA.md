@@ -9,7 +9,7 @@ Esquema base para plataforma web + agente instalable.
 - `roles`: roles internos del panel web.
 - `users`: usuarios del panel web, como admin, RRHH, supervisor.
 - `employees`: empleados monitoreados o gestionados.
-- `employee_credentials`: credenciales de acceso a la estacion de marcaje, asociadas a `employees`.
+- `employee_credentials`: credenciales de acceso a la estacion de marcaje, asociadas a `employees`; incluye contrasena temporal, fecha de cambio y campos de recuperacion.
 - `positions`: puestos laborales de empleados; separado de `roles`, que solo controla acceso al panel.
 - `devices`: PCs/agentes instalados, autenticados con token unico.
 - `company_settings`: parametros configurables por empresa.
@@ -36,7 +36,10 @@ Esquema base para plataforma web + agente instalable.
 ## Incidencias y horas extra
 
 - `incidents`: permisos, vacaciones, correcciones, fallas del sistema.
+- `time_adjustments`: tiempo justificado creado al aprobar incidencias; aparece
+  como bloque neutral en productividad y como `justified_seconds` en asistencia.
 - `overtime_authorizations`: codigos de un solo uso para horas extra.
+- `station_restore_codes`: codigos de un solo uso para reabrir jornadas terminadas desde la estacion.
 
 ## Auditoria
 
@@ -53,6 +56,11 @@ Esquema base para plataforma web + agente instalable.
 
 - `POST /api/evidence/upload`: recibe capturas.
 - `POST /api/agent/events`: recibe eventos pendientes del outbox local y llena `shifts`, `shift_events` y `activities`.
+- `POST /api/station/login`: autentica credenciales de empleado contra `employee_credentials`.
+- `POST /api/station/password/change`: cambia contrasena temporal o actual.
+- `POST /api/station/password-reset/request`: genera codigo de recuperacion.
+- `POST /api/station/password-reset/confirm`: confirma codigo y guarda nueva contrasena.
+- `POST /api/station/access-codes/consume`: consume codigos de reabrir estacion u horas extra.
 
 ## Notas para produccion
 

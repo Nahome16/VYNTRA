@@ -14,6 +14,8 @@ import socket
 import threading
 import time
 
+import requests
+
 from activity_tracker import ActivityTracker
 from outbox import append_event
 
@@ -61,6 +63,7 @@ class ShiftManager:
         self.horas_extra_solicitud = None
         self.horas_extra_asignacion = None
         self.horas_extra_codigos_usados = []
+        self.ultimo_error_codigo = ""
         self._cierre_snapshot = None
 
         self.tracker = ActivityTracker(cfg, on_update=self._on_tracker)
@@ -199,6 +202,55 @@ class ShiftManager:
         esperado = str(getattr(self.cfg, "admin_pin", "1234")).strip()
         return bool(pin) and pin == esperado
 
+    def consumir_codigo_acceso(self, codigo: str, tipo: str) -> dict | None:
+        self.ultimo_error_codigo = ""
+        codigo = (codigo or "").strip().upper()
+        if not codigo:
+            self.ultimo_error_codigo = "Ingresa el codigo de autorizacion."
+            return None
+
+        if codigo in self.horas_extra_codigos_usados:
+            self.ultimo_error_codigo = "Este codigo ya fue usado en esta estacion."
+            return None
+
+        base_url = getattr(self.cfg, "evidence_backend_url", "").rstrip("/")
+        device_token = getattr(self.cfg, "evidence_device_token", "")
+        backend_enabled = bool(getattr(self.cfg, "evidence_backend_enabled", False))
+        if not backend_enabled or not base_url or not device_token:
+            self.ultimo_error_codigo = "La validacion con el servidor no esta configurada."
+            return None
+
+        try:
+            response = requests.post(
+                f"{base_url}/api/station/access-codes/consume",
+                headers={"X-Device-Token": device_token},
+                json={"code": codigo, "type": tipo},
+                timeout=int(getattr(self.cfg, "evidence_request_timeout", 30)),
+            )
+        except requests.RequestException as exc:
+            self.ultimo_error_codigo = f"No se pudo conectar con el servidor: {exc}"
+            return None
+
+        if response.status_code >= 400:
+            try:
+                detail = response.json().get("detail")
+            except ValueError:
+                detail = None
+            self.ultimo_error_codigo = detail or "Codigo invalido, vencido o ya utilizado."
+            return None
+
+        try:
+            payload = response.json()
+        except ValueError:
+            self.ultimo_error_codigo = "Respuesta invalida del servidor."
+            return None
+
+        authorization = payload.get("authorization") or {}
+        if not payload.get("ok") or authorization.get("type") != tipo:
+            self.ultimo_error_codigo = "El servidor no confirmo la autorizacion."
+            return None
+        return authorization
+
     def restaurar_jornada(self):
         if self.estado != "TERMINADO":
             return
@@ -224,6 +276,27 @@ class ShiftManager:
         self._arrancar_reloj()
         self._safe(self.on_shift_start)
         self._notificar_estado()
+
+    def restaurar_jornada_con_codigo(self, codigo: str) -> bool:
+        if self.estado != "TERMINADO":
+            self.ultimo_error_codigo = "No hay una jornada terminada para reabrir."
+            return False
+        autorizacion = self.consumir_codigo_acceso(codigo, "station_reopen")
+        if not autorizacion:
+            return False
+        self.restaurar_jornada()
+        append_event(
+            "station_restore_code_used",
+            {
+                "codigo": autorizacion.get("code"),
+                "autorizacion_id": autorizacion.get("id"),
+                "motivo": autorizacion.get("reason", ""),
+                "empleado": getpass.getuser(),
+                "equipo": socket.gethostname(),
+                "timestamp": datetime.datetime.now().isoformat(),
+            },
+        )
+        return True
 
     def resetear_reloj(self):
         if self.estado not in ("TRABAJANDO", "BREAK", "LUNCH"):
@@ -321,16 +394,37 @@ class ShiftManager:
 
     # ---- incidencias --------------------------------------------------
     def registrar_excepcion(self, tipo: str, detalle: dict):
+        titulo = {
+            "correccion_marcaje": "Correccion de marcaje",
+            "permiso_vacaciones": "Permisos o vacaciones",
+            "tiempo_perdido": "Tiempo perdido por sistema",
+        }.get(tipo, "Incidencia")
+        requested_at = datetime.datetime.now().isoformat()
         registro = {
             "tipo": tipo,
+            "incident_type": tipo,
+            "titulo": titulo,
+            "motivo": str(detalle.get("motivo") or "").strip(),
+            "horas": str(detalle.get("horas") or "").strip(),
+            "problema": str(detalle.get("problema") or "").strip(),
+            "verificacion": str(detalle.get("verificacion") or "").strip(),
+            "evidencia_tecnica": detalle.get("evidencia_tecnica") or {},
             "detalle": detalle,
+            "estado_jornada": self.estado,
+            "inicio_jornada": self.inicio_jornada.isoformat() if self.inicio_jornada else None,
+            "fin_jornada": self.fin_jornada.isoformat() if self.fin_jornada else None,
+            "seg_trabajado": self.seg_trabajado,
+            "seg_break": self.seg_break,
+            "seg_lunch": self.seg_lunch,
             "empleado": getpass.getuser(),
             "equipo": socket.gethostname(),
-            "timestamp": datetime.datetime.now().isoformat(),
+            "timestamp": requested_at,
+            "requested_at": requested_at,
         }
         self.excepciones.append(registro)
+        event = append_event("incident_submitted", registro)
+        registro["source_event_id"] = event.get("id")
         self._guardar()
-        append_event("incidence_created", registro)
         return registro
 
     def solicitar_horas_extra(self, dia: str, hora_salida: str, motivo: str) -> dict:
@@ -349,19 +443,28 @@ class ShiftManager:
         return registro
 
     def activar_horas_extra_con_codigo(self, codigo: str, origen: str = "codigo", asignacion: dict | None = None) -> bool:
-        codigo = (codigo or "").strip()
-        autorizacion = self.resolver_codigo_horas_extra(codigo)
+        codigo = (codigo or "").strip().upper()
+        autorizacion = self.consumir_codigo_acceso(codigo, "overtime")
+        if not autorizacion and getattr(self.cfg, "station_auth_allow_local_fallback", False):
+            autorizacion = self.resolver_codigo_horas_extra(codigo)
         if not autorizacion:
             return False
         if codigo in self.horas_extra_codigos_usados:
+            self.ultimo_error_codigo = "Este codigo ya fue usado en esta estacion."
             return False
+        self.ultimo_error_codigo = ""
         self.horas_extra_estado = "ACTIVA"
         self.horas_extra_codigo = codigo
         self.horas_extra_origen = origen
         self.horas_extra_inicio = datetime.datetime.now()
         self.horas_extra_fin = None
         self.seg_horas_extra = 0
-        self.horas_extra_asignadas_segundos = autorizacion["segundos_asignados"]
+        minutos = int(
+            autorizacion.get("assigned_minutes")
+            or autorizacion.get("minutos_asignados")
+            or 60
+        )
+        self.horas_extra_asignadas_segundos = max(1, minutos) * 60
         if asignacion:
             self.horas_extra_asignacion = asignacion
         else:

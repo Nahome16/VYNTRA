@@ -19,6 +19,7 @@ export type DashboardTotals = {
   idle_seconds: number;
   break_seconds: number;
   lunch_seconds: number;
+  justified_seconds: number;
   productivity_pct: number;
   acceptable_pct: number;
   non_productive_pct: number;
@@ -38,6 +39,7 @@ export type DashboardDay = {
   idle_seconds: number;
   break_seconds: number;
   lunch_seconds: number;
+  justified_seconds: number;
   productivity_pct: number;
   acceptable_pct: number;
   idle_pct: number;
@@ -66,6 +68,7 @@ export type DashboardResponse = {
   };
   totals: DashboardTotals;
   days: DashboardDay[];
+  adjustments: TimeAdjustment[];
   blocks: ProductivityBlock[];
 };
 
@@ -126,6 +129,43 @@ export type AccessCode = StationRestoreCode & {
   assigned_minutes?: number | null;
 };
 
+export type IncidentStatus = "pending" | "approved" | "rejected" | "closed";
+
+export type TimeAdjustment = {
+  id: string;
+  company_id: string;
+  employee_id: string;
+  device_id: string | null;
+  incident_id: string | null;
+  adjustment_type: string;
+  status: string;
+  started_at: string;
+  ended_at: string;
+  seconds: number;
+  productivity_classification: string;
+  reason: string;
+  notes: string;
+};
+
+export type Incident = {
+  id: string;
+  company_id: string;
+  employee_id: string;
+  employee: string | null;
+  employee_code: string | null;
+  device_id: string | null;
+  device: string | null;
+  incident_type: string;
+  status: IncidentStatus;
+  title: string;
+  description: string;
+  requested_at: string | null;
+  resolved_at: string | null;
+  resolution_notes: string;
+  time_adjustment: TimeAdjustment | null;
+  payload: Record<string, unknown>;
+};
+
 export type ProductivityRule = {
   id: string;
   company_id: string;
@@ -176,6 +216,7 @@ export type AttendanceShift = {
   break_seconds: number;
   lunch_seconds: number;
   idle_seconds: number;
+  justified_seconds: number;
   events: ShiftEvent[];
 };
 
@@ -188,6 +229,7 @@ export type AttendanceOverviewResponse = {
     department_id: string | null;
   };
   employees: AttendanceEmployee[];
+  time_adjustments: TimeAdjustment[];
   shifts: AttendanceShift[];
 };
 
@@ -211,6 +253,7 @@ export type EmployeeDetailResponse = {
     idle_seconds: number;
     break_seconds: number;
     lunch_seconds: number;
+    justified_seconds: number;
   }>;
   apps: Array<{
     app: string;
@@ -218,6 +261,7 @@ export type EmployeeDetailResponse = {
     seconds: number;
     samples: number;
   }>;
+  adjustments: TimeAdjustment[];
   blocks: ProductivityBlock[];
   evidence: Array<{
     id: string;

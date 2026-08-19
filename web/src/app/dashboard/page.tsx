@@ -83,6 +83,12 @@ export default function DashboardPage() {
               detail={formatDuration(totals.idle_seconds)}
               tone={totals.idle_pct > 15 ? "warn" : "plain"}
             />
+            <StatCard
+              label="Justificado"
+              value={formatDuration(totals.justified_seconds)}
+              detail="Aprobado por incidencias"
+              tone={totals.justified_seconds ? "good" : "plain"}
+            />
           </section>
 
           <section className="work-grid">
@@ -95,6 +101,7 @@ export default function DashboardPage() {
                     <th>Productivo</th>
                     <th>Neutral</th>
                     <th>No productivo</th>
+                    <th>Justificado</th>
                     <th>Break</th>
                     <th>Lunch</th>
                   </tr>
@@ -107,6 +114,7 @@ export default function DashboardPage() {
                       <td>{day.productivity_pct}%</td>
                       <td>{formatPercent(day.neutral_seconds, day.active_seconds)}</td>
                       <td>{formatDuration(day.non_productive_seconds)}</td>
+                      <td>{formatDuration(day.justified_seconds)}</td>
                       <td>{formatDuration(day.break_seconds)}</td>
                       <td>{formatDuration(day.lunch_seconds)}</td>
                     </tr>

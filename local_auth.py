@@ -132,3 +132,70 @@ def autenticar_credenciales(correo: str, password: str, cfg, agent_version: str 
         "email": correo,
         "reason": "" if local_ok else "invalid_credentials",
     }
+
+
+def _backend_request(cfg, path: str, payload: dict) -> dict:
+    backend_enabled = bool(getattr(cfg, "evidence_backend_enabled", False))
+    base_url = str(getattr(cfg, "evidence_backend_url", "") or "").rstrip("/")
+    device_token = str(getattr(cfg, "evidence_device_token", "") or "").strip()
+    timeout = int(getattr(cfg, "evidence_request_timeout", 30) or 30)
+    if not backend_enabled or not base_url or not device_token:
+        return {
+            "ok": False,
+            "reason": "backend_not_configured",
+            "message": "Backend de VYNTRA no configurado.",
+        }
+    try:
+        response = requests.post(
+            f"{base_url}{path}",
+            headers={"X-Device-Token": device_token},
+            json=payload,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        return {"ok": False, "reason": "backend_unavailable", "message": str(exc)[:220]}
+
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+    if response.status_code >= 400:
+        return {
+            "ok": False,
+            "reason": "request_failed",
+            "status_code": response.status_code,
+            "message": body.get("detail") or "Solicitud rechazada por VYNTRA.",
+        }
+    return body if isinstance(body, dict) else {"ok": True}
+
+
+def cambiar_password(correo: str, actual: str, nueva: str, cfg) -> dict:
+    return _backend_request(
+        cfg,
+        "/api/station/password/change",
+        {
+            "email": (correo or "").strip().lower(),
+            "current_password": actual or "",
+            "new_password": nueva or "",
+        },
+    )
+
+
+def solicitar_recuperacion_password(correo: str, cfg) -> dict:
+    return _backend_request(
+        cfg,
+        "/api/station/password-reset/request",
+        {"email": (correo or "").strip().lower()},
+    )
+
+
+def confirmar_recuperacion_password(correo: str, codigo: str, nueva: str, cfg) -> dict:
+    return _backend_request(
+        cfg,
+        "/api/station/password-reset/confirm",
+        {
+            "email": (correo or "").strip().lower(),
+            "reset_code": (codigo or "").strip(),
+            "new_password": nueva or "",
+        },
+    )

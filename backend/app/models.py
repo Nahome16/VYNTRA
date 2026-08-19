@@ -120,6 +120,7 @@ class Employee(Base):
     shifts: Mapped[list["Shift"]] = relationship(back_populates="employee")
     schedules: Mapped[list["EmployeeSchedule"]] = relationship(back_populates="employee")
     incidents: Mapped[list["Incident"]] = relationship(back_populates="employee")
+    time_adjustments: Mapped[list["TimeAdjustment"]] = relationship(back_populates="employee")
     overtime_authorizations: Mapped[list["OvertimeAuthorization"]] = relationship(back_populates="employee")
     restore_codes: Mapped[list["StationRestoreCode"]] = relationship(back_populates="employee")
 
@@ -145,6 +146,7 @@ class Device(Base):
     evidence_files: Mapped[list["EvidenceFile"]] = relationship(back_populates="device")
     shifts: Mapped[list["Shift"]] = relationship(back_populates="device")
     incidents: Mapped[list["Incident"]] = relationship(back_populates="device")
+    time_adjustments: Mapped[list["TimeAdjustment"]] = relationship(back_populates="device")
     overtime_authorizations: Mapped[list["OvertimeAuthorization"]] = relationship(back_populates="device")
     restore_codes: Mapped[list["StationRestoreCode"]] = relationship(back_populates="device")
 
@@ -161,6 +163,13 @@ class EmployeeCredential(Base):
     employee_id: Mapped[str] = mapped_column(ForeignKey("employees.id"), nullable=False)
     email: Mapped[str] = mapped_column(String(180), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    password_change_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reset_code_hash: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    reset_code_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reset_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reset_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reset_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -445,6 +454,32 @@ class Incident(Base):
 
     employee: Mapped[Employee] = relationship(back_populates="incidents")
     device: Mapped[Device | None] = relationship(back_populates="incidents")
+
+
+class TimeAdjustment(Base):
+    __tablename__ = "time_adjustments"
+    __table_args__ = (UniqueConstraint("incident_id", name="uq_time_adjustment_incident"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False)
+    employee_id: Mapped[str] = mapped_column(ForeignKey("employees.id"), nullable=False)
+    device_id: Mapped[str | None] = mapped_column(ForeignKey("devices.id"), nullable=True)
+    incident_id: Mapped[str | None] = mapped_column(ForeignKey("incidents.id"), nullable=True)
+    adjustment_type: Mapped[str] = mapped_column(String(80), nullable=False, default="justified_time")
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="active")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    productivity_classification: Mapped[str] = mapped_column(String(40), nullable=False, default="neutral")
+    reason: Mapped[str] = mapped_column(String(180), nullable=False, default="")
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+    employee: Mapped[Employee] = relationship(back_populates="time_adjustments")
+    device: Mapped[Device | None] = relationship(back_populates="time_adjustments")
+    incident: Mapped[Incident | None] = relationship()
 
 
 class OvertimeAuthorization(Base):

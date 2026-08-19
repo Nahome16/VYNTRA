@@ -8,8 +8,16 @@ Backend minimo para recibir evidencias del agente VYNTRA.
 - `POST /api/admin/login`
 - `GET /api/admin/me`
 - `POST /api/station/login`
+- `POST /api/station/password/change`
+- `POST /api/station/password-reset/request`
+- `POST /api/station/password-reset/confirm`
+- `POST /api/station/access-codes/consume`
 - `POST /api/agent/events`
 - `POST /api/evidence/upload`
+- `GET /api/settings/access-codes`
+- `POST /api/settings/access-codes`
+- `GET /api/incidents`
+- `PATCH /api/incidents/{incident_id}`
 
 Los endpoints administrativos aceptan sesion JWT:
 
@@ -31,7 +39,25 @@ X-Device-Token: token_unico_del_equipo
 
 `POST /api/station/login` valida el correo y contrasena del empleado contra
 `employee_credentials`, registra el intento en `station_login_events` y asocia
-el dispositivo al empleado autenticado.
+el dispositivo al empleado autenticado. Si la credencial es temporal, la
+respuesta incluye `password_change_required=true` para obligar cambio en la
+estacion.
+
+Los endpoints `password/change` y `password-reset/*` permiten cambiar
+contrasenas desde la estacion. Mientras SMTP no este configurado, el backend
+devuelve el codigo de recuperacion solo para pruebas locales.
+
+`POST /api/station/access-codes/consume` valida codigos de un solo uso para
+reabrir una estacion terminada o activar horas extra. Los codigos se generan
+desde `POST /api/settings/access-codes`.
+
+`GET /api/incidents` y `PATCH /api/incidents/{incident_id}` permiten revisar y
+resolver incidencias enviadas por el agente, como fallas tecnicas con evidencia
+de contexto. Cuando una incidencia se aprueba, el backend crea o actualiza un
+ajuste de tiempo en `time_adjustments` con clasificacion neutral. Ese tiempo se
+suma como `justified_seconds` en productividad y asistencia para que el empleado
+no quede penalizado por una falla tecnica aprobada. Si la incidencia se rechaza
+o se cierra, el ajuste asociado queda anulado y deja de afectar los reportes.
 
 Credenciales demo locales:
 

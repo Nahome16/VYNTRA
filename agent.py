@@ -97,34 +97,46 @@ class LoginWindow(ctk.CTk):
         self.authenticated_email = ""
 
         self.title("VYNTRA - Verificacion de usuario")
-        self.geometry("480x480")
-        self.minsize(440, 460)
+        self.geometry("500x620")
+        self.minsize(480, 600)
         self.configure(fg_color=APP_BG)
-        self.resizable(False, True)
+        self.resizable(True, True)
 
         self._build()
 
     def _build(self):
-        header = ctk.CTkFrame(self, fg_color=PRIMARY_DEEP, corner_radius=0, height=110)
-        header.pack(fill="x")
-        header.pack_propagate(False)
-        h = ctk.CTkFrame(header, fg_color="transparent")
-        h.pack(expand=True)
-        ctk.CTkLabel(
-            h, text="V",
-            font=ctk.CTkFont(size=20, weight="bold"),
-            text_color=PRIMARY_DEEP, fg_color="#FFFFFF",
-            corner_radius=10, width=44, height=44,
-        ).pack(pady=(18, 8))
-        ctk.CTkLabel(h, text="VYNTRA",
-                    font=ctk.CTkFont(size=18, weight="bold"),
-                    text_color="#FFFFFF").pack()
-
         body = ctk.CTkFrame(self, fg_color=SURFACE, corner_radius=12,
                             border_width=1, border_color=BORDER)
-        body.pack(fill="both", expand=True, padx=24, pady=22)
+        body.pack(fill="both", expand=True, padx=28, pady=28)
         cont = ctk.CTkFrame(body, fg_color="transparent")
-        cont.pack(fill="both", expand=True, padx=26, pady=24)
+        cont.pack(fill="both", expand=True, padx=28, pady=28)
+
+        brand = ctk.CTkFrame(cont, fg_color="transparent")
+        brand.pack(fill="x", pady=(0, 24))
+        ctk.CTkLabel(
+            brand,
+            text="V",
+            font=ctk.CTkFont(size=19, weight="bold"),
+            text_color="#FFFFFF",
+            fg_color=PRIMARY_DEEP,
+            corner_radius=10,
+            width=46,
+            height=46,
+        ).pack(side="left")
+        brand_copy = ctk.CTkFrame(brand, fg_color="transparent")
+        brand_copy.pack(side="left", fill="x", expand=True, padx=(12, 0))
+        ctk.CTkLabel(
+            brand_copy,
+            text="VYNTRA",
+            font=ctk.CTkFont(size=17, weight="bold"),
+            text_color=TEXT_DARK,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            brand_copy,
+            text="Estacion de marcaje laboral",
+            font=ctk.CTkFont(size=11),
+            text_color=TEXT_MUTED,
+        ).pack(anchor="w", pady=(2, 0))
 
         ctk.CTkLabel(cont, text="Inicia sesion",
                     font=ctk.CTkFont(size=19, weight="bold"),
@@ -140,6 +152,18 @@ class LoginWindow(ctk.CTk):
 
         self.entry_correo = self._campo(cont, "Correo electronico", "tu.correo@empresa.com")
         self.entry_pass = self._campo(cont, "Contrasena", "Tu contrasena", show="*")
+
+        ctk.CTkButton(
+            cont,
+            text="¿Olvidaste tu contrasena?",
+            command=self._modal_recuperar_password,
+            fg_color="transparent",
+            hover_color=PRIMARY_LIGHT,
+            text_color=PRIMARY,
+            height=28,
+            corner_radius=6,
+            font=ctk.CTkFont(size=12, weight="bold"),
+        ).pack(anchor="e", pady=(6, 0))
 
         self.error_lbl = ctk.CTkLabel(cont, text="", font=ctk.CTkFont(size=12),
                                       text_color=DANGER, wraplength=380, justify="left")
@@ -176,15 +200,79 @@ class LoginWindow(ctk.CTk):
         entry.pack(fill="x")
         return entry
 
+    def _toggle_password_entries(self, entries, visible: bool):
+        show = "" if visible else "*"
+        for entry in entries:
+            entry.configure(show=show)
+
+    def _password_visibility_control(self, parent, entries):
+        row = ctk.CTkFrame(
+            parent,
+            fg_color=PRIMARY_LIGHT,
+            corner_radius=8,
+            border_width=1,
+            border_color=PRIMARY_LIGHT2,
+        )
+        row.pack(fill="x", pady=(10, 8))
+
+        copy = ctk.CTkFrame(row, fg_color="transparent")
+        copy.pack(side="left", fill="x", expand=True, padx=14, pady=12)
+        ctk.CTkLabel(
+            copy,
+            text="Mostrar contrasenas",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=TEXT_DARK,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            copy,
+            text="Activalo solo si necesitas revisar lo que estas escribiendo.",
+            font=ctk.CTkFont(size=11),
+            text_color=TEXT_MUTED,
+            wraplength=300,
+            justify="left",
+        ).pack(anchor="w", pady=(2, 0))
+
+        visible_var = tk.BooleanVar(value=False)
+        action = ctk.CTkButton(
+            row,
+            text="Mostrar",
+            width=110,
+            height=38,
+            corner_radius=8,
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_DARK,
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=12, weight="bold"),
+        )
+        action.pack(side="right", padx=14, pady=12)
+
+        def toggle():
+            visible_var.set(not visible_var.get())
+            visible = visible_var.get()
+            self._toggle_password_entries(entries, visible)
+            action.configure(
+                text="Ocultar" if visible else "Mostrar",
+                fg_color=SUCCESS if visible else PRIMARY,
+                hover_color="#15803D" if visible else PRIMARY_DARK,
+            )
+
+        action.configure(command=toggle)
+        return visible_var
+
     def _iniciar_sesion(self):
         correo = self.entry_correo.get().strip()
         pw = self.entry_pass.get()
         if not correo or not pw:
-            self.error_lbl.configure(text="Ingresa tu correo y tu contrasena.")
+            self.error_lbl.configure(text="Ingresa tu correo y tu contrasena.", text_color=DANGER)
             return
         auth_result = local_auth.autenticar_credenciales(correo, pw, self.cfg, VERSION)
         if auth_result.get("ok"):
             self.authenticated_email = correo.lower()
+            payload = auth_result.get("payload") or {}
+            credential = payload.get("credential") or {}
+            if credential.get("password_change_required"):
+                self._modal_cambiar_password_obligatorio(correo, pw)
+                return
             if auth_result.get("source") != "backend":
                 append_event(
                     "station_login",
@@ -214,10 +302,331 @@ class LoginWindow(ctk.CTk):
                 )
             if reason == "backend_unavailable":
                 self.error_lbl.configure(
-                    text="No se pudo conectar con el servidor de VYNTRA. Intenta de nuevo."
+                    text="No se pudo conectar con el servidor de VYNTRA. Intenta de nuevo.",
+                    text_color=DANGER,
                 )
             else:
-                self.error_lbl.configure(text="Correo o contrasena incorrectos.")
+                self.error_lbl.configure(text="Correo o contrasena incorrectos.", text_color=DANGER)
+
+    def _finish_authenticated_session(self):
+        self.decision = True
+        self.destroy()
+
+    def _password_policy_text(self):
+        return "Usa 8 caracteres o mas, mayusculas, minusculas, numeros y un signo."
+
+    def _password_checks(self, password: str, confirmation: str):
+        signs = "!@#$%*?_-."
+        return [
+            ("8 caracteres o mas", len(password) >= 8),
+            ("Una letra mayuscula", any(char.isupper() for char in password)),
+            ("Una letra minuscula", any(char.islower() for char in password)),
+            ("Un numero", any(char.isdigit() for char in password)),
+            (f"Un signo: {signs}", any(char in signs for char in password)),
+            ("Ambas contrasenas coinciden", bool(password) and password == confirmation),
+        ]
+
+    def _password_is_valid(self, password: str, confirmation: str) -> bool:
+        return all(done for _, done in self._password_checks(password, confirmation))
+
+    def _password_checklist(self, parent, password_entry, confirmation_entry, save_button_ref):
+        box = ctk.CTkFrame(
+            parent,
+            fg_color=SURFACE,
+            corner_radius=8,
+            border_width=1,
+            border_color=BORDER,
+        )
+        box.pack(fill="x", pady=(10, 4))
+        ctk.CTkLabel(
+            box,
+            text="Requisitos de seguridad",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=TEXT_DARK,
+        ).pack(anchor="w", padx=12, pady=(10, 4))
+
+        labels = []
+        for text, _ in self._password_checks("", ""):
+            item = ctk.CTkFrame(box, fg_color="transparent")
+            item.pack(fill="x", padx=12, pady=1)
+            badge = ctk.CTkLabel(
+                item,
+                text="Pendiente",
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color=TEXT_MUTED,
+                fg_color=SURFACE_ALT,
+                corner_radius=999,
+                width=72,
+                height=20,
+            )
+            badge.pack(side="left", padx=(0, 8))
+            label = ctk.CTkLabel(
+                item,
+                text=text,
+                font=ctk.CTkFont(size=12),
+                text_color=TEXT_MUTED,
+                anchor="w",
+            )
+            label.pack(side="left", fill="x", expand=True)
+            labels.append((badge, label))
+
+        def refresh(_event=None):
+            password = password_entry.get()
+            confirmation = confirmation_entry.get()
+            checks = self._password_checks(password, confirmation)
+            for (badge, label), (text, done) in zip(labels, checks):
+                badge.configure(
+                    text="OK" if done else "Pendiente",
+                    fg_color=SUCCESS_BG if done else SURFACE_ALT,
+                    text_color=SUCCESS if done else TEXT_MUTED,
+                )
+                label.configure(
+                    text=text,
+                    text_color=SUCCESS if done else TEXT_MUTED,
+                    font=ctk.CTkFont(size=12, weight="bold" if done else "normal"),
+                )
+            button = save_button_ref.get("button")
+            if button:
+                can_save = all(done for _, done in checks)
+                button.configure(
+                    state="normal" if can_save else "disabled",
+                    fg_color=PRIMARY if can_save else BORDER_STRONG,
+                    hover_color=PRIMARY_DARK if can_save else BORDER_STRONG,
+                    text_color="#FFFFFF",
+                )
+            return all(done for _, done in checks)
+
+        password_entry.bind("<KeyRelease>", refresh)
+        confirmation_entry.bind("<KeyRelease>", refresh)
+        refresh()
+        return refresh
+
+    def _modal_base_login(self, title: str, width: int = 460, height: int = 420):
+        top = ctk.CTkToplevel(self)
+        top.title(title)
+        top.minsize(min(width, 520), min(height, 520))
+        top.resizable(True, True)
+        top.configure(fg_color=APP_BG)
+        top.transient(self)
+        top.grab_set()
+        self.update_idletasks()
+        screen_w = top.winfo_screenwidth()
+        screen_h = top.winfo_screenheight()
+        parent_x = self.winfo_rootx()
+        parent_y = self.winfo_rooty()
+        parent_w = max(self.winfo_width(), 1)
+        parent_h = max(self.winfo_height(), 1)
+        x = parent_x + max(0, (parent_w - width) // 2)
+        y = parent_y + max(0, (parent_h - height) // 2)
+        x = max(20, min(x, screen_w - width - 20))
+        y = max(20, min(y, screen_h - height - 60))
+        top.geometry(f"{width}x{height}+{x}+{y}")
+        return top
+
+    def _modal_cambiar_password_obligatorio(self, correo: str, actual: str):
+        top = self._modal_base_login("Cambiar contrasena temporal", 520, 640)
+        cont = ctk.CTkFrame(top, fg_color=SURFACE, corner_radius=12, border_width=1, border_color=BORDER)
+        cont.pack(fill="both", expand=True, padx=22, pady=22)
+        footer = ctk.CTkFrame(cont, fg_color="transparent")
+        footer.pack(side="bottom", fill="x", padx=22, pady=(0, 20))
+        inner = ctk.CTkScrollableFrame(cont, fg_color="transparent")
+        inner.pack(side="top", fill="both", expand=True, padx=22, pady=(20, 10))
+
+        ctk.CTkLabel(
+            inner,
+            text="Cambia tu contrasena",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=TEXT_DARK,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            inner,
+            text=f"Tu contrasena actual es temporal. {self._password_policy_text()}",
+            font=ctk.CTkFont(size=12),
+            text_color=TEXT_MUTED,
+            wraplength=380,
+            justify="left",
+        ).pack(anchor="w", pady=(6, 14))
+
+        nueva = self._campo(inner, "Nueva contrasena", "Nueva contrasena", show="*")
+        confirmar = self._campo(inner, "Confirmar contrasena", "Repite la contrasena", show="*")
+
+        self._password_visibility_control(inner, [nueva, confirmar])
+        save_ref = {"button": None}
+        refresh_checks = self._password_checklist(inner, nueva, confirmar, save_ref)
+
+        error = ctk.CTkLabel(inner, text="", font=ctk.CTkFont(size=12), text_color=DANGER, wraplength=380, justify="left")
+        error.pack(anchor="w", pady=(8, 0))
+
+        def guardar():
+            error.configure(text="", text_color=DANGER)
+            if not refresh_checks():
+                error.configure(text="Completa todos los requisitos antes de guardar.")
+                return
+            if nueva.get() != confirmar.get():
+                error.configure(text="Las contrasenas no coinciden.")
+                return
+            result = local_auth.cambiar_password(correo, actual, nueva.get(), self.cfg)
+            if result.get("ok"):
+                top.destroy()
+                self._finish_authenticated_session()
+            else:
+                error.configure(text=result.get("message") or "No se pudo cambiar la contrasena.")
+
+        save_button = ctk.CTkButton(
+            footer,
+            text="Guardar cambios",
+            command=guardar,
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_DARK,
+            text_color="#FFFFFF",
+            height=44,
+            corner_radius=8,
+            font=ctk.CTkFont(size=13, weight="bold"),
+        )
+        save_button.pack(fill="x")
+        save_ref["button"] = save_button
+        refresh_checks()
+
+    def _modal_recuperar_password(self):
+        top = self._modal_base_login("Recuperar contrasena", 560, 680)
+        cont = ctk.CTkFrame(top, fg_color=SURFACE, corner_radius=12, border_width=1, border_color=BORDER)
+        cont.pack(fill="both", expand=True, padx=22, pady=22)
+        footer = ctk.CTkFrame(cont, fg_color="transparent")
+        footer.pack(side="bottom", fill="x", padx=22, pady=(0, 20))
+        inner = ctk.CTkScrollableFrame(cont, fg_color="transparent")
+        inner.pack(side="top", fill="both", expand=True, padx=22, pady=(20, 10))
+
+        ctk.CTkLabel(
+            inner,
+            text="Recuperar contrasena",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=TEXT_DARK,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            inner,
+            text="Solicita un codigo de verificacion y luego define una nueva contrasena.",
+            font=ctk.CTkFont(size=12),
+            text_color=TEXT_MUTED,
+            wraplength=390,
+            justify="left",
+        ).pack(anchor="w", pady=(6, 14))
+
+        request_box = ctk.CTkFrame(inner, fg_color=PRIMARY_LIGHT, corner_radius=8, border_width=1, border_color=BORDER)
+        request_box.pack(fill="x", pady=(0, 12))
+        request_inner = ctk.CTkFrame(request_box, fg_color="transparent")
+        request_inner.pack(fill="x", padx=14, pady=12)
+        ctk.CTkLabel(
+            request_inner,
+            text="1. Verifica tu correo",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=TEXT_DARK,
+        ).pack(anchor="w")
+        correo = self._campo(request_inner, "Correo electronico", "tu.correo@empresa.com")
+        correo.insert(0, self.entry_correo.get().strip())
+
+        reset_box = ctk.CTkFrame(inner, fg_color=PRIMARY_LIGHT, corner_radius=8, border_width=1, border_color=BORDER)
+        reset_box.pack(fill="x")
+        reset_inner = ctk.CTkFrame(reset_box, fg_color="transparent")
+        reset_inner.pack(fill="x", padx=14, pady=12)
+        ctk.CTkLabel(
+            reset_inner,
+            text="2. Define una nueva contrasena",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=TEXT_DARK,
+        ).pack(anchor="w")
+        codigo = self._campo(reset_inner, "Codigo de verificacion", "Codigo recibido")
+        nueva = self._campo(reset_inner, "Nueva contrasena", "Nueva contrasena", show="*")
+        confirmar = self._campo(reset_inner, "Confirmar contrasena", "Repite la contrasena", show="*")
+
+        self._password_visibility_control(reset_inner, [nueva, confirmar])
+        save_ref = {"button": None}
+        refresh_checks = self._password_checklist(reset_inner, nueva, confirmar, save_ref)
+
+        status = ctk.CTkLabel(
+            inner,
+            text=self._password_policy_text(),
+            font=ctk.CTkFont(size=12),
+            text_color=TEXT_MUTED,
+            wraplength=430,
+            justify="left",
+        )
+        status.pack(anchor="w", pady=(10, 0))
+
+        def solicitar():
+            if not correo.get().strip():
+                status.configure(text="Ingresa tu correo.", text_color=DANGER)
+                return
+            result = local_auth.solicitar_recuperacion_password(correo.get(), self.cfg)
+            if result.get("ok"):
+                testing_code = result.get("reset_code")
+                if testing_code:
+                    codigo.delete(0, "end")
+                    codigo.insert(0, testing_code)
+                    status.configure(
+                        text=f"Codigo generado para prueba local: {testing_code}",
+                        text_color=SUCCESS,
+                    )
+                else:
+                    status.configure(text="Si el correo existe, se envio un codigo de verificacion.", text_color=SUCCESS)
+            else:
+                status.configure(text=result.get("message") or "No se pudo solicitar el codigo.", text_color=DANGER)
+
+        def confirmar_reset():
+            if not refresh_checks():
+                status.configure(text="Completa todos los requisitos antes de guardar.", text_color=DANGER)
+                return
+            if nueva.get() != confirmar.get():
+                status.configure(text="Las contrasenas no coinciden.", text_color=DANGER)
+                return
+            result = local_auth.confirmar_recuperacion_password(correo.get(), codigo.get(), nueva.get(), self.cfg)
+            if result.get("ok"):
+                self.entry_correo.delete(0, "end")
+                self.entry_correo.insert(0, correo.get().strip())
+                self.entry_pass.delete(0, "end")
+                self.entry_pass.insert(0, nueva.get())
+                top.destroy()
+                self.error_lbl.configure(text="Contrasena actualizada. Puedes iniciar sesion.", text_color=SUCCESS)
+            else:
+                status.configure(text=result.get("message") or "No se pudo actualizar la contrasena.", text_color=DANGER)
+
+        ctk.CTkButton(
+            request_inner,
+            text="Solicitar codigo",
+            command=solicitar,
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_DARK,
+            text_color="#FFFFFF",
+            height=40,
+            corner_radius=8,
+            font=ctk.CTkFont(weight="bold"),
+        ).pack(fill="x", pady=(12, 0))
+
+        ctk.CTkButton(
+            footer,
+            text="Cancelar",
+            command=top.destroy,
+            fg_color=SURFACE,
+            hover_color=APP_BG,
+            text_color=TEXT_BODY,
+            border_width=1,
+            border_color=BORDER_STRONG,
+            height=42,
+            corner_radius=8,
+        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        save_button = ctk.CTkButton(
+            footer,
+            text="Guardar cambios",
+            command=confirmar_reset,
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_DARK,
+            text_color="#FFFFFF",
+            height=42,
+            corner_radius=8,
+            font=ctk.CTkFont(weight="bold"),
+        )
+        save_button.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        save_ref["button"] = save_button
+        refresh_checks()
 
     def _salir(self):
         self.decision = False
@@ -1191,7 +1600,7 @@ class StationWindow(ctk.CTk):
         ).pack(side="left", padx=6)
 
     def _modal_incidencia(self):
-        top = self._modal("Incidencias y ajustes", 500, 460)
+        top = self._modal("Incidencias y ajustes", 500, 350)
         cont = ctk.CTkFrame(top, fg_color="transparent")
         cont.pack(fill="both", expand=True, padx=22, pady=20)
         ctk.CTkLabel(
@@ -1202,7 +1611,7 @@ class StationWindow(ctk.CTk):
         ).pack(anchor="w")
         ctk.CTkLabel(
             cont,
-            text="Selecciona el tipo de solicitud o correccion.",
+            text="Selecciona la accion que necesitas reportar.",
             font=ctk.CTkFont(size=12),
             text_color=TEXT_MUTED,
         ).pack(anchor="w", pady=(4, 14))
@@ -1210,9 +1619,7 @@ class StationWindow(ctk.CTk):
         opciones = [
             ("Restaurar jornada laboral", "restaurar"),
             ("Horas extra", "horas_extra"),
-            ("Correccion de marcaje", "correccion_marcaje"),
-            ("Permisos o vacaciones", "permiso_vacaciones"),
-            ("Tiempo perdido por sistema", "tiempo_perdido"),
+            ("Reportar falla tecnica", "tiempo_perdido"),
         ]
         for texto, tipo in opciones:
             def abrir(t=tipo, x=texto):
@@ -1221,6 +1628,8 @@ class StationWindow(ctk.CTk):
                     self._modal_restaurar()
                 elif t == "horas_extra":
                     self._modal_horas_extra()
+                elif t == "tiempo_perdido":
+                    self._modal_falla_tecnica()
                 else:
                     self._modal_excepcion(t, x)
 
@@ -1344,7 +1753,10 @@ class StationWindow(ctk.CTk):
                 top.destroy()
                 self._modal_cronometro_horas_extra()
             else:
-                error.configure(text="Codigo invalido, vencido o ya utilizado.")
+                error.configure(
+                    text=self.shift.ultimo_error_codigo
+                    or "Codigo invalido, vencido o ya utilizado."
+                )
 
         ctk.CTkButton(
             cont,
@@ -1420,6 +1832,194 @@ class StationWindow(ctk.CTk):
         ).pack(fill="x")
         refrescar()
 
+    def _technical_evidence_snapshot(self):
+        now = datetime.datetime.now()
+        last_capture = getattr(self.screens, "ultima", None)
+        pending = count_pending()
+        telemetry = getattr(self.shift, "ultimo_snapshot", {}) or {}
+        samples = telemetry.get("muestras_recientes") or []
+        last_sample = samples[-1] if samples else {}
+        active_app = str(last_sample.get("proceso") or "").strip()
+        active_title = str(last_sample.get("titulo") or "").strip()
+        if not active_app or active_app == "(desconocido)":
+            active_app = "(sin dato)"
+        if not active_title or active_title == "(desconocido)":
+            active_title = "(sin dato)"
+        sync_label = "Local"
+        try:
+            if getattr(self.cfg, "drive_upload_enabled", False):
+                sync_label = "Drive imagenes"
+            elif pending:
+                sync_label = f"{pending} eventos pendientes"
+        except Exception:
+            pass
+        suggested_start = last_capture or self.shift.inicio_jornada or now
+        if suggested_start > now:
+            suggested_start = now
+        gap_minutes = max(0, int((now - suggested_start).total_seconds() // 60))
+        return {
+            "estado_jornada": self.shift.estado,
+            "captura_activa": bool(self.screens.activo),
+            "ultima_captura": last_capture.isoformat() if last_capture else None,
+            "ultima_captura_txt": last_capture.strftime("%H:%M") if last_capture else "Sin captura registrada",
+            "eventos_pendientes": pending,
+            "sincronizacion": sync_label,
+            "inicio_sugerido": suggested_start.isoformat(),
+            "fin_sugerido": now.isoformat(),
+            "periodo_sugerido": f"{suggested_start:%H:%M} - {now:%H:%M}",
+            "minutos_estimados": gap_minutes,
+            "app_activa": active_app,
+            "ventana_activa": active_title[:180],
+            "idle_segundos": last_sample.get("idle_segundos"),
+            "usuario_idle": bool(last_sample.get("is_idle", False)),
+            "clics_recientes": telemetry.get("clics", 0),
+            "cambios_ventana": telemetry.get("cambios_ventana", 0),
+            "muestras_recientes": samples[-20:],
+            "backend_habilitado": bool(getattr(self.cfg, "evidence_backend_enabled", False)),
+            "equipo": socket.gethostname(),
+            "usuario_windows": getpass.getuser(),
+        }
+
+    def _modal_falla_tecnica(self):
+        evidencia = self._technical_evidence_snapshot()
+        top = self._modal("Reportar falla tecnica", 560, 640)
+        cont = ctk.CTkFrame(top, fg_color="transparent")
+        cont.pack(fill="both", expand=True, padx=22, pady=20)
+
+        ctk.CTkLabel(
+            cont,
+            text="Reportar falla tecnica",
+            font=ctk.CTkFont(size=17, weight="bold"),
+            text_color=TEXT_DARK,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            cont,
+            text=(
+                "VYNTRA adjuntara evidencia tecnica automaticamente. "
+                "Esta solicitud no se aprueba como tiempo laboral hasta que RR. HH. la revise."
+            ),
+            font=ctk.CTkFont(size=12),
+            text_color=TEXT_MUTED,
+            wraplength=460,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 14))
+
+        ctk.CTkLabel(
+            cont,
+            text="Que ocurrio",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=TEXT_BODY,
+        ).pack(anchor="w")
+        tipo_problema = ctk.CTkOptionMenu(
+            cont,
+            values=[
+                "No pude marcar entrada/salida",
+                "La estacion no cargaba",
+                "Aplicacion de trabajo lenta o congelada",
+                "Internet caido",
+                "Computadora reiniciada",
+                "App cerrada o congelada",
+                "Otro problema tecnico",
+            ],
+            fg_color=SURFACE_ALT,
+            button_color=PRIMARY,
+            button_hover_color=PRIMARY_DARK,
+            text_color=TEXT_DARK,
+        )
+        tipo_problema.pack(fill="x", pady=(5, 12))
+
+        evidence_card = ctk.CTkFrame(
+            cont,
+            fg_color=PRIMARY_LIGHT,
+            corner_radius=10,
+            border_width=1,
+            border_color=BORDER_STRONG,
+        )
+        evidence_card.pack(fill="x", pady=(0, 12))
+
+        rows = [
+            ("Periodo sugerido", evidencia["periodo_sugerido"]),
+            ("Minutos estimados", str(evidencia["minutos_estimados"])),
+            ("App activa", evidencia["app_activa"]),
+            ("Ventana activa", evidencia["ventana_activa"]),
+            ("Estado de jornada", evidencia["estado_jornada"]),
+            ("Ultima captura", evidencia["ultima_captura_txt"]),
+            ("Sincronizacion", evidencia["sincronizacion"]),
+            ("Captura activa", "Si" if evidencia["captura_activa"] else "No"),
+        ]
+        for label, value in rows:
+            row = ctk.CTkFrame(evidence_card, fg_color="transparent")
+            row.pack(fill="x", padx=14, pady=(10 if label == "Periodo sugerido" else 3, 0))
+            ctk.CTkLabel(
+                row,
+                text=label,
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=TEXT_MUTED,
+                width=140,
+                anchor="w",
+            ).pack(side="left")
+            ctk.CTkLabel(
+                row,
+                text=value,
+                font=ctk.CTkFont(size=12, weight="bold"),
+                text_color=TEXT_DARK,
+                anchor="w",
+            ).pack(side="left", fill="x", expand=True)
+
+        ctk.CTkLabel(
+            cont,
+            text="Comentario del empleado",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=TEXT_BODY,
+        ).pack(anchor="w")
+        comentario = ctk.CTkTextbox(
+            cont,
+            height=76,
+            fg_color=SURFACE_ALT,
+            text_color=TEXT_DARK,
+            border_width=1,
+            border_color=BORDER_STRONG,
+        )
+        comentario.pack(fill="x", pady=(5, 8))
+
+        error = ctk.CTkLabel(cont, text="", text_color=DANGER, font=ctk.CTkFont(size=12))
+        error.pack(anchor="w")
+
+        def enviar():
+            comentario_txt = comentario.get("1.0", "end").strip()
+            if len(comentario_txt) < 6:
+                error.configure(text="Agrega un comentario breve para contextualizar la falla.")
+                return
+            selected_problem = tipo_problema.get()
+            current_evidence = self._technical_evidence_snapshot()
+            app_failure_signal = (
+                selected_problem == "Aplicacion de trabajo lenta o congelada"
+                and current_evidence.get("app_activa") not in ("", "(sin dato)")
+                and not current_evidence.get("usuario_idle")
+            )
+            detalle = {
+                "motivo": comentario_txt,
+                "problema": selected_problem,
+                "verificacion": "pendiente",
+                "falla_app_probable": app_failure_signal,
+                "evidencia_tecnica": current_evidence,
+            }
+            registro = self.shift.registrar_excepcion("tiempo_perdido", detalle)
+            top.destroy()
+            self._modal_solicitud_enviada("Falla tecnica", registro)
+
+        ctk.CTkButton(
+            cont,
+            text="Enviar para verificacion",
+            command=enviar,
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_DARK,
+            height=42,
+            corner_radius=8,
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(weight="bold"),
+        ).pack(side="bottom", fill="x", pady=(12, 0))
+
     def _modal_excepcion(self, tipo, titulo):
         top = self._modal(titulo, 440, 360)
         ctk.CTkLabel(
@@ -1462,15 +2062,23 @@ class StationWindow(ctk.CTk):
         )
         motivo.pack(fill="x", padx=20)
 
+        error = ctk.CTkLabel(top, text="", text_color=DANGER, font=ctk.CTkFont(size=12))
+        error.pack(anchor="w", padx=20, pady=(8, 0))
+
         def enviar():
-            self.shift.registrar_excepcion(
+            motivo_txt = motivo.get("1.0", "end").strip()
+            if len(motivo_txt) < 8:
+                error.configure(text="Describe el motivo con un poco mas de detalle.")
+                return
+            registro = self.shift.registrar_excepcion(
                 tipo,
                 {
                     "horas": entry_horas.get().strip(),
-                    "motivo": motivo.get("1.0", "end").strip(),
+                    "motivo": motivo_txt,
                 },
             )
             top.destroy()
+            self._modal_solicitud_enviada(titulo, registro)
 
         ctk.CTkButton(
             top,
@@ -1484,81 +2092,95 @@ class StationWindow(ctk.CTk):
             font=ctk.CTkFont(weight="bold"),
         ).pack(side="bottom", fill="x", padx=20, pady=16)
 
-    def _modal_restaurar(self):
-        top = self._modal("Restauracion de administrador", 430, 320)
+    def _modal_solicitud_enviada(self, titulo, registro):
+        top = self._modal("Solicitud enviada", 440, 270)
         cont = ctk.CTkFrame(top, fg_color="transparent")
         cont.pack(fill="both", expand=True, padx=22, pady=20)
         ctk.CTkLabel(
             cont,
-            text="Restauracion de administrador",
+            text="Solicitud registrada",
+            font=ctk.CTkFont(size=17, weight="bold"),
+            text_color=SUCCESS,
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            cont,
+            text=(
+                f"{titulo} quedo pendiente de revision. "
+                "RR. HH. o tu supervisor podra aprobarla, rechazarla o cerrarla desde el panel."
+            ),
+            font=ctk.CTkFont(size=12),
+            text_color=TEXT_MUTED,
+            wraplength=390,
+            justify="left",
+        ).pack(anchor="w", pady=(8, 12))
+        ctk.CTkLabel(
+            cont,
+            text=f"Referencia local: {registro.get('source_event_id') or 'pendiente de sincronizar'}",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=TEXT_BODY,
+            wraplength=390,
+            justify="left",
+        ).pack(anchor="w")
+        ctk.CTkButton(
+            cont,
+            text="Entendido",
+            command=top.destroy,
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_DARK,
+            height=40,
+            corner_radius=8,
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(weight="bold"),
+        ).pack(side="bottom", fill="x")
+
+    def _modal_restaurar(self):
+        top = self._modal("Restaurar jornada laboral", 460, 300)
+        cont = ctk.CTkFrame(top, fg_color="transparent")
+        cont.pack(fill="both", expand=True, padx=22, pady=20)
+        ctk.CTkLabel(
+            cont,
+            text="Restaurar jornada laboral",
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color=TEXT_DARK,
         ).pack(anchor="w")
         ctk.CTkLabel(
             cont,
-            text="Ingresa el PIN para reabrir o restaurar marcajes.",
+            text=(
+                "Ingresa el codigo unico generado desde el panel web. "
+                "Debe estar vigente y asignado a este usuario."
+            ),
             font=ctk.CTkFont(size=12),
             text_color=TEXT_MUTED,
-            wraplength=380,
+            wraplength=400,
             justify="left",
         ).pack(anchor="w", pady=(6, 12))
 
-        pin = ctk.CTkEntry(
+        codigo = ctk.CTkEntry(
             cont,
-            show="*",
-            placeholder_text="PIN de administrador",
+            placeholder_text="Ej: VX-7K2P9",
             fg_color=SURFACE_ALT,
             border_color=BORDER_STRONG,
             text_color=TEXT_DARK,
         )
-        pin.pack(fill="x")
+        codigo.pack(fill="x")
 
         error = ctk.CTkLabel(
             cont, text="", font=ctk.CTkFont(size=12), text_color=DANGER
         )
         error.pack(anchor="w", pady=(6, 0))
 
-        opciones = ctk.CTkFrame(cont, fg_color="transparent")
-
-        def mostrar():
-            for w in opciones.winfo_children():
-                w.destroy()
-            opciones.pack(fill="x", pady=(8, 0))
-            algo = False
-            if self.shift.estado == "TERMINADO":
-                algo = True
-                self._btn_restaurar(
-                    opciones, "Reabrir jornada", self.shift.restaurar_jornada, top
-                )
-            if self.shift.break_consumido:
-                algo = True
-                self._btn_restaurar(
-                    opciones, "Reactivar break", self.shift.restaurar_break, top
-                )
-            if self.shift.lunch_consumido:
-                algo = True
-                self._btn_restaurar(
-                    opciones, "Reactivar almuerzo", self.shift.restaurar_lunch, top
-                )
-            if not algo:
-                ctk.CTkLabel(
-                    opciones,
-                    text="No hay marcajes que restaurar.",
-                    font=ctk.CTkFont(size=12),
-                    text_color=TEXT_MUTED,
-                ).pack(anchor="w")
-
         def validar():
-            if self.shift.validar_admin(pin.get().strip()):
-                pin.configure(state="disabled")
-                error.configure(text="")
-                mostrar()
+            if self.shift.restaurar_jornada_con_codigo(codigo.get().strip()):
+                top.destroy()
             else:
-                error.configure(text="PIN incorrecto.")
+                error.configure(
+                    text=self.shift.ultimo_error_codigo
+                    or "Codigo invalido, vencido o ya utilizado."
+                )
 
         ctk.CTkButton(
             cont,
-            text="Validar",
+            text="Reabrir jornada",
             command=validar,
             fg_color=PRIMARY,
             hover_color=PRIMARY_DARK,

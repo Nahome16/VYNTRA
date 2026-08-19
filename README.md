@@ -6,7 +6,9 @@ Agente local de marcaje, capturas y telemetria cruda con consentimiento explicit
 
 - Solicita consentimiento al usuario la primera vez.
 - Valida el login del empleado contra el backend cuando esta configurado.
+- Obliga cambio de contrasena temporal y permite recuperacion con codigo cuando el backend esta configurado.
 - Permite iniciar jornada, break, lunch y finalizar jornada.
+- Permite solicitar horas extra, reportar fallas tecnicas y reabrir jornadas con codigos de un solo uso.
 - Guarda bitacora local de la jornada.
 - Toma capturas durante jornada activa.
 - Registra telemetria cruda: proceso activo, titulo de ventana, inactividad, clics y cambios de ventana.

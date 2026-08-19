@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState, Panel, RefreshButton, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
+import { usePreferences } from "@/components/preferences-provider";
 import {
   CatalogsResponse,
   DashboardResponse,
@@ -43,6 +44,7 @@ function csvSafe(value: string | number) {
 export default function EmployeesPage() {
   const router = useRouter();
   const { apiGet, user } = useAuth();
+  const { t } = usePreferences();
   const [catalogs, setCatalogs] = useState<CatalogsResponse | null>(null);
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [dateFrom, setDateFrom] = useState(monthStartISO());
@@ -54,7 +56,7 @@ export default function EmployeesPage() {
 
   const loadEmployees = useCallback(async () => {
     setLoading(true);
-    setStatusText("Actualizando empleados...");
+    setStatusText(t("Actualizando empleados..."));
     const params = new URLSearchParams();
     if (dateFrom) params.set("date_from", dateFrom);
     if (dateTo) params.set("date_to", dateTo);
@@ -66,13 +68,13 @@ export default function EmployeesPage() {
       ]);
       setCatalogs(nextCatalogs);
       setDashboard(nextDashboard);
-      setStatusText("Datos actualizados");
+      setStatusText(t("Datos actualizados"));
     } catch {
-      setStatusText("No se pudieron cargar los empleados");
+      setStatusText(t("No se pudieron cargar los empleados"));
     } finally {
       setLoading(false);
     }
-  }, [apiGet, dateFrom, dateTo]);
+  }, [apiGet, dateFrom, dateTo, t]);
 
   useEffect(() => {
     if (!user || didInitialLoad.current) return;
@@ -121,8 +123,8 @@ export default function EmployeesPage() {
             blocks,
             totals,
             department: employee.department_id
-              ? departmentMap.get(employee.department_id) || "Sin departamento"
-              : "Sin departamento",
+              ? departmentMap.get(employee.department_id) || t("Sin departamento")
+              : t("Sin departamento"),
             position: employee.position_id ? positionMap.get(employee.position_id) || "" : "",
           };
         })
@@ -134,7 +136,7 @@ export default function EmployeesPage() {
             .toLowerCase()
             .includes(needle);
         }),
-    [blocksByEmployee, departmentMap, employees, positionMap, searchTerm],
+    [blocksByEmployee, departmentMap, employees, positionMap, searchTerm, t],
   );
 
   function openEmployeeProfile(employeeId: string) {
@@ -146,15 +148,15 @@ export default function EmployeesPage() {
 
   function exportCsv() {
     const header = [
-      "Nombre del empleado",
-      "Equipo",
-      "Ubicacion",
-      "Actividad [h]",
-      "Productivo [h]",
-      "Improductivo [h]",
-      "Neutral [h]",
-      "Tiempo inactivo [h]",
-      "Descanso [h]",
+      t("Nombre del empleado"),
+      t("Equipo"),
+      t("Ubicacion"),
+      t("Actividad [h]"),
+      t("Productivo [h]"),
+      t("Improductivo [h]"),
+      t("Neutral [h]"),
+      t("Tiempo inactivo [h]"),
+      t("Descanso [h]"),
     ];
     const lines = employeeRows.map((row) =>
       [
@@ -184,27 +186,27 @@ export default function EmployeesPage() {
 
   return (
     <AppShell
-      title="Empleados"
-      description={`${user?.company || "Empresa"} - actividad, productividad y detalle por usuario.`}
+      title={t("Empleados")}
+      description={`${user?.company || t("Empresa")} - ${t("actividad, productividad y detalle por usuario.")}`}
       actions={<RefreshButton loading={loading} onClick={loadEmployees} />}
     >
-      <Panel title="Reporte de empleados" meta={`${employeeRows.length} visibles`}>
+      <Panel title={t("Reporte de empleados")} meta={`${employeeRows.length} ${t("visibles")}`}>
         <div className="employee-report-toolbar">
           <div className="date-range-control">
-            <span>Seleccionar fechas</span>
+            <span>{t("Seleccionar fechas")}</span>
             <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
             <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
             <button className="row-action" onClick={() => void loadEmployees()}>
-              Aplicar
+              {t("Aplicar")}
             </button>
           </div>
           <div className="employee-search-actions">
             <input
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Buscar empleado..."
+              placeholder={t("Buscar empleado...")}
             />
-            <button className="icon-action" aria-label="Descargar CSV" onClick={exportCsv}>
+            <button className="icon-action" aria-label={t("Descargar CSV")} onClick={exportCsv}>
               CSV
             </button>
           </div>
@@ -214,15 +216,15 @@ export default function EmployeesPage() {
           <table className="employee-report-table">
             <thead>
               <tr>
-                <th>Nombre del empleado</th>
-                <th>Equipo</th>
-                <th>Ubicacion</th>
-                <th>Actividad [h]</th>
-                <th>Productivo [h]</th>
-                <th>Improductivo [h]</th>
-                <th>Neutral [h]</th>
-                <th>Tiempo inactivo</th>
-                <th>Descanso</th>
+                <th>{t("Nombre del empleado")}</th>
+                <th>{t("Equipo")}</th>
+                <th>{t("Ubicacion")}</th>
+                <th>{t("Actividad [h]")}</th>
+                <th>{t("Productivo [h]")}</th>
+                <th>{t("Improductivo [h]")}</th>
+                <th>{t("Neutral [h]")}</th>
+                <th>{t("Tiempo inactivo")}</th>
+                <th>{t("Descanso")}</th>
               </tr>
             </thead>
             <tbody>
@@ -233,7 +235,7 @@ export default function EmployeesPage() {
                       <span>{initialsFor(row.employee.full_name)}</span>
                       <div>
                         <strong>{row.employee.full_name}</strong>
-                        <small>{row.employee.email || "Sin correo laboral"}</small>
+                        <small>{row.employee.email || t("Sin correo laboral")}</small>
                       </div>
                     </div>
                   </td>
@@ -250,7 +252,7 @@ export default function EmployeesPage() {
             </tbody>
           </table>
         ) : (
-          <EmptyState>No hay empleados para el filtro actual.</EmptyState>
+          <EmptyState>{t("No hay empleados para el filtro actual.")}</EmptyState>
         )}
       </Panel>
 

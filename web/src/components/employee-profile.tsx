@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { EmptyState, Panel, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
+import { usePreferences } from "@/components/preferences-provider";
 import { EmployeeDetailResponse } from "@/lib/types";
 import { formatDuration } from "@/lib/format";
 
@@ -104,6 +105,7 @@ export function EmployeeProfile({
   initialDateTo?: string;
 }) {
   const { apiGet } = useAuth();
+  const { t } = usePreferences();
   const [employeeDetail, setEmployeeDetail] = useState<EmployeeDetailResponse | null>(null);
   const [dateFrom, setDateFrom] = useState(initialDateFrom || monthStartISO());
   const [dateTo, setDateTo] = useState(initialDateTo || todayISO());
@@ -113,7 +115,7 @@ export function EmployeeProfile({
 
   const loadProfile = useCallback(async (nextDateFrom: string, nextDateTo: string) => {
     setLoading(true);
-    setStatusText("Cargando perfil empleado...");
+    setStatusText(t("Cargando perfil empleado..."));
     const params = new URLSearchParams();
     if (nextDateFrom) params.set("date_from", nextDateFrom);
     if (nextDateTo) params.set("date_to", nextDateTo);
@@ -123,13 +125,13 @@ export function EmployeeProfile({
         `/api/employees/${employeeId}/detail?${params.toString()}`,
       );
       setEmployeeDetail(detail);
-      setStatusText("Perfil actualizado");
+      setStatusText(t("Perfil actualizado"));
     } catch {
-      setStatusText("No se pudo cargar el perfil empleado");
+      setStatusText(t("No se pudo cargar el perfil empleado"));
     } finally {
       setLoading(false);
     }
-  }, [apiGet, employeeId]);
+  }, [apiGet, employeeId, t]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -182,9 +184,9 @@ export function EmployeeProfile({
 
   function exportProfileCsv() {
     if (!employeeDetail) return;
-    const header = ["App", "Clasificacion", "Tiempo", "Muestras"];
+    const header = ["App", t("Clasificacion"), t("Tiempo"), t("Muestras")];
     const lines = employeeDetail.apps.map((app) =>
-      [app.app, classificationLabel(app.classification), formatDuration(app.seconds), app.samples]
+      [app.app, t(classificationLabel(app.classification)), formatDuration(app.seconds), app.samples]
         .map(csvSafe)
         .join(","),
     );
@@ -203,27 +205,27 @@ export function EmployeeProfile({
     <div className="employee-profile-view">
       <div className="profile-page-actions">
         <Link className="row-action profile-return" href="/empleados">
-          Volver a empleados
+          {t("Volver a empleados")}
         </Link>
         <div className="date-range-control">
-          <span>Periodo</span>
+          <span>{t("Periodo")}</span>
           <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
           <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
           <button className="row-action" onClick={() => void loadProfile(dateFrom, dateTo)}>
-            Aplicar
+            {t("Aplicar")}
           </button>
         </div>
       </div>
 
       {loading ? (
-        <Panel title="Perfil empleado">
-          <EmptyState>Cargando informacion del empleado...</EmptyState>
+        <Panel title={t("Perfil empleado")}>
+          <EmptyState>{t("Cargando informacion del empleado...")}</EmptyState>
         </Panel>
       ) : null}
 
       {!loading && !employeeDetail ? (
-        <Panel title="Perfil empleado">
-          <EmptyState>No se pudo cargar este perfil.</EmptyState>
+        <Panel title={t("Perfil empleado")}>
+          <EmptyState>{t("No se pudo cargar este perfil.")}</EmptyState>
         </Panel>
       ) : null}
 
@@ -234,36 +236,36 @@ export function EmployeeProfile({
               <div className="employee-avatar-lg">{initialsFor(employeeDetail.employee.full_name)}</div>
               <div>
                 <h2>{employeeDetail.employee.full_name}</h2>
-                <p>{employeeDetail.employee.position || "Empleado monitoreado"}</p>
+                <p>{employeeDetail.employee.position || t("Empleado monitoreado")}</p>
                 <div className="profile-badges">
                   <span className="badge attendance-good">{employeeDetail.employee.status}</span>
-                  <span className="soft-pill">{employeeDetail.employee.department || "Sin departamento"}</span>
+                  <span className="soft-pill">{employeeDetail.employee.department || t("Sin departamento")}</span>
                 </div>
               </div>
             </div>
             <div className="profile-contact">
-              <span>{employeeDetail.employee.email || "Sin correo laboral"}</span>
-              <span>Equipo {employeeDetail.employee.employee_code}</span>
-              <span>{employeeDetail.employee.department || "Sin departamento"}</span>
+              <span>{employeeDetail.employee.email || t("Sin correo laboral")}</span>
+              <span>{t("Equipo")} {employeeDetail.employee.employee_code}</span>
+              <span>{employeeDetail.employee.department || t("Sin departamento")}</span>
             </div>
             <button className="secondary-button" onClick={exportProfileCsv}>
-              Descargar informe
+              {t("Descargar informe")}
             </button>
           </section>
 
           <section className="employee-kpi-grid">
             <div>
-              <span>Horas rango</span>
+              <span>{t("Horas rango")}</span>
               <strong>{formatDuration(employeeDetail.totals.active_seconds)}</strong>
-              <small>Actividad real capturada</small>
+              <small>{t("Actividad real capturada")}</small>
             </div>
             <div>
-              <span>Productividad</span>
+              <span>{t("Productividad")}</span>
               <strong className="metric-good">{employeeDetail.totals.productivity_pct}%</strong>
-              <small>Sobre tiempo activo</small>
+              <small>{t("Sobre tiempo activo")}</small>
             </div>
             <div>
-              <span>No productivo</span>
+              <span>{t("No productivo")}</span>
               <strong className={employeeDetail.totals.non_productive_pct > 12 ? "metric-bad" : ""}>
                 {employeeDetail.totals.non_productive_pct}%
               </strong>
@@ -273,7 +275,7 @@ export function EmployeeProfile({
 
           <section className="employee-detail-section">
             <div className="panel-title">
-              <h2>Composicion de actividad (ultimos 7 dias)</h2>
+              <h2>{t("Composicion de actividad (ultimos 7 dias)")}</h2>
               <span>
                 {dateFrom} - {dateTo}
               </span>
@@ -281,19 +283,19 @@ export function EmployeeProfile({
             <div className="activity-legend">
               <span>
                 <i className="legend-productive" />
-                Productivo
+                {t("Productivo")}
               </span>
               <span>
                 <i className="legend-neutral" />
-                Neutral
+                {t("Neutral")}
               </span>
               <span>
                 <i className="legend-bad" />
-                No productivo
+                {t("No productivo")}
               </span>
               <span>
                 <i className="legend-idle" />
-                Inactivo
+                {t("Inactivo")}
               </span>
             </div>
             <div className="activity-map">
@@ -334,28 +336,28 @@ export function EmployeeProfile({
                 </div>
               ))}
               {!activityMap.length ? (
-                <EmptyState>No hay composicion calculada para este rango.</EmptyState>
+                <EmptyState>{t("No hay composicion calculada para este rango.")}</EmptyState>
               ) : null}
             </div>
           </section>
 
           <section className="employee-detail-section">
             <div className="panel-title">
-              <h2>Detalle de actividad</h2>
+              <h2>{t("Detalle de actividad")}</h2>
               <span>{employeeDetail.apps.length} apps</span>
             </div>
             <div className="tabs inner-tabs">
               <button className={detailTab === "resumen" ? "active" : ""} onClick={() => setDetailTab("resumen")}>
-                Resumen
+                {t("Resumen")}
               </button>
               <button className={detailTab === "registro" ? "active" : ""} onClick={() => setDetailTab("registro")}>
-                Registro completo
+                {t("Registro completo")}
               </button>
             </div>
             {detailTab === "resumen" ? (
               <div className="activity-summary-grid">
                 <div>
-                  <h3>Aplicaciones principales</h3>
+                  <h3>{t("Aplicaciones principales")}</h3>
                   {(productiveApps.length ? productiveApps : employeeDetail.apps.slice(0, 5)).map((app) => (
                     <div className="app-progress" key={`${app.app}-${app.classification}`}>
                       <div>
@@ -369,7 +371,7 @@ export function EmployeeProfile({
                   ))}
                 </div>
                 <div>
-                  <h3>Puntos de foco</h3>
+                  <h3>{t("Puntos de foco")}</h3>
                   {(distractingApps.length
                     ? distractingApps
                     : employeeDetail.apps.filter((app) => app.classification !== "productive").slice(0, 5)
@@ -385,7 +387,7 @@ export function EmployeeProfile({
                     </div>
                   ))}
                   {!employeeDetail.apps.length ? (
-                    <EmptyState>No hay apps registradas para el rango.</EmptyState>
+                    <EmptyState>{t("No hay apps registradas para el rango.")}</EmptyState>
                   ) : null}
                 </div>
               </div>
@@ -395,7 +397,7 @@ export function EmployeeProfile({
                   <article key={`${app.app}-${app.classification}`}>
                     <strong>{app.app}</strong>
                     <span>{formatDuration(app.seconds)}</span>
-                    <em className={`badge badge-${app.classification}`}>{classificationLabel(app.classification)}</em>
+                    <em className={`badge badge-${app.classification}`}>{t(classificationLabel(app.classification))}</em>
                   </article>
                 ))}
               </div>
@@ -404,8 +406,8 @@ export function EmployeeProfile({
 
           <section className="employee-detail-section">
             <div className="panel-title">
-              <h2>Revision de capturas</h2>
-              <span>{employeeDetail.evidence.length} archivos</span>
+              <h2>{t("Revision de capturas")}</h2>
+              <span>{employeeDetail.evidence.length} {t("archivos")}</span>
             </div>
             {employeeDetail.evidence.length ? (
               <div className="evidence-grid">
@@ -421,7 +423,7 @@ export function EmployeeProfile({
                 ))}
               </div>
             ) : (
-              <EmptyState>No hay capturas asociadas a este empleado en el rango.</EmptyState>
+              <EmptyState>{t("No hay capturas asociadas a este empleado en el rango.")}</EmptyState>
             )}
           </section>
         </div>

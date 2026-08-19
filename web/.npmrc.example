@@ -1,0 +1,10 @@
+# SOLO para maquinas cuya red o antivirus intercepta el trafico TLS
+# (por ejemplo Avast Web Shield o un proxy corporativo) y npm install falla
+# con UNABLE_TO_VERIFY_LEAF_SIGNATURE.
+#
+# En ese caso: exporta el certificado raiz del interceptor a .certs/ y copia
+# este archivo como .npmrc (queda ignorado por git; NO debe subirse al repo,
+# porque "cafile" sustituye a todas las CA y rompe el build en CI/Vercel).
+#
+# strict-ssl=true
+# cafile=.certs/tu-certificado-raiz.pem

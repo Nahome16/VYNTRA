@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { EmptyState, Panel, RefreshButton, StatCard, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
+import { usePreferences } from "@/components/preferences-provider";
 import { Incident, IncidentStatus } from "@/lib/types";
 import { formatDuration } from "@/lib/format";
 
@@ -42,8 +43,8 @@ function formatDateTime(value: string | null) {
   });
 }
 
-function typeLabel(value: string) {
-  return incidentTypeLabels[value] || value || "Incidencia";
+function typeLabel(value: string, t: (text: string) => string) {
+  return t(incidentTypeLabels[value] || value || "Incidencia");
 }
 
 function payloadValue(payload: Record<string, unknown>, key: string) {
@@ -70,24 +71,48 @@ function evidenceRows(incident: Incident) {
   return rows.filter(([, value]) => value !== null && value !== undefined && value !== "");
 }
 
+function suggestedAdjustmentSeconds(incident: Incident) {
+  if (incident.time_adjustment?.seconds) return incident.time_adjustment.seconds;
+  const evidence = incident.payload.evidencia_tecnica;
+  const source = evidence && typeof evidence === "object" && !Array.isArray(evidence)
+    ? evidence as Record<string, unknown>
+    : {};
+  const minutes = Number(source.minutos_estimados || incident.payload.minutos_estimados || 0);
+  if (Number.isFinite(minutes) && minutes > 0) return Math.max(60, Math.round(minutes * 60));
+  return 15 * 60;
+}
+
+function resolutionImpactText(incident: Incident, status: IncidentStatus, t: (text: string) => string) {
+  const duration = formatDuration(suggestedAdjustmentSeconds(incident));
+  if (status === "approved") {
+    return `${t("Se agregaran")} ${duration} ${t("como tiempo justificado neutral en productividad y asistencia.")}`;
+  }
+  if (incident.time_adjustment) {
+    return t("El ajuste de tiempo asociado quedara anulado y dejara de contar en los reportes.");
+  }
+  return t("No se creara ajuste de tiempo y la incidencia quedara sin impacto en productividad.");
+}
+
 function defaultResolutionStatus(incident: Incident): IncidentStatus {
   return incident.status === "pending" ? "approved" : incident.status;
 }
 
 export function IncidentsPanel({ active = true }: { active?: boolean }) {
   const { apiGet, apiPatch, user } = useAuth();
+  const { t } = usePreferences();
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [selectedIncidentId, setSelectedIncidentId] = useState("");
   const [statusFilter, setStatusFilter] = useState<"" | IncidentStatus>("pending");
   const [search, setSearch] = useState("");
   const [resolutionStatus, setResolutionStatus] = useState<IncidentStatus>("approved");
   const [resolutionNotes, setResolutionNotes] = useState("");
+  const [confirmResolution, setConfirmResolution] = useState(false);
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
 
   const loadIncidents = useCallback(async () => {
     setLoading(true);
-    setStatusText("Actualizando incidencias...");
+    setStatusText(t("Actualizando incidencias..."));
     const params = new URLSearchParams();
     if (statusFilter) params.set("status_filter", statusFilter);
     try {
@@ -95,17 +120,17 @@ export function IncidentsPanel({ active = true }: { active?: boolean }) {
         `/api/incidents${params.toString() ? `?${params.toString()}` : ""}`,
       );
       setIncidents(response.incidents);
-      setStatusText("Incidencias actualizadas");
+      setStatusText(t("Incidencias actualizadas"));
       const firstIncident = response.incidents[0] || null;
       setSelectedIncidentId(firstIncident?.id || "");
       setResolutionStatus(firstIncident ? defaultResolutionStatus(firstIncident) : "approved");
       setResolutionNotes(firstIncident?.resolution_notes || "");
     } catch {
-      setStatusText("No se pudieron cargar las incidencias");
+      setStatusText(t("No se pudieron cargar las incidencias"));
     } finally {
       setLoading(false);
     }
-  }, [apiGet, statusFilter]);
+  }, [apiGet, statusFilter, t]);
 
   useEffect(() => {
     if (!user || !active) return;
@@ -151,16 +176,22 @@ export function IncidentsPanel({ active = true }: { active?: boolean }) {
     setSelectedIncidentId(incident.id);
     setResolutionStatus(defaultResolutionStatus(incident));
     setResolutionNotes(incident.resolution_notes || "");
+    setConfirmResolution(false);
   }
 
   async function resolveIncident(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedIncident) return;
     if (resolutionNotes.trim().length < 4) {
-      setStatusText("Agrega una nota breve de resolucion");
+      setStatusText(t("Agrega una nota breve de resolucion"));
       return;
     }
-    setStatusText("Guardando resolucion...");
+    if (!confirmResolution) {
+      setConfirmResolution(true);
+      setStatusText(t("Confirma el impacto antes de guardar"));
+      return;
+    }
+    setStatusText(t("Guardando resolucion..."));
     try {
       const response = await apiPatch<{ incident: Incident }>(`/api/incidents/${selectedIncident.id}`, {
         status: resolutionStatus,
@@ -174,76 +205,83 @@ export function IncidentsPanel({ active = true }: { active?: boolean }) {
       setSelectedIncidentId(nextSelection?.id || "");
       setResolutionStatus(nextSelection ? defaultResolutionStatus(nextSelection) : "approved");
       setResolutionNotes(nextSelection?.resolution_notes || "");
-      setStatusText("Incidencia actualizada");
+      setConfirmResolution(false);
+      setStatusText(t("Incidencia actualizada"));
     } catch {
-      setStatusText("No se pudo guardar la resolucion");
+      setStatusText(t("No se pudo guardar la resolucion"));
     }
   }
 
   return (
     <>
       <section className="stats-grid">
-        <StatCard label="En filtro" value={`${stats.all}`} detail="Incidencias cargadas" />
-        <StatCard label="Pendientes" value={`${stats.pending}`} detail="Requieren revision" tone={stats.pending ? "warn" : "plain"} />
-        <StatCard label="Aprobadas" value={`${stats.approved}`} detail="Validado por RR. HH." tone="good" />
-        <StatCard label="Rechazadas" value={`${stats.rejected}`} detail="No proceden" tone={stats.rejected ? "bad" : "plain"} />
+        <StatCard label={t("En filtro")} value={`${stats.all}`} detail={t("Incidencias cargadas")} />
+        <StatCard label={t("Pendientes")} value={`${stats.pending}`} detail={t("Requieren revision")} tone={stats.pending ? "warn" : "plain"} />
+        <StatCard label={t("Aprobadas")} value={`${stats.approved}`} detail={t("Validado por RR. HH.")} tone="good" />
+        <StatCard label={t("Rechazadas")} value={`${stats.rejected}`} detail={t("No proceden")} tone={stats.rejected ? "bad" : "plain"} />
       </section>
 
       <div className="filter-row incidents-filter">
         <label>
-          Estado
+          {t("Estado")}
           <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "" | IncidentStatus)}>
-            <option value="">Todos</option>
-            <option value="pending">Pendientes</option>
-            <option value="approved">Aprobadas</option>
-            <option value="rejected">Rechazadas</option>
-            <option value="closed">Cerradas</option>
+            <option value="">{t("Todos")}</option>
+            <option value="pending">{t("Pendientes")}</option>
+            <option value="approved">{t("Aprobadas")}</option>
+            <option value="rejected">{t("Rechazadas")}</option>
+            <option value="closed">{t("Cerradas")}</option>
           </select>
         </label>
         <label>
-          Buscar
+          {t("Buscar")}
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Empleado, equipo, tipo o descripcion"
+            placeholder={t("Empleado, equipo, tipo o descripcion")}
           />
         </label>
         <RefreshButton loading={loading} onClick={() => void loadIncidents()} />
       </div>
 
       <section className="incidents-layout">
-        <Panel title="Bandeja de incidencias" meta={`${filteredIncidents.length} resultados`}>
+        <Panel title={t("Bandeja de incidencias")} meta={`${filteredIncidents.length} ${t("resultados")}`}>
           {filteredIncidents.length ? (
             <table>
               <thead>
                 <tr>
-                  <th>Empleado</th>
-                  <th>Tipo</th>
-                  <th>Estado</th>
-                  <th>Fecha</th>
-                  <th aria-label="Acciones" />
+                  <th>{t("Empleado")}</th>
+                  <th>{t("Tipo")}</th>
+                  <th>{t("Estado")}</th>
+                  <th>{t("Fecha")}</th>
+                  <th aria-label={t("Acciones")} />
                 </tr>
               </thead>
               <tbody>
                 {filteredIncidents.map((incident) => (
                   <tr className={selectedIncident?.id === incident.id ? "selected-row" : ""} key={incident.id}>
                     <td>
-                      <strong>{incident.employee || "Sin empleado"}</strong>
-                      <small>{incident.employee_code || incident.device || "Sin referencia"}</small>
+                      <strong>{incident.employee || t("Sin empleado")}</strong>
+                      <small>{incident.employee_code || incident.device || t("Sin referencia")}</small>
                     </td>
                     <td>
-                      <span className="soft-pill">{typeLabel(incident.incident_type)}</span>
+                      <span className="soft-pill">{typeLabel(incident.incident_type, t)}</span>
                       <small>{incident.title}</small>
                     </td>
                     <td>
                       <span className={`badge attendance-${statusTone[incident.status]}`}>
-                        {statusLabels[incident.status] || incident.status}
+                        {t(statusLabels[incident.status] || incident.status)}
                       </span>
                     </td>
                     <td>{formatDateTime(incident.requested_at)}</td>
                     <td>
-                      <button className="row-action" type="button" onClick={() => selectIncident(incident)}>
-                        Revisar
+                      <button
+                        className="row-action"
+                        type="button"
+                        onClick={() => selectIncident(incident)}
+                        aria-label={`${t("Revisar incidencia de")} ${incident.employee || t("Sin empleado")}`}
+                        aria-pressed={selectedIncident?.id === incident.id}
+                      >
+                        {t("Revisar")}
                       </button>
                     </td>
                   </tr>
@@ -251,40 +289,40 @@ export function IncidentsPanel({ active = true }: { active?: boolean }) {
               </tbody>
             </table>
           ) : (
-            <EmptyState>No hay incidencias para el filtro actual.</EmptyState>
+            <EmptyState>{t("No hay incidencias para el filtro actual.")}</EmptyState>
           )}
         </Panel>
 
-        <Panel title="Revision" meta={selectedIncident ? statusLabels[selectedIncident.status] : "Sin seleccion"}>
+        <Panel title={t("Revision")} meta={selectedIncident ? t(statusLabels[selectedIncident.status]) : t("Sin seleccion")}>
           {selectedIncident ? (
             <div className="incident-review">
               <header>
                 <span className={`badge attendance-${statusTone[selectedIncident.status]}`}>
-                  {statusLabels[selectedIncident.status] || selectedIncident.status}
+                  {t(statusLabels[selectedIncident.status] || selectedIncident.status)}
                 </span>
-                <h2>{selectedIncident.title || typeLabel(selectedIncident.incident_type)}</h2>
-                <p>{selectedIncident.description || payloadValue(selectedIncident.payload, "motivo") || "Sin descripcion"}</p>
+                <h2>{selectedIncident.title || typeLabel(selectedIncident.incident_type, t)}</h2>
+                <p>{selectedIncident.description || payloadValue(selectedIncident.payload, "motivo") || t("Sin descripcion")}</p>
               </header>
 
               <dl className="incident-facts">
-                <div><dt>Empleado</dt><dd>{selectedIncident.employee || "-"}</dd></div>
-                <div><dt>Equipo</dt><dd>{selectedIncident.device || "-"}</dd></div>
-                <div><dt>Solicitada</dt><dd>{formatDateTime(selectedIncident.requested_at)}</dd></div>
-                <div><dt>Problema</dt><dd>{payloadValue(selectedIncident.payload, "problema") || typeLabel(selectedIncident.incident_type)}</dd></div>
+                <div><dt>{t("Empleado")}</dt><dd>{selectedIncident.employee || "-"}</dd></div>
+                <div><dt>{t("Equipo")}</dt><dd>{selectedIncident.device || "-"}</dd></div>
+                <div><dt>{t("Solicitada")}</dt><dd>{formatDateTime(selectedIncident.requested_at)}</dd></div>
+                <div><dt>{t("Problema")}</dt><dd>{payloadValue(selectedIncident.payload, "problema") || typeLabel(selectedIncident.incident_type, t)}</dd></div>
                 {selectedIncident.time_adjustment ? (
                   <>
-                    <div><dt>Tiempo justificado</dt><dd>{formatDuration(selectedIncident.time_adjustment.seconds)}</dd></div>
-                    <div><dt>Impacto</dt><dd>{selectedIncident.time_adjustment.status === "active" ? "Activo neutral" : "Anulado"}</dd></div>
+                    <div><dt>{t("Tiempo justificado")}</dt><dd>{formatDuration(selectedIncident.time_adjustment.seconds)}</dd></div>
+                    <div><dt>{t("Impacto")}</dt><dd>{selectedIncident.time_adjustment.status === "active" ? t("Activo neutral") : t("Anulado")}</dd></div>
                   </>
                 ) : null}
               </dl>
 
               {evidenceRows(selectedIncident).length ? (
                 <section className="incident-evidence">
-                  <h3>Evidencia tecnica</h3>
+                  <h3>{t("Evidencia tecnica")}</h3>
                   {evidenceRows(selectedIncident).map(([label, value]) => (
                     <div key={label}>
-                      <span>{label}</span>
+                      <span>{t(label)}</span>
                       <strong>{String(value)}</strong>
                     </div>
                   ))}
@@ -293,32 +331,53 @@ export function IncidentsPanel({ active = true }: { active?: boolean }) {
 
               <form className="incident-resolution" onSubmit={resolveIncident}>
                 <label>
-                  Resolucion
+                  {t("Resolucion")}
                   <select
                     value={resolutionStatus}
-                    onChange={(event) => setResolutionStatus(event.target.value as IncidentStatus)}
+                    onChange={(event) => {
+                      setResolutionStatus(event.target.value as IncidentStatus);
+                      setConfirmResolution(false);
+                    }}
                   >
-                    <option value="approved">Aprobar</option>
-                    <option value="rejected">Rechazar</option>
-                    <option value="closed">Cerrar sin ajuste</option>
+                    <option value="approved">{t("Aprobar")}</option>
+                    <option value="rejected">{t("Rechazar")}</option>
+                    <option value="closed">{t("Cerrar sin ajuste")}</option>
                   </select>
                 </label>
                 <label>
-                  Nota
+                  {t("Nota")}
                   <textarea
                     value={resolutionNotes}
-                    onChange={(event) => setResolutionNotes(event.target.value)}
-                    placeholder="Resultado de la revision"
+                    onChange={(event) => {
+                      setResolutionNotes(event.target.value);
+                      setConfirmResolution(false);
+                    }}
+                    placeholder={t("Resultado de la revision")}
                     rows={4}
                   />
                 </label>
+                <section className={`resolution-impact resolution-impact-${resolutionStatus}`}>
+                  <span>{t("Impacto previsto")}</span>
+                  <strong>{resolutionImpactText(selectedIncident, resolutionStatus, t)}</strong>
+                  <small>
+                    {resolutionStatus === "approved"
+                      ? t("El ajuste aparecera como neutral justificado, no como productividad artificial.")
+                      : t("La decision quedara auditada con la nota de revision.")}
+                  </small>
+                </section>
+                {confirmResolution ? (
+                  <div className="resolution-confirm">
+                    <strong>{t("Confirmar decision")}</strong>
+                    <span>{t("Revisa que la nota y el impacto previsto sean correctos.")}</span>
+                  </div>
+                ) : null}
                 <button className="secondary-button" type="submit" disabled={loading}>
-                  Guardar resolucion
+                  {confirmResolution ? t("Confirmar y guardar") : t("Revisar impacto")}
                 </button>
               </form>
             </div>
           ) : (
-            <EmptyState>Selecciona una incidencia para revisar.</EmptyState>
+            <EmptyState>{t("Selecciona una incidencia para revisar.")}</EmptyState>
           )}
         </Panel>
       </section>

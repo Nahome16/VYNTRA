@@ -1,4 +1,7 @@
+"use client";
+
 import { ReactNode } from "react";
+import { useT } from "@/components/preferences-provider";
 
 export function StatCard({
   label,
@@ -47,7 +50,11 @@ export function EmptyState({ children }: { children: ReactNode }) {
 }
 
 export function StatusLine({ children }: { children: ReactNode }) {
-  return <span className="status-line">{children}</span>;
+  return (
+    <span className="status-line" role="status" aria-live="polite">
+      {children}
+    </span>
+  );
 }
 
 export function RefreshButton({
@@ -57,9 +64,10 @@ export function RefreshButton({
   loading: boolean;
   onClick: () => void;
 }) {
+  const t = useT();
   return (
     <button className="secondary-button" onClick={onClick} disabled={loading}>
-      {loading ? "Actualizando" : "Actualizar"}
+      {loading ? t("Actualizando") : t("Actualizar")}
     </button>
   );
 }

@@ -3,6 +3,7 @@ __pycache__/
 *.pyo
 *.pyd
 rules_cache.json
+config.ini
 
 # Local credentials and tokens
 token.json

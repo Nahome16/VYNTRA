@@ -42,6 +42,7 @@ from app.config import settings
 from app.database import Base, engine, get_db, SessionLocal
 from app.models import (
     Activity,
+    AdminSession,
     AppCatalog,
     AuditLog,
     Company,
@@ -56,6 +57,7 @@ from app.models import (
     EvidenceUploadAttempt,
     Incident,
     LoginAttempt,
+    LoginLockout,
     Position,
     ProductivityBlock,
     ProductivityRule,
@@ -283,6 +285,9 @@ class DeviceRotateTokenPayload(StrictPayload):
     reason: str | None = Field(default=None, max_length=180)
 
 
+LOGIN_LOCKOUT_THRESHOLD = 5
+LOGIN_LOCKOUT_MINUTES = 15
+
 RATE_LIMITS = {
     ("POST", "/api/admin/login"): (8, 300),
     ("POST", "/api/station/login"): (20, 300),
@@ -488,6 +493,83 @@ def hash_password(password: str) -> str:
 
 def generate_restore_code() -> str:
     return "-".join(secrets.token_hex(2).upper() for _ in range(3))
+
+
+def current_lockout(db: Session, email: str, ip_address: str) -> LoginLockout | None:
+    return db.execute(
+        select(LoginLockout).where(
+            LoginLockout.email_attempted == email,
+            LoginLockout.ip_address == ip_address[:45],
+        )
+    ).scalar_one_or_none()
+
+
+def assert_not_locked_out(db: Session, email: str, ip_address: str):
+    lockout = current_lockout(db, email, ip_address)
+    if lockout and lockout.locked_until and lockout.locked_until > now_utc():
+        retry_after = max(1, int((lockout.locked_until - now_utc()).total_seconds()))
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
+def record_admin_login_result(db: Session, email: str, ip_address: str, success: bool):
+    db.add(
+        LoginAttempt(
+            email_attempted=email,
+            ip_address=ip_address[:45],
+            success=success,
+        )
+    )
+    lockout = current_lockout(db, email, ip_address)
+    if success:
+        if lockout is not None:
+            db.delete(lockout)
+        return
+
+    if lockout is None:
+        lockout = LoginLockout(email_attempted=email, ip_address=ip_address[:45], failed_count=0)
+        db.add(lockout)
+    lockout.failed_count += 1
+    lockout.updated_at = now_utc()
+    if lockout.failed_count >= LOGIN_LOCKOUT_THRESHOLD:
+        lockout.locked_until = now_utc() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+
+
+def revoke_admin_sessions(
+    db: Session,
+    user_id: str,
+    *,
+    actor_id: str | None,
+    reason: str,
+    exclude_session_id: str | None = None,
+) -> int:
+    current_time = now_utc()
+    query = select(AdminSession).where(
+        AdminSession.user_id == user_id,
+        AdminSession.revoked_at.is_(None),
+        AdminSession.expires_at > current_time,
+    )
+    if exclude_session_id:
+        query = query.where(AdminSession.id != exclude_session_id)
+    sessions = db.execute(query).scalars().all()
+    for session in sessions:
+        session.revoked_at = current_time
+    if sessions:
+        target_user = db.get(User, user_id)
+        db.add(
+            AuditLog(
+                company_id=target_user.company_id if target_user else None,
+                user_id=actor_id,
+                action="admin_sessions_revoked",
+                entity_type="user",
+                entity_id=user_id,
+                payload_json=json_text({"reason": clean_text(reason, 180), "count": len(sessions)}),
+            )
+        )
+    return len(sessions)
 
 
 def public_app_line() -> str:
@@ -2403,6 +2485,15 @@ def serialize_system_company(db: Session, company: Company) -> dict:
 def serialize_panel_user(db: Session, user: User) -> dict:
     role = db.get(Role, user.role_id) if user.role_id else None
     company = db.get(Company, user.company_id)
+    active_sessions = db.execute(
+        select(func.count())
+        .select_from(AdminSession)
+        .where(
+            AdminSession.user_id == user.id,
+            AdminSession.revoked_at.is_(None),
+            AdminSession.expires_at > now_utc(),
+        )
+    ).scalar_one()
     return {
         "id": user.id,
         "company_id": user.company_id,
@@ -2414,6 +2505,7 @@ def serialize_panel_user(db: Session, user: User) -> dict:
         "status": user.status,
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+        "active_sessions": int(active_sessions or 0),
     }
 
 
@@ -2469,6 +2561,7 @@ def admin_login(
     client_ip_address = client_ip(request)
     if not email or not password:
         raise HTTPException(status_code=400, detail="Missing credentials")
+    assert_not_locked_out(db, email, client_ip_address)
 
     user = db.execute(
         select(User).where(
@@ -2483,6 +2576,7 @@ def admin_login(
         or role_name not in ROLE_PERMISSIONS
         or not verify_password_hash(password, user.password_hash)
     ):
+        record_admin_login_result(db, email, client_ip_address, False)
         db.add(
             AuditLog(
                 company_id=user.company_id if user else None,
@@ -2497,7 +2591,21 @@ def admin_login(
         db.commit()
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    user.last_login_at = now_utc()
+    now = now_utc()
+    expires_at = now + timedelta(minutes=settings.admin_token_expire_minutes)
+    session = AdminSession(
+        user_id=user.id,
+        company_id=user.company_id,
+        issued_at=now,
+        expires_at=expires_at,
+        last_seen_at=now,
+        ip_address=client_ip_address[:80],
+        user_agent=(request.headers.get("user-agent") or "")[:255],
+    )
+    user.last_login_at = now
+    db.add(session)
+    db.flush()
+    record_admin_login_result(db, email, client_ip_address, True)
     db.add(
         AuditLog(
             company_id=user.company_id,
@@ -2506,10 +2614,10 @@ def admin_login(
             entity_type="user",
             entity_id=user.id,
             ip_address=client_ip_address[:80],
-            payload_json=json_text({"email": email}),
+            payload_json=json_text({"email": email, "session_id": session.id}),
         )
     )
-    token = create_admin_access_token(user, role_name)
+    token = create_admin_access_token(user, role_name, session.id)
     db.commit()
     db.refresh(user)
     return {
@@ -2550,6 +2658,29 @@ def admin_me(
         "auth_method": admin.auth_method,
         "user": serialize_admin_user(db, user, admin.role),
     }
+
+
+@app.post("/api/admin/logout")
+def admin_logout(
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    if admin.session_id:
+        session = db.get(AdminSession, admin.session_id)
+        if session and session.revoked_at is None:
+            session.revoked_at = now_utc()
+            db.add(
+                AuditLog(
+                    company_id=admin.company_id,
+                    user_id=admin.user_id,
+                    action="admin_logout",
+                    entity_type="admin_session",
+                    entity_id=session.id,
+                    payload_json=json_text({"email": admin.email}),
+                )
+            )
+            db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/admin/company-notice")
@@ -2881,6 +3012,13 @@ def update_system_panel_user(
         if user.id == admin.user_id and next_status != "active":
             raise HTTPException(status_code=400, detail="Cannot deactivate your own system session")
         user.status = next_status
+        if next_status != "active":
+            revoke_admin_sessions(
+                db,
+                user.id,
+                actor_id=admin.user_id,
+                reason="Usuario desactivado por administrador del sistema",
+            )
 
     db.add(
         AuditLog(
@@ -2921,6 +3059,13 @@ def reset_system_panel_user_password(
     password = generate_password()
     user.password_hash = hash_password(password)
     user.status = "active"
+    revoked_count = revoke_admin_sessions(
+        db,
+        user.id,
+        actor_id=admin.user_id,
+        reason=clean_text(payload.reason, 180) or "Reset de contrasena del panel",
+        exclude_session_id=admin.session_id if user.id == admin.user_id else None,
+    )
     db.add(
         AuditLog(
             company_id=user.company_id,
@@ -2928,7 +3073,13 @@ def reset_system_panel_user_password(
             action="system_panel_user_password_reset",
             entity_type="user",
             entity_id=user.id,
-            payload_json=json_text({"email": user.email, "reason": clean_text(payload.reason, 180)}),
+            payload_json=json_text(
+                {
+                    "email": user.email,
+                    "reason": clean_text(payload.reason, 180),
+                    "revoked_sessions": revoked_count,
+                }
+            ),
         )
     )
     db.commit()
@@ -2957,7 +3108,34 @@ def reset_system_panel_user_password(
     }
     if allow_local_testing_secrets():
         credentials["password"] = password
-    return {"ok": True, "user": serialize_panel_user(db, user), "credentials": credentials}
+    return {
+        "ok": True,
+        "user": serialize_panel_user(db, user),
+        "credentials": credentials,
+        "revoked_sessions": revoked_count,
+    }
+
+
+@app.post("/api/system/users/{user_id}/revoke-sessions")
+def revoke_system_panel_user_sessions(
+    user_id: str,
+    payload: SystemUserPasswordResetPayload = Body(default_factory=SystemUserPasswordResetPayload),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Panel user not found")
+    revoked_count = revoke_admin_sessions(
+        db,
+        user.id,
+        actor_id=admin.user_id,
+        reason=clean_text(payload.reason, 180) or "Revocacion manual desde consola sistema",
+        exclude_session_id=admin.session_id if user.id == admin.user_id else None,
+    )
+    db.commit()
+    return {"ok": True, "user": serialize_panel_user(db, user), "revoked_sessions": revoked_count}
 
 
 @app.get("/api/devices")

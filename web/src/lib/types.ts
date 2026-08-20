@@ -39,6 +39,7 @@ export type PanelUser = {
   status: string;
   created_at: string | null;
   last_login_at: string | null;
+  active_sessions?: number;
 };
 
 export type SystemOverviewResponse = {

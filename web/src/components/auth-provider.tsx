@@ -103,11 +103,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    const currentToken = window.localStorage.getItem(tokenKey) || token;
+    if (currentToken) {
+      void fetch("/api/admin/logout", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${currentToken}`,
+        },
+      }).catch(() => undefined);
+    }
     setToken("");
     setUser(null);
     window.localStorage.removeItem(tokenKey);
     window.localStorage.removeItem(userKey);
-  }, []);
+  }, [token]);
 
   const requestAuthorized = useCallback(
     async <T,>(path: string, init: RequestInit = {}) => {

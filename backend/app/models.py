@@ -98,6 +98,22 @@ class User(Base):
     role: Mapped[Role | None] = relationship(back_populates="users")
 
 
+class AdminSession(Base):
+    __tablename__ = "admin_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), nullable=False)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ip_address: Mapped[str] = mapped_column(String(80), nullable=False, default="")
+    user_agent: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+    user: Mapped[User] = relationship()
+
+
 class Employee(Base):
     __tablename__ = "employees"
     __table_args__ = (UniqueConstraint("company_id", "employee_code", name="uq_employee_company_code"),)

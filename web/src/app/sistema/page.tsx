@@ -210,13 +210,33 @@ export default function SystemPage() {
       const response = await apiPost<{
         user: PanelUser;
         credentials: { email: string; password?: string; delivery_status?: string };
+        revoked_sessions?: number;
       }>(`/api/system/users/${selectedUserId}/reset-password`, { reason: resetReason || "Reset solicitado por administrador del sistema" });
       setUsers((current) => current.map((row) => (row.id === response.user.id ? response.user : row)));
       setGeneratedCredential(response.credentials);
       loadPanelUser(response.user);
-      setStatusText(deliveryText(response.credentials.delivery_status));
+      setStatusText(`${deliveryText(response.credentials.delivery_status)} Sesiones cerradas: ${response.revoked_sessions || 0}`);
     } catch {
       setStatusText("No se pudo resetear la credencial");
+    }
+  }
+
+  async function revokePanelSessions(targetUserId = selectedUserId) {
+    if (!targetUserId) {
+      setStatusText("Selecciona un usuario del panel");
+      return;
+    }
+    setStatusText("Cerrando sesiones...");
+    try {
+      const response = await apiPost<{
+        user: PanelUser;
+        revoked_sessions: number;
+      }>(`/api/system/users/${targetUserId}/revoke-sessions`, { reason: "Cierre manual desde consola sistema" });
+      setUsers((current) => current.map((row) => (row.id === response.user.id ? response.user : row)));
+      loadPanelUser(response.user);
+      setStatusText(`Sesiones cerradas: ${response.revoked_sessions}`);
+    } catch {
+      setStatusText("No se pudieron cerrar las sesiones");
     }
   }
 
@@ -466,6 +486,9 @@ export default function SystemPage() {
               <button type="button" className="secondary-button danger" onClick={() => void resetPanelPassword()} disabled={!selectedUserId}>
                 Resetear contrasena
               </button>
+              <button type="button" className="secondary-button" onClick={() => void revokePanelSessions()} disabled={!selectedUserId}>
+                Cerrar sesiones
+              </button>
             </div>
           </Panel>
         </div>
@@ -479,6 +502,7 @@ export default function SystemPage() {
                   <th>Empresa</th>
                   <th>Rol</th>
                   <th>Estado</th>
+                  <th>Sesiones</th>
                   <th>Ultimo ingreso</th>
                   <th />
                 </tr>
@@ -490,11 +514,17 @@ export default function SystemPage() {
                     <td>{row.company}</td>
                     <td>{roleLabels[row.role] || row.role}</td>
                     <td><span className={badgeClass(row.status)}>{row.status}</span></td>
+                    <td>{row.active_sessions || 0}</td>
                     <td>{row.last_login_at ? new Date(row.last_login_at).toLocaleString("es-NI") : "Sin ingreso"}</td>
                     <td>
-                      <button className="row-action" type="button" onClick={() => loadPanelUser(row)}>
-                        Editar
-                      </button>
+                      <div className="settings-row-actions">
+                        <button className="row-action" type="button" onClick={() => loadPanelUser(row)}>
+                          Editar
+                        </button>
+                        <button className="row-action" type="button" onClick={() => void revokePanelSessions(row.id)}>
+                          Cerrar
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

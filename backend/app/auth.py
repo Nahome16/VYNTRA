@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.config import settings
-from app.models import Device, Role, User, now_utc
+from app.models import AdminSession, Device, Role, User, now_utc
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,7 @@ class AdminPrincipal:
     email: str
     role: str
     auth_method: str
+    session_id: str | None = None
 
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
@@ -132,7 +133,7 @@ def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode((value + padding).encode("ascii"))
 
 
-def create_admin_access_token(user: User, role_name: str) -> str:
+def create_admin_access_token(user: User, role_name: str, session_id: str) -> str:
     if not settings.jwt_secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -146,6 +147,7 @@ def create_admin_access_token(user: User, role_name: str) -> str:
         "company_id": user.company_id,
         "email": user.email,
         "role": role_name,
+        "jti": session_id,
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(minutes=settings.admin_token_expire_minutes)).timestamp()),
     }
@@ -257,7 +259,21 @@ def require_admin(
             )
         role = db.get(Role, user.role_id) if user.role_id else None
         role_name = role.name if role else ""
+        session_id = str(payload.get("jti") or "")
         if user.company_id != payload.get("company_id") or role_name != payload.get("role"):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid admin session",
+            )
+        session = db.get(AdminSession, session_id)
+        current_time = now_utc()
+        if (
+            session is None
+            or session.user_id != user.id
+            or session.company_id != user.company_id
+            or session.revoked_at is not None
+            or session.expires_at <= current_time
+        ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid admin session",
@@ -267,12 +283,15 @@ def require_admin(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions",
             )
+        session.last_seen_at = current_time
+        db.commit()
         return AdminPrincipal(
             user_id=user.id,
             company_id=user.company_id,
             email=user.email,
             role=role_name,
             auth_method="jwt",
+            session_id=session.id,
         )
 
     if not settings.allow_legacy_admin_token:

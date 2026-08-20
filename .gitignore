@@ -11,6 +11,7 @@ credentials.previous.json
 
 # Backend secrets and runtime data
 backend/.env
+backend/.env.production
 backend/.certs/
 backend/storage/
 backend/data/

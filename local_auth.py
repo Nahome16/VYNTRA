@@ -23,6 +23,8 @@ Usuarios de pruebas:
 import base64
 import hashlib
 import datetime
+import getpass
+import socket
 
 import requests
 
@@ -81,6 +83,55 @@ def autenticar_credenciales(correo: str, password: str, cfg, agent_version: str 
     device_token = str(getattr(cfg, "evidence_device_token", "") or "").strip()
     timeout = int(getattr(cfg, "evidence_request_timeout", 30) or 30)
     allow_local_fallback = bool(getattr(cfg, "station_auth_allow_local_fallback", False))
+
+    if backend_enabled and base_url and not device_token:
+        try:
+            response = requests.post(
+                f"{base_url}/api/station/enroll",
+                json={
+                    "email": correo,
+                    "password": password or "",
+                    "occurred_at": datetime.datetime.now().isoformat(),
+                    "agent_version": agent_version,
+                    "hostname": socket.gethostname(),
+                    "windows_user": getpass.getuser(),
+                    "device_name": f"{socket.gethostname()}-{getpass.getuser()}",
+                },
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            if allow_local_fallback and verificar_credenciales(correo, password):
+                return {"ok": True, "source": "local_fallback", "email": correo}
+            return {
+                "ok": False,
+                "source": "backend",
+                "reason": "backend_unavailable",
+                "message": str(exc)[:220],
+            }
+
+        if response.status_code < 400:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = {}
+            token = ((payload.get("device") or {}).get("token") or "").strip()
+            if token and hasattr(cfg, "save_device_token"):
+                cfg.save_device_token(token)
+            return {
+                "ok": True,
+                "source": "backend",
+                "email": correo,
+                "payload": payload,
+                "enrolled": bool(token),
+            }
+        if allow_local_fallback and response.status_code >= 500 and verificar_credenciales(correo, password):
+            return {"ok": True, "source": "local_fallback", "email": correo}
+        return {
+            "ok": False,
+            "source": "backend",
+            "reason": "invalid_credentials",
+            "status_code": response.status_code,
+        }
 
     if backend_enabled and base_url and device_token:
         try:

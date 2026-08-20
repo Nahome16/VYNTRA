@@ -21,7 +21,7 @@ try {
     Invoke-Expression "$Python -m pip install pyinstaller"
 
     Write-Host "Compiling VYNTRA agent..."
-    Invoke-Expression "$Python -m PyInstaller vyntra_agent.spec --clean"
+    Invoke-Expression "$Python -m PyInstaller vyntra_agent.spec --clean --noconfirm"
 } finally {
     if ($generatedBuildConfig -and (Test-Path -LiteralPath $rootConfig)) {
         Remove-Item -LiteralPath $rootConfig -Force

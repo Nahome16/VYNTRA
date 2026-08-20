@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import smtplib
+import socket
 import tempfile
 from time import monotonic
 from typing import Literal
@@ -110,6 +111,12 @@ class StationLoginPayload(StrictPayload):
     password: str = Field(..., min_length=1, max_length=256)
     occurred_at: str | None = Field(default=None, max_length=40)
     agent_version: str | None = Field(default=None, max_length=40)
+
+
+class StationEnrollPayload(StationLoginPayload):
+    hostname: str | None = Field(default=None, max_length=160)
+    windows_user: str | None = Field(default=None, max_length=160)
+    device_name: str | None = Field(default=None, max_length=160)
 
 
 class StationPasswordChangePayload(StrictPayload):
@@ -290,6 +297,7 @@ LOGIN_LOCKOUT_MINUTES = 15
 
 RATE_LIMITS = {
     ("POST", "/api/admin/login"): (8, 300),
+    ("POST", "/api/station/enroll"): (10, 300),
     ("POST", "/api/station/login"): (20, 300),
     ("POST", "/api/station/password/change"): (8, 300),
     ("POST", "/api/station/password-reset/request"): (5, 300),
@@ -1934,6 +1942,24 @@ def find_employee_credential(
     ).scalar_one_or_none()
 
 
+def authenticate_employee_credential(
+    db: Session,
+    company_id: str,
+    email: str,
+    password: str,
+) -> tuple[EmployeeCredential | None, Employee | None, bool]:
+    credential = find_employee_credential(db, company_id, email)
+    employee = db.get(Employee, credential.employee_id) if credential else None
+    success = (
+        credential is not None
+        and employee is not None
+        and credential.status == "active"
+        and employee.status == "active"
+        and verify_password_hash(password, credential.password_hash)
+    )
+    return credential, employee, success
+
+
 def store_station_login_event(
     db: Session,
     device: Device,
@@ -3329,6 +3355,176 @@ def rotate_device_token(
     }
 
 
+@app.post("/api/station/enroll")
+def station_enroll(
+    request: Request,
+    payload: StationEnrollPayload,
+    db: Session = Depends(get_db),
+):
+    email = clean_text(payload.email or payload.correo, 180).lower()
+    password = payload.password
+    occurred_at = parse_optional_client_datetime(payload.occurred_at) or now_utc()
+    client_ip_address = client_ip(request)
+    if not email or not password:
+        db.add(LoginAttempt(email_attempted=email, ip_address=client_ip_address[:45], success=False))
+        db.commit()
+        raise HTTPException(status_code=400, detail="Missing credentials")
+
+    credentials = db.execute(
+        select(EmployeeCredential).where(EmployeeCredential.email == email)
+    ).scalars().all()
+    credential = credentials[0] if credentials else None
+    employee = db.get(Employee, credential.employee_id) if credential else None
+    company = db.get(Company, credential.company_id) if credential else None
+    success = False
+    for candidate in credentials:
+        candidate_employee = db.get(Employee, candidate.employee_id)
+        candidate_company = db.get(Company, candidate.company_id)
+        if (
+            candidate_employee is not None
+            and candidate_company is not None
+            and candidate.status == "active"
+            and candidate_employee.status == "active"
+            and candidate_company.status == "active"
+            and verify_password_hash(password, candidate.password_hash)
+        ):
+            credential = candidate
+            employee = candidate_employee
+            company = candidate_company
+            success = True
+            break
+
+    db.add(LoginAttempt(email_attempted=email, ip_address=client_ip_address[:45], success=success))
+    if not success:
+        db.add(
+            StationLoginEvent(
+                company_id=credential.company_id if credential else None,
+                employee_id=credential.employee_id if credential else None,
+                credential_id=credential.id if credential else None,
+                device_id=None,
+                email_attempted=email,
+                success=False,
+                failure_reason="invalid_credentials",
+                occurred_at=occurred_at,
+                ip_address=client_ip_address[:80],
+                payload_json=json_text({"email": email, "auth_source": "enroll", "agent_version": clean_text(payload.agent_version, 40)}),
+            )
+        )
+        db.commit()
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    hostname = clean_text(payload.hostname, 160) or clean_text(socket.gethostname(), 160)
+    windows_user = clean_text(payload.windows_user, 160)
+    raw_device_name = clean_text(payload.device_name, 160) or hostname
+    if windows_user and windows_user.lower() not in raw_device_name.lower():
+        raw_device_name = f"{raw_device_name}-{windows_user}"
+    base_name = clean_text(raw_device_name, 140) or f"PC-{employee.employee_code}"
+    device_name = base_name
+    suffix = 2
+    while True:
+        existing = db.execute(
+            select(Device).where(
+                Device.company_id == company.id,
+                func.lower(Device.name) == device_name.lower(),
+            )
+        ).scalar_one_or_none()
+        if existing is None or existing.employee_id == employee.id:
+            device = existing
+            break
+        device_name = clean_text(f"{base_name}-{suffix}", 160)
+        suffix += 1
+
+    token = generate_device_token()
+    while db.execute(select(Device).where(Device.token_sha256 == hash_token(token))).scalar_one_or_none():
+        token = generate_device_token()
+
+    agent_version = clean_text(payload.agent_version or "unknown", 40) or "unknown"
+    if device is None:
+        device = Device(
+            company_id=company.id,
+            employee_id=employee.id,
+            name=device_name,
+            hostname=hostname,
+            location=windows_user,
+            token_sha256=hash_token(token),
+            is_active=True,
+            agent_version=agent_version,
+            last_seen_at=occurred_at,
+        )
+        db.add(device)
+        db.flush()
+        action = "device_enrolled"
+    else:
+        device.employee_id = employee.id
+        device.hostname = hostname
+        device.location = windows_user
+        device.token_sha256 = hash_token(token)
+        device.is_active = True
+        device.agent_version = agent_version
+        device.last_seen_at = occurred_at
+        action = "device_reenrolled"
+
+    credential.last_login_at = occurred_at
+    db.add(
+        StationLoginEvent(
+            company_id=company.id,
+            employee_id=employee.id,
+            credential_id=credential.id,
+            device_id=device.id,
+            email_attempted=email,
+            success=True,
+            failure_reason="",
+            occurred_at=occurred_at,
+            ip_address=client_ip_address[:80],
+            payload_json=json_text({"email": email, "auth_source": "enroll", "agent_version": agent_version}),
+        )
+    )
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            device_id=device.id,
+            action=action,
+            entity_type="device",
+            entity_id=device.id,
+            ip_address=client_ip_address[:80],
+            payload_json=json_text(
+                {
+                    "employee_id": employee.id,
+                    "email": email,
+                    "hostname": hostname,
+                    "windows_user": windows_user,
+                    "agent_version": agent_version,
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(device)
+
+    return {
+        "ok": True,
+        "company": {"id": company.id},
+        "employee": {
+            "id": employee.id,
+            "employee_code": employee.employee_code,
+            "full_name": employee.full_name,
+            "email": employee.email,
+            "department_id": employee.department_id,
+            "position_id": employee.position_id,
+        },
+        "credential": {
+            "id": credential.id,
+            "email": credential.email,
+            "password_change_required": bool(credential.password_change_required),
+        },
+        "device": {
+            "id": device.id,
+            "name": device.name,
+            "token": token,
+        },
+    }
+
+
 @app.post("/api/station/login")
 def station_login(
     request: Request,
@@ -3369,15 +3565,7 @@ def station_login(
         db.commit()
         raise HTTPException(status_code=400, detail="Missing credentials")
 
-    credential = find_employee_credential(db, device.company_id, email)
-    employee = db.get(Employee, credential.employee_id) if credential else None
-    success = (
-        credential is not None
-        and employee is not None
-        and credential.status == "active"
-        and employee.status == "active"
-        and verify_password_hash(password, credential.password_hash)
-    )
+    credential, employee, success = authenticate_employee_credential(db, device.company_id, email, password)
 
     db.add(
         LoginAttempt(

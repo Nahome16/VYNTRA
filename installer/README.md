@@ -80,14 +80,12 @@ La evidencia debe subirse al backend VYNTRA usando `EvidenceBackend`.
 
 ## Paquete final por equipo
 
-Para entregar un ZIP listo para una PC monitoreada, primero crea el dispositivo
-en el panel web y copia su `DeviceToken`. Luego ejecuta:
+Para entregar un ZIP listo para las PCs monitoreadas de una empresa, ejecuta:
 
 ```powershell
 .\installer\prepare_agent_package.ps1 `
   -CompanyName "InsureMeBetter" `
   -ContactEmail "rrhh@insuremebetter.com" `
-  -DeviceToken "TOKEN_REAL_DEL_DISPOSITIVO" `
   -Build
 ```
 
@@ -104,5 +102,9 @@ El ZIP incluye:
 - `VYNTRAAgent\`: agente compilado con `config.ini` de produccion.
 - `LEEME-INSTALACION.txt`: pasos para instalar y validar.
 
-Cada equipo debe tener un paquete/token unico. No reutilizar el mismo ZIP en
-varias PCs.
+El paquete es generico por empresa. En el primer inicio de sesion, el agente
+valida las credenciales del empleado contra el backend, registra la PC y guarda
+un `DeviceToken` unico localmente en esa instalacion.
+
+Si necesitas preparar un paquete tecnico ya enrolado para una PC especifica,
+puedes pasar `-DeviceToken`, pero el flujo recomendado es enrolamiento automatico.

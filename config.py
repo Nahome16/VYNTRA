@@ -19,10 +19,11 @@ def _base_dir() -> str:
 class Config:
     def __init__(self):
         base = _base_dir()
-        ruta_ini = os.path.join(base, "config.ini")
+        self.base_dir = base
+        self.config_path = os.path.join(base, "config.ini")
 
         parser = configparser.ConfigParser()
-        parser.read(ruta_ini, encoding="utf-8")
+        parser.read(self.config_path, encoding="utf-8")
 
         self.server_url = parser.get(
             "Server", "Url", fallback="https://localhost:7168"
@@ -81,3 +82,18 @@ class Config:
             "Telemetria", "IdleUmbralSegundos", fallback=60
         )
         self.admin_pin = parser.get("Admin", "PIN", fallback="1234")
+
+    def save_device_token(self, token: str):
+        clean_token = (token or "").strip()
+        if not clean_token:
+            return
+        parser = configparser.ConfigParser()
+        parser.read(self.config_path, encoding="utf-8")
+        if not parser.has_section("EvidenceBackend"):
+            parser.add_section("EvidenceBackend")
+        parser.set("EvidenceBackend", "Enabled", "true")
+        parser.set("EvidenceBackend", "DeviceToken", clean_token)
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            parser.write(f)
+        self.evidence_backend_enabled = True
+        self.evidence_device_token = clean_token

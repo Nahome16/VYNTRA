@@ -5,8 +5,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ContactEmail,
 
-    [Parameter(Mandatory = $true)]
-    [string]$DeviceToken,
+    [string]$DeviceToken = "",
 
     [string]$ApiUrl = "https://api.vyntralab.com",
     [string]$AgentVersion = "1.1.0",
@@ -19,10 +18,7 @@ $ErrorActionPreference = "Stop"
 
 function Assert-CleanToken {
     param([string]$Token)
-    if (-not $Token.Trim()) {
-        throw "DeviceToken es requerido. Crealo en Dispositivos y copialo aqui."
-    }
-    if ($Token -match "TOKEN_UNICO|CAMBIAR|placeholder") {
+    if ($Token.Trim() -and $Token -match "TOKEN_UNICO|CAMBIAR|placeholder") {
         throw "DeviceToken parece ser un placeholder. Usa el token real del dispositivo."
     }
 }
@@ -177,8 +173,8 @@ Pasos para instalar:
 6. En el panel web revisa Dispositivos: debe actualizar last_seen_at.
 
 Notas:
-- Este paquete es por equipo. No reutilices el mismo ZIP en varias PCs.
-- Cada PC debe tener un DeviceToken unico.
+- Este paquete es generico y puede instalarse en varias PCs de la empresa.
+- En el primer inicio de sesion, VYNTRA registra automaticamente la PC y guarda un DeviceToken unico.
 - No incluye credenciales de Google Drive ni secretos del panel.
 - Para quitarlo, ejecuta "Desinstalar VYNTRA.ps1".
 "@

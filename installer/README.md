@@ -77,3 +77,32 @@ El instalador de produccion no debe incluir:
 - credenciales de Google Drive
 
 La evidencia debe subirse al backend VYNTRA usando `EvidenceBackend`.
+
+## Paquete final por equipo
+
+Para entregar un ZIP listo para una PC monitoreada, primero crea el dispositivo
+en el panel web y copia su `DeviceToken`. Luego ejecuta:
+
+```powershell
+.\installer\prepare_agent_package.ps1 `
+  -CompanyName "InsureMeBetter" `
+  -ContactEmail "rrhh@insuremebetter.com" `
+  -DeviceToken "TOKEN_REAL_DEL_DISPOSITIVO" `
+  -Build
+```
+
+El script genera:
+
+```text
+release\VYNTRAAgent-InsureMeBetter.zip
+```
+
+El ZIP incluye:
+
+- `Instalar VYNTRA.cmd`: instalador simple para el usuario/soporte.
+- `Instalar VYNTRA.ps1`: instalador PowerShell.
+- `VYNTRAAgent\`: agente compilado con `config.ini` de produccion.
+- `LEEME-INSTALACION.txt`: pasos para instalar y validar.
+
+Cada equipo debe tener un paquete/token unico. No reutilizar el mismo ZIP en
+varias PCs.

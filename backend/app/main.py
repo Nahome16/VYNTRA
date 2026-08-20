@@ -2166,6 +2166,14 @@ def bootstrap_data():
 
         seed_organization_catalogs(db, company.id)
         seed_company_settings(db, company.id)
+        if settings.bootstrap_employee_limit > 0:
+            set_company_setting(
+                db,
+                company.id,
+                "employee_limit",
+                str(settings.bootstrap_employee_limit),
+                "Limite comercial de usuarios monitoreados; 0 significa sin limite.",
+            )
 
         admin_user = db.execute(
             select(User).where(

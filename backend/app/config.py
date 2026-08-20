@@ -55,6 +55,7 @@ class Settings:
     smtp_timeout_seconds: int = int(os.environ.get("SMTP_TIMEOUT_SECONDS", "10"))
     app_public_url: str = os.environ.get("APP_PUBLIC_URL", "")
     bootstrap_company_name: str = os.environ.get("BOOTSTRAP_COMPANY_NAME", "VYNTRA Demo")
+    bootstrap_employee_limit: int = int(os.environ.get("BOOTSTRAP_EMPLOYEE_LIMIT", "0"))
     bootstrap_admin_email: str = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "admin@vyntra.local")
     bootstrap_admin_name: str = os.environ.get("BOOTSTRAP_ADMIN_NAME", "VYNTRA Admin")
     bootstrap_admin_password_hash: str = os.environ.get(

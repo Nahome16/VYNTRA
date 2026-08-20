@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, ReactNode, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Language, STORAGE_KEYS, Theme, translate } from "@/lib/i18n";
 
 type PreferencesValue = {
@@ -29,9 +29,16 @@ function readLanguage(): Language {
 }
 
 export function PreferencesProvider({ children }: { children: ReactNode }) {
-  // El guion de arranque ya fijó los atributos; aquí solo se sincroniza React.
-  const [language, setLanguageState] = useState<Language>(readLanguage);
-  const [theme, setThemeState] = useState<Theme>(readTheme);
+  const [language, setLanguageState] = useState<Language>("es");
+  const [theme, setThemeState] = useState<Theme>("light");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setLanguageState(readLanguage());
+      setThemeState(readTheme());
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const setTheme = useCallback((value: Theme) => {
     setThemeState(value);

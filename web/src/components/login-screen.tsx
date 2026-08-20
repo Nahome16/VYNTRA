@@ -9,13 +9,17 @@ export function LoginScreen() {
   const router = useRouter();
   const { login } = useAuth();
   const { t, theme, toggleTheme, language, toggleLanguage } = usePreferences();
-  const [email, setEmail] = useState("admin@vyntra.local");
-  const [password, setPassword] = useState("Vyntra2026");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!email.trim() || !password) {
+      setStatusText(t("Ingresa correo y contrasena"));
+      return;
+    }
     setLoading(true);
     setStatusText(t("Validando credenciales..."));
     try {
@@ -56,7 +60,7 @@ export function LoginScreen() {
         <form onSubmit={handleLogin} className="login-form">
           <label>
             {t("Correo")}
-            <input value={email} onChange={(event) => setEmail(event.target.value)} />
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
           </label>
           <label>
             {t("Contrasena")}
@@ -64,6 +68,7 @@ export function LoginScreen() {
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
+              required
             />
           </label>
           <button type="submit" disabled={loading}>

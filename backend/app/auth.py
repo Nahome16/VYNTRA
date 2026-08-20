@@ -28,6 +28,97 @@ class AdminPrincipal:
     auth_method: str
 
 
+ROLE_PERMISSIONS: dict[str, set[str]] = {
+    "system_admin": {
+        "system:manage",
+        "dashboard:read",
+        "devices:read",
+        "devices:manage",
+        "employees:read",
+        "employees:manage",
+        "attendance:read",
+        "attendance:manage",
+        "incidents:read",
+        "incidents:resolve",
+        "settings:manage",
+        "rules:read",
+        "rules:manage",
+        "access_codes:read",
+        "access_codes:manage",
+        "audit:read",
+    },
+    "owner": {
+        "dashboard:read",
+        "devices:read",
+        "devices:manage",
+        "employees:read",
+        "employees:manage",
+        "attendance:read",
+        "attendance:manage",
+        "incidents:read",
+        "incidents:resolve",
+        "settings:manage",
+        "rules:read",
+        "rules:manage",
+        "access_codes:read",
+        "access_codes:manage",
+        "audit:read",
+    },
+    "admin": {
+        "dashboard:read",
+        "devices:read",
+        "devices:manage",
+        "employees:read",
+        "employees:manage",
+        "attendance:read",
+        "attendance:manage",
+        "incidents:read",
+        "incidents:resolve",
+        "settings:manage",
+        "rules:read",
+        "rules:manage",
+        "access_codes:read",
+        "access_codes:manage",
+        "audit:read",
+    },
+    "rrhh": {
+        "dashboard:read",
+        "employees:read",
+        "employees:manage",
+        "attendance:read",
+        "attendance:manage",
+        "incidents:read",
+        "incidents:resolve",
+        "access_codes:read",
+        "access_codes:manage",
+    },
+    "supervisor": {
+        "dashboard:read",
+        "employees:read",
+        "attendance:read",
+        "incidents:read",
+    },
+    "viewer": {
+        "dashboard:read",
+        "employees:read",
+        "attendance:read",
+        "incidents:read",
+    },
+}
+
+
+def permissions_for_role(role_name: str) -> list[str]:
+    return sorted(ROLE_PERMISSIONS.get(role_name, set()))
+
+
+def require_permission(admin: AdminPrincipal, permission: str) -> None:
+    if permission not in ROLE_PERMISSIONS.get(admin.role, set()):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission required: {permission}",
+        )
+
+
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -171,7 +262,7 @@ def require_admin(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid admin session",
             )
-        if role_name not in {"admin", "owner", "rrhh", "supervisor", "viewer"}:
+        if role_name not in ROLE_PERMISSIONS:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient permissions",

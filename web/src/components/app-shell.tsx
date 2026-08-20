@@ -18,8 +18,20 @@ const iconProps = {
 
 const navItems = [
   {
+    href: "/sistema",
+    label: "Sistema",
+    permission: "system:manage",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M12 3 4 7v6c0 4 3.2 7.1 8 8 4.8-.9 8-4 8-8V7z" />
+        <path d="M9 12h6M12 9v6" />
+      </svg>
+    ),
+  },
+  {
     href: "/dashboard",
     label: "Dashboard",
+    permission: "dashboard:read",
     icon: (
       <svg {...iconProps}>
         <path d="M3 13h7V3H3zM14 21h7V11h-7zM14 8h7V3h-7zM3 21h7v-5H3z" />
@@ -29,6 +41,7 @@ const navItems = [
   {
     href: "/empleados",
     label: "Empleados",
+    permission: "employees:read",
     icon: (
       <svg {...iconProps}>
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
@@ -40,6 +53,7 @@ const navItems = [
   {
     href: "/asistencia",
     label: "Asistencia",
+    permission: "attendance:read",
     icon: (
       <svg {...iconProps}>
         <rect x="3" y="4" width="18" height="18" rx="2" />
@@ -48,8 +62,43 @@ const navItems = [
     ),
   },
   {
+    href: "/dispositivos",
+    label: "Dispositivos",
+    permission: "devices:read",
+    icon: (
+      <svg {...iconProps}>
+        <rect x="4" y="5" width="16" height="12" rx="2" />
+        <path d="M8 21h8M12 17v4M9 9h6" />
+      </svg>
+    ),
+  },
+  {
+    href: "/incidencias",
+    label: "Incidencias",
+    permission: "incidents:read",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M12 9v4M12 17h.01" />
+        <path d="M10.3 4.3 2.8 17.2A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.8L13.7 4.3a2 2 0 0 0-3.4 0z" />
+      </svg>
+    ),
+  },
+  {
+    href: "/auditoria",
+    label: "Auditoria",
+    permission: "audit:read",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M9 11h6M9 15h6" />
+        <path d="M8 3h8l3 3v15H5V3z" />
+        <path d="M16 3v4h4" />
+      </svg>
+    ),
+  },
+  {
     href: "/ajustes",
     label: "Ajustes",
+    permission: "settings:manage",
     icon: (
       <svg {...iconProps}>
         <circle cx="12" cy="12" r="3" />
@@ -72,14 +121,28 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { ready, user, logout } = useAuth();
+  const { ready, user, logout, apiGet } = useAuth();
   const { t, theme, toggleTheme, language, toggleLanguage } = usePreferences();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [noticeMessages, setNoticeMessages] = useState<Array<{ type: string; message: string }>>([]);
   const darkOn = theme === "dark";
 
   useEffect(() => {
     if (ready && !user) router.replace("/login");
   }, [ready, router, user]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (!ready || !user || user.role === "system_admin") {
+        setNoticeMessages([]);
+        return;
+      }
+      apiGet<{ messages: Array<{ type: string; message: string }> }>("/api/admin/company-notice")
+        .then((response) => setNoticeMessages(response.messages))
+        .catch(() => setNoticeMessages([]));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [apiGet, ready, user]);
 
   if (!ready || !user) {
     return (
@@ -121,7 +184,9 @@ export function AppShell({
         </div>
 
         <nav>
-          {navItems.map((item) => (
+          {navItems
+            .filter((item) => (user.permissions || []).includes(item.permission))
+            .map((item) => (
             <Link
               href={item.href}
               key={item.href}
@@ -201,6 +266,15 @@ export function AppShell({
             {actions ? <div className="page-actions">{actions}</div> : null}
           </div>
         </header>
+        {noticeMessages.length ? (
+          <div className="system-notice-stack" role="status" aria-live="polite">
+            {noticeMessages.map((notice, index) => (
+              <p className={`system-notice system-notice-${notice.type}`} key={`${notice.type}-${index}`}>
+                {notice.message}
+              </p>
+            ))}
+          </div>
+        ) : null}
         {children}
       </section>
     </main>

@@ -3,21 +3,25 @@ main.py - VYNTRA Evidence API.
 """
 
 from collections import defaultdict, deque
+import csv
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 import base64
+import io
 import hashlib
 import json
 import math
 import os
 import re
 import secrets
+import smtplib
 import tempfile
 from time import monotonic
 from typing import Literal
 
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -25,10 +29,13 @@ from sqlalchemy.orm import Session
 
 from app.auth import (
     AdminPrincipal,
+    ROLE_PERMISSIONS,
     create_admin_access_token,
     hash_token,
+    permissions_for_role,
     require_admin,
     require_device,
+    require_permission,
     verify_password_hash,
 )
 from app.config import settings
@@ -224,6 +231,58 @@ class IncidentResolutionPayload(StrictPayload):
     resolution_notes: str | None = Field(default=None, max_length=2000)
 
 
+class SystemCompanyPayload(StrictPayload):
+    name: str = Field(..., min_length=2, max_length=160)
+    legal_name: str | None = Field(default=None, max_length=220)
+    timezone: str | None = Field(default=None, max_length=80)
+
+
+class SystemCompanyControlsPayload(StrictPayload):
+    employee_limit: int = Field(default=0, ge=0, le=100000)
+    subscription_status: Literal["active", "trial", "past_due", "suspended", "cancelled"] = "active"
+    subscription_ends_at: str | None = Field(default=None, max_length=10)
+    admin_notice: str | None = Field(default=None, max_length=255)
+
+
+class SystemUserPayload(StrictPayload):
+    company_id: str | None = Field(default=None, max_length=36)
+    full_name: str = Field(..., min_length=2, max_length=180)
+    email: str = Field(..., min_length=3, max_length=180)
+    role: Literal["system_admin", "owner", "admin", "rrhh", "supervisor", "viewer"]
+
+
+class SystemUserPatchPayload(StrictPayload):
+    full_name: str | None = Field(default=None, min_length=2, max_length=180)
+    role: Literal["system_admin", "owner", "admin", "rrhh", "supervisor", "viewer"] | None = None
+    status: Literal["active", "inactive"] | None = None
+
+
+class SystemUserPasswordResetPayload(StrictPayload):
+    reason: str | None = Field(default=None, max_length=180)
+
+
+class DeviceCreatePayload(StrictPayload):
+    company_id: str | None = Field(default=None, max_length=36)
+    employee_id: str | None = Field(default=None, max_length=36)
+    name: str = Field(..., min_length=2, max_length=160)
+    hostname: str | None = Field(default=None, max_length=160)
+    location: str | None = Field(default=None, max_length=160)
+    agent_version: str | None = Field(default=None, max_length=40)
+
+
+class DevicePatchPayload(StrictPayload):
+    employee_id: str | None = Field(default=None, max_length=36)
+    name: str | None = Field(default=None, min_length=2, max_length=160)
+    hostname: str | None = Field(default=None, max_length=160)
+    location: str | None = Field(default=None, max_length=160)
+    agent_version: str | None = Field(default=None, max_length=40)
+    is_active: bool | None = None
+
+
+class DeviceRotateTokenPayload(StrictPayload):
+    reason: str | None = Field(default=None, max_length=180)
+
+
 RATE_LIMITS = {
     ("POST", "/api/admin/login"): (8, 300),
     ("POST", "/api/station/login"): (20, 300),
@@ -237,6 +296,9 @@ _rate_buckets: dict[tuple[str, str, str], deque[float]] = defaultdict(deque)
 
 IP_SCOPES = (
     ("/api/admin", settings.admin_allowed_ips),
+    ("/api/audit", settings.admin_allowed_ips),
+    ("/api/devices", settings.admin_allowed_ips),
+    ("/api/system", settings.admin_allowed_ips),
     ("/api/settings", settings.admin_allowed_ips),
     ("/api/productivity", settings.admin_allowed_ips),
     ("/api/employees", settings.admin_allowed_ips),
@@ -250,6 +312,52 @@ IP_SCOPES = (
 
 def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
+
+
+def allow_local_testing_secrets() -> bool:
+    return settings.environment.strip().lower() != "production"
+
+
+def smtp_configured() -> bool:
+    return bool(settings.smtp_host.strip() and settings.smtp_from_email.strip())
+
+
+def send_plain_email(to_email: str, subject: str, body: str) -> str:
+    recipient = clean_email(to_email)
+    if not smtp_configured():
+        return "not_configured"
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
+    message["To"] = recipient
+    message.set_content(body)
+
+    try:
+        if settings.smtp_use_ssl:
+            with smtplib.SMTP_SSL(
+                settings.smtp_host,
+                settings.smtp_port,
+                timeout=settings.smtp_timeout_seconds,
+            ) as smtp:
+                if settings.smtp_username:
+                    smtp.login(settings.smtp_username, settings.smtp_password)
+                smtp.send_message(message)
+        else:
+            with smtplib.SMTP(
+                settings.smtp_host,
+                settings.smtp_port,
+                timeout=settings.smtp_timeout_seconds,
+            ) as smtp:
+                if settings.smtp_use_tls:
+                    smtp.starttls()
+                if settings.smtp_username:
+                    smtp.login(settings.smtp_username, settings.smtp_password)
+                smtp.send_message(message)
+    except Exception:
+        return "failed"
+
+    return "sent"
 
 
 def ip_allowed(path: str, ip_address: str) -> bool:
@@ -345,6 +453,10 @@ def generate_password(length: int = 14) -> str:
             return password
 
 
+def generate_device_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
 def validate_password_policy(password: str):
     signs = "!@#$%*?_-."
     if len(password or "") < 8:
@@ -376,6 +488,73 @@ def hash_password(password: str) -> str:
 
 def generate_restore_code() -> str:
     return "-".join(secrets.token_hex(2).upper() for _ in range(3))
+
+
+def public_app_line() -> str:
+    app_url = settings.app_public_url.strip()
+    if not app_url:
+        return ""
+    return f"\nPanel VYNTRA: {app_url}\n"
+
+
+def temporary_password_email_body(company: Company, employee: Employee, login_email: str, password: str) -> str:
+    return (
+        f"Hola {employee.full_name},\n\n"
+        f"Se creo tu acceso a VYNTRA para {company.name}.\n\n"
+        f"Correo: {login_email}\n"
+        f"Contrasena temporal: {password}\n\n"
+        "Por seguridad, la estacion te pedira cambiar esta contrasena en el primer ingreso."
+        f"{public_app_line()}"
+        "\nSi no esperabas este acceso, contacta a RR. HH."
+    )
+
+
+def reset_code_email_body(company: Company, reset_code: str) -> str:
+    return (
+        f"Recibimos una solicitud para restablecer tu contrasena de VYNTRA en {company.name}.\n\n"
+        f"Codigo de verificacion: {reset_code}\n\n"
+        "Este codigo vence en 10 minutos. Si no solicitaste este cambio, ignora este mensaje."
+    )
+
+
+def access_code_email_body(
+    company: Company,
+    employee: Employee,
+    access_type: str,
+    code_value: str,
+    valid_minutes: int,
+    assigned_minutes: int | None = None,
+) -> str:
+    label = "horas extra" if access_type == "overtime" else "reabrir estacion"
+    extra = f"\nMinutos asignados: {assigned_minutes}\n" if assigned_minutes else ""
+    return (
+        f"Hola {employee.full_name},\n\n"
+        f"Se genero un codigo de {label} para tu estacion VYNTRA en {company.name}.\n\n"
+        f"Codigo: {code_value}\n"
+        f"Vigencia: {valid_minutes} minutos\n"
+        f"{extra}\n"
+        "El codigo es de un solo uso. Si no lo solicitaste, contacta a tu supervisor o RR. HH."
+    )
+
+
+def panel_user_email_body(company: Company, full_name: str, email: str, password: str, role_name: str) -> str:
+    role_labels = {
+        "system_admin": "Administrador del sistema",
+        "owner": "Owner de empresa",
+        "admin": "Administrador de empresa",
+        "rrhh": "Recursos humanos",
+        "supervisor": "Supervisor",
+        "viewer": "Solo lectura",
+    }
+    return (
+        f"Hola {full_name},\n\n"
+        f"Se creo tu acceso al panel VYNTRA para {company.name}.\n\n"
+        f"Rol: {role_labels.get(role_name, role_name)}\n"
+        f"Correo: {email}\n"
+        f"Contrasena temporal: {password}\n"
+        f"{public_app_line()}"
+        "\nCambia esta contrasena despues del primer ingreso y no la compartas."
+    )
 
 
 def percent(part: int | float, whole: int | float) -> float:
@@ -416,9 +595,16 @@ def resolve_admin_company(
 ) -> Company:
     if admin.auth_method == "legacy_token":
         return resolve_company(db, company_id)
+    if admin.role == "system_admin":
+        return resolve_company(db, company_id or admin.company_id)
     if company_id and company_id != admin.company_id:
         raise HTTPException(status_code=403, detail="Cannot access another company")
     return resolve_company(db, admin.company_id)
+
+
+def require_system_admin(admin: AdminPrincipal):
+    if admin.role != "system_admin":
+        raise HTTPException(status_code=403, detail="System administrator role required")
 
 
 def serialize_rule(db: Session, rule: ProductivityRule) -> dict:
@@ -460,6 +646,60 @@ def validate_time(value: str | None, field_name: str = "time") -> str:
     if hour > 23 or minute > 59:
         raise HTTPException(status_code=400, detail=f"Invalid {field_name}")
     return value
+
+
+COMPANY_CONTROL_DEFAULTS = {
+    "employee_limit": "0",
+    "subscription_status": "active",
+    "subscription_ends_at": "",
+    "admin_notice": "",
+}
+
+
+def get_company_settings_map(db: Session, company_id: str) -> dict[str, str]:
+    rows = db.execute(
+        select(CompanySetting).where(CompanySetting.company_id == company_id)
+    ).scalars().all()
+    values = {row.key: row.value for row in rows}
+    return {**COMPANY_CONTROL_DEFAULTS, **values}
+
+
+def set_company_setting(db: Session, company_id: str, key: str, value: str, description: str = ""):
+    row = db.execute(
+        select(CompanySetting).where(
+            CompanySetting.company_id == company_id,
+            CompanySetting.key == key,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        db.add(
+            CompanySetting(
+                company_id=company_id,
+                key=key,
+                value=value[:255],
+                description=description,
+                updated_at=now_utc(),
+            )
+        )
+        return
+    row.value = value[:255]
+    if description:
+        row.description = description
+    row.updated_at = now_utc()
+
+
+def company_controls(db: Session, company_id: str) -> dict:
+    values = get_company_settings_map(db, company_id)
+    try:
+        employee_limit = max(0, int(values.get("employee_limit") or "0"))
+    except ValueError:
+        employee_limit = 0
+    return {
+        "employee_limit": employee_limit,
+        "subscription_status": values.get("subscription_status") or "active",
+        "subscription_ends_at": values.get("subscription_ends_at") or "",
+        "admin_notice": values.get("admin_notice") or "",
+    }
 
 
 def seconds_between(start: datetime | None, end: datetime | None) -> int:
@@ -571,7 +811,7 @@ def serialize_restore_code(code: StationRestoreCode, employee: Employee | None =
         "employee_id": code.employee_id,
         "employee": employee.full_name if employee else None,
         "email": employee.email if employee else "",
-        "code": code.code,
+        "code": code.code if allow_local_testing_secrets() else "",
         "status": code.status,
         "reason": code.reason,
         "valid_from": code.valid_from.isoformat(),
@@ -587,7 +827,7 @@ def serialize_overtime_authorization(code: OvertimeAuthorization, employee: Empl
         "employee_id": code.employee_id,
         "employee": employee.full_name if employee else None,
         "email": employee.email if employee else "",
-        "code": code.code,
+        "code": code.code if allow_local_testing_secrets() else "",
         "status": code.status,
         "reason": code.reason,
         "assigned_minutes": code.assigned_minutes,
@@ -609,6 +849,27 @@ def serialize_access_code(kind: str, code: StationRestoreCode | OvertimeAuthoriz
         else serialize_restore_code(code, employee)
     )
     return {**base, "type": kind, "type_label": labels[kind]}
+
+
+def serialize_device(device: Device, company: Company | None = None, employee: Employee | None = None) -> dict:
+    online_cutoff = now_utc() - timedelta(minutes=10)
+    is_online = bool(device.is_active and device.last_seen_at and _as_aware_utc(device.last_seen_at) >= online_cutoff)
+    return {
+        "id": device.id,
+        "company_id": device.company_id,
+        "company": company.name if company else "",
+        "employee_id": device.employee_id,
+        "employee": employee.full_name if employee else "",
+        "employee_code": employee.employee_code if employee else "",
+        "name": device.name,
+        "hostname": device.hostname,
+        "location": device.location,
+        "is_active": device.is_active,
+        "status": "online" if is_online else ("offline" if device.is_active else "revoked"),
+        "agent_version": device.agent_version,
+        "created_at": device.created_at.isoformat() if device.created_at else None,
+        "last_seen_at": device.last_seen_at.isoformat() if device.last_seen_at else None,
+    }
 
 
 def _as_aware_utc(value: datetime) -> datetime:
@@ -728,6 +989,31 @@ def serialize_time_adjustment(row: TimeAdjustment) -> dict:
         "productivity_classification": row.productivity_classification,
         "reason": row.reason,
         "notes": row.notes,
+    }
+
+
+def parse_json_payload(value: str) -> dict | list | str:
+    try:
+        return json.loads(value or "{}")
+    except json.JSONDecodeError:
+        return value or ""
+
+
+def serialize_audit_log(row: AuditLog, company: Company | None = None, actor: User | None = None) -> dict:
+    return {
+        "id": row.id,
+        "company_id": row.company_id,
+        "company": company.name if company else "",
+        "user_id": row.user_id,
+        "actor": actor.full_name if actor else "",
+        "actor_email": actor.email if actor else "",
+        "device_id": row.device_id,
+        "action": row.action,
+        "entity_type": row.entity_type,
+        "entity_id": row.entity_id,
+        "ip_address": row.ip_address,
+        "payload": parse_json_payload(row.payload_json),
+        "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
 
@@ -1247,6 +1533,10 @@ def seed_company_settings(db: Session, company_id: str):
         ("idle_grace_seconds", "300", "Tiempo de gracia antes de contar idle real."),
         ("productivity_block_minutes", "30", "Tamano de bloque para reporteria."),
         ("activity_sample_seconds", "10", "Intervalo recomendado de muestra en produccion."),
+        ("employee_limit", "0", "Limite comercial de usuarios monitoreados; 0 significa sin limite."),
+        ("subscription_status", "active", "Estado comercial de la suscripcion."),
+        ("subscription_ends_at", "", "Fecha de vencimiento comercial en formato YYYY-MM-DD."),
+        ("admin_notice", "", "Mensaje visible para administradores de la empresa."),
     ]
     for key, value, description in settings_seed:
         exists = db.execute(
@@ -1289,6 +1579,33 @@ def get_or_create_position(db: Session, company_id: str, name: str, description:
     db.add(row)
     db.flush()
     return row
+
+
+def get_or_create_role(db: Session, company_id: str, name: str, description: str = "") -> Role:
+    row = db.execute(
+        select(Role).where(Role.company_id == company_id, Role.name == name)
+    ).scalar_one_or_none()
+    if row:
+        return row
+    row = Role(company_id=company_id, name=name, description=description)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def ensure_company_roles(db: Session, company_id: str) -> dict[str, Role]:
+    role_descriptions = {
+        "system_admin": "Administrador global del sistema VYNTRA",
+        "owner": "Propietario de la cuenta de empresa",
+        "admin": "Administrador de empresa",
+        "rrhh": "Recursos humanos",
+        "supervisor": "Supervisor",
+        "viewer": "Solo lectura",
+    }
+    return {
+        name: get_or_create_role(db, company_id, name, description)
+        for name, description in role_descriptions.items()
+    }
 
 
 def seed_organization_catalogs(db: Session, company_id: str):
@@ -1843,28 +2160,9 @@ def bootstrap_data():
             db.add(company)
             db.flush()
 
-        admin_role = db.execute(
-            select(Role).where(Role.company_id == company.id, Role.name == "admin")
-        ).scalar_one_or_none()
-        if admin_role is None:
-            admin_role = Role(
-                company_id=company.id,
-                name="admin",
-                description="Administrador de plataforma",
-            )
-            db.add(admin_role)
-            db.flush()
-
-        for role_name, description in [
-            ("rrhh", "Recursos humanos"),
-            ("supervisor", "Supervisor"),
-            ("viewer", "Solo lectura"),
-        ]:
-            exists = db.execute(
-                select(Role).where(Role.company_id == company.id, Role.name == role_name)
-            ).scalar_one_or_none()
-            if exists is None:
-                db.add(Role(company_id=company.id, name=role_name, description=description))
+        roles = ensure_company_roles(db, company.id)
+        admin_role = roles["admin"]
+        system_admin_role = roles["system_admin"]
 
         seed_organization_catalogs(db, company.id)
         seed_company_settings(db, company.id)
@@ -1892,6 +2190,31 @@ def bootstrap_data():
             if settings.bootstrap_admin_password_hash:
                 admin_user.password_hash = settings.bootstrap_admin_password_hash
             admin_user.status = "active"
+
+        system_admin_email = settings.bootstrap_system_admin_email.strip().lower()
+        if system_admin_email and settings.bootstrap_system_admin_password_hash:
+            system_admin_user = db.execute(
+                select(User).where(
+                    User.company_id == company.id,
+                    User.email == system_admin_email,
+                )
+            ).scalar_one_or_none()
+            if system_admin_user is None:
+                db.add(
+                    User(
+                        company_id=company.id,
+                        role_id=system_admin_role.id,
+                        email=system_admin_email,
+                        full_name=settings.bootstrap_system_admin_name,
+                        password_hash=settings.bootstrap_system_admin_password_hash,
+                        status="active",
+                    )
+                )
+            else:
+                system_admin_user.role_id = system_admin_role.id
+                system_admin_user.full_name = settings.bootstrap_system_admin_name
+                system_admin_user.password_hash = settings.bootstrap_system_admin_password_hash
+                system_admin_user.status = "active"
 
         department = get_or_create_department(db, company.id, "General")
         position = get_or_create_position(
@@ -2029,6 +2352,7 @@ def health():
 
 def serialize_admin_user(db: Session, user: User, role_name: str | None = None) -> dict:
     role = db.get(Role, user.role_id) if user.role_id and role_name is None else None
+    resolved_role = role_name or (role.name if role else "")
     company = db.get(Company, user.company_id)
     return {
         "id": user.id,
@@ -2036,10 +2360,93 @@ def serialize_admin_user(db: Session, user: User, role_name: str | None = None) 
         "company": company.name if company else None,
         "email": user.email,
         "full_name": user.full_name,
-        "role": role_name or (role.name if role else ""),
+        "role": resolved_role,
+        "permissions": permissions_for_role(resolved_role),
         "status": user.status,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
     }
+
+
+def serialize_system_company(db: Session, company: Company) -> dict:
+    employees_count = db.execute(
+        select(func.count()).select_from(Employee).where(Employee.company_id == company.id)
+    ).scalar_one()
+    users_count = db.execute(
+        select(func.count()).select_from(User).where(User.company_id == company.id)
+    ).scalar_one()
+    devices_count = db.execute(
+        select(func.count()).select_from(Device).where(Device.company_id == company.id)
+    ).scalar_one()
+    return {
+        "id": company.id,
+        "name": company.name,
+        "legal_name": company.legal_name,
+        "status": company.status,
+        "timezone": company.timezone,
+        "created_at": company.created_at.isoformat() if company.created_at else None,
+        "employees_count": int(employees_count or 0),
+        "users_count": int(users_count or 0),
+        "devices_count": int(devices_count or 0),
+        "controls": company_controls(db, company.id),
+    }
+
+
+def serialize_panel_user(db: Session, user: User) -> dict:
+    role = db.get(Role, user.role_id) if user.role_id else None
+    company = db.get(Company, user.company_id)
+    return {
+        "id": user.id,
+        "company_id": user.company_id,
+        "company": company.name if company else "",
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": role.name if role else "",
+        "permissions": permissions_for_role(role.name if role else ""),
+        "status": user.status,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+    }
+
+
+def company_admin_messages(db: Session, company_id: str) -> list[dict]:
+    controls = company_controls(db, company_id)
+    messages = []
+    notice = clean_text(controls.get("admin_notice"), 255)
+    if notice:
+        messages.append({"type": "notice", "message": notice})
+
+    status_value = clean_text(controls.get("subscription_status"), 40)
+    if status_value in {"past_due", "suspended", "cancelled"}:
+        messages.append(
+            {
+                "type": "subscription",
+                "message": "La suscripcion requiere atencion. Comunicate con el proveedor del sistema.",
+            }
+        )
+
+    ends_at = clean_text(controls.get("subscription_ends_at"), 10)
+    if ends_at:
+        try:
+            today = datetime.now(timezone.utc).date()
+            end_date = datetime.strptime(ends_at, "%Y-%m-%d").date()
+            days_left = (end_date - today).days
+            if days_left < 0:
+                messages.append(
+                    {
+                        "type": "subscription",
+                        "message": "La suscripcion esta vencida. Comunicate con el proveedor del sistema.",
+                    }
+                )
+            elif days_left <= 14:
+                messages.append(
+                    {
+                        "type": "subscription",
+                        "message": f"La suscripcion vence en {days_left} dias. Comunicate con el proveedor del sistema.",
+                    }
+                )
+        except ValueError:
+            pass
+    return messages
 
 
 @app.post("/api/admin/login")
@@ -2062,10 +2469,9 @@ def admin_login(
     ).scalar_one_or_none()
     role = db.get(Role, user.role_id) if user and user.role_id else None
     role_name = role.name if role else ""
-    allowed_roles = {"admin", "owner", "rrhh", "supervisor", "viewer"}
     if (
         user is None
-        or role_name not in allowed_roles
+        or role_name not in ROLE_PERMISSIONS
         or not verify_password_hash(password, user.password_hash)
     ):
         db.add(
@@ -2122,6 +2528,7 @@ def admin_me(
                 "email": admin.email,
                 "full_name": "Legacy Admin Token",
                 "role": admin.role,
+                "permissions": permissions_for_role(admin.role),
                 "status": "active",
                 "last_login_at": None,
             },
@@ -2133,6 +2540,605 @@ def admin_me(
     return {
         "auth_method": admin.auth_method,
         "user": serialize_admin_user(db, user, admin.role),
+    }
+
+
+@app.get("/api/admin/company-notice")
+def admin_company_notice(
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    if admin.auth_method == "legacy_token" or admin.role == "system_admin":
+        return {"messages": []}
+    return {"messages": company_admin_messages(db, admin.company_id)}
+
+
+@app.get("/api/audit/logs")
+def list_audit_logs(
+    company_id: str | None = None,
+    actor: str | None = None,
+    action: str | None = None,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 200,
+    export: Literal["json", "csv"] = "json",
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_permission(admin, "audit:read")
+    scoped_company_id = clean_text(company_id, 36) or None
+    if admin.role != "system_admin":
+        scoped_company_id = admin.company_id
+    elif scoped_company_id:
+        resolve_company(db, scoped_company_id)
+
+    query = select(AuditLog)
+    if scoped_company_id:
+        query = query.where(AuditLog.company_id == scoped_company_id)
+
+    clean_action = clean_text(action, 120)
+    if clean_action:
+        query = query.where(AuditLog.action.ilike(f"%{clean_action}%"))
+
+    clean_entity_type = clean_text(entity_type, 80)
+    if clean_entity_type:
+        query = query.where(AuditLog.entity_type.ilike(f"%{clean_entity_type}%"))
+
+    clean_entity_id = clean_text(entity_id, 80)
+    if clean_entity_id:
+        query = query.where(AuditLog.entity_id == clean_entity_id)
+
+    if date_from:
+        start_date = validate_date(date_from, "date_from")
+        query = query.where(AuditLog.created_at >= datetime.fromisoformat(start_date).replace(tzinfo=timezone.utc))
+    if date_to:
+        end_date = validate_date(date_to, "date_to")
+        query = query.where(AuditLog.created_at < datetime.fromisoformat(end_date).replace(tzinfo=timezone.utc) + timedelta(days=1))
+
+    clean_actor = clean_text(actor, 180)
+    if clean_actor:
+        user_query = select(User.id).where(
+            User.full_name.ilike(f"%{clean_actor}%") | User.email.ilike(f"%{clean_actor}%")
+        )
+        if scoped_company_id:
+            user_query = user_query.where(User.company_id == scoped_company_id)
+        actor_ids = [row[0] for row in db.execute(user_query).all()]
+        if not actor_ids:
+            rows: list[AuditLog] = []
+        else:
+            rows = db.execute(
+                query.where(AuditLog.user_id.in_(actor_ids))
+                .order_by(AuditLog.created_at.desc())
+                .limit(max(1, min(limit, 1000)))
+            ).scalars().all()
+    else:
+        rows = db.execute(
+            query.order_by(AuditLog.created_at.desc()).limit(max(1, min(limit, 1000)))
+        ).scalars().all()
+
+    company_ids = {row.company_id for row in rows if row.company_id}
+    user_ids = {row.user_id for row in rows if row.user_id}
+    companies = {
+        company.id: company
+        for company in db.execute(select(Company).where(Company.id.in_(company_ids))).scalars().all()
+    } if company_ids else {}
+    actors = {
+        user.id: user
+        for user in db.execute(select(User).where(User.id.in_(user_ids))).scalars().all()
+    } if user_ids else {}
+    items = [serialize_audit_log(row, companies.get(row.company_id), actors.get(row.user_id)) for row in rows]
+
+    if export == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["created_at", "company", "actor_email", "actor", "action", "entity_type", "entity_id", "ip_address", "payload"])
+        for item in items:
+            writer.writerow(
+                [
+                    item["created_at"] or "",
+                    item["company"],
+                    item["actor_email"],
+                    item["actor"],
+                    item["action"],
+                    item["entity_type"],
+                    item["entity_id"],
+                    item["ip_address"],
+                    json.dumps(item["payload"], ensure_ascii=False),
+                ]
+            )
+        return Response(
+            output.getvalue(),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="vyntra-audit.csv"'},
+        )
+
+    return {
+        "company_id": scoped_company_id,
+        "count": len(items),
+        "items": items,
+        "filters": {
+            "company_id": scoped_company_id,
+            "actor": clean_actor,
+            "action": clean_action,
+            "entity_type": clean_entity_type,
+            "entity_id": clean_entity_id,
+            "date_from": date_from,
+            "date_to": date_to,
+            "limit": max(1, min(limit, 1000)),
+        },
+    }
+
+
+@app.get("/api/system/overview")
+def system_overview(
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    companies = db.execute(select(Company).order_by(Company.created_at.desc())).scalars().all()
+    users = db.execute(select(User).order_by(User.created_at.desc()).limit(300)).scalars().all()
+    return {
+        "companies": [serialize_system_company(db, company) for company in companies],
+        "users": [serialize_panel_user(db, user) for user in users],
+        "roles": ["system_admin", "owner", "admin", "rrhh", "supervisor", "viewer"],
+    }
+
+
+@app.post("/api/system/companies")
+def create_system_company(
+    payload: SystemCompanyPayload,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    name = clean_text(payload.name, 160)
+    legal_name = clean_text(payload.legal_name, 220)
+    timezone_name = clean_text(payload.timezone, 80) or "America/Managua"
+    existing = db.execute(
+        select(Company).where(func.lower(Company.name) == name.lower())
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Company already exists")
+
+    company = Company(name=name, legal_name=legal_name, timezone=timezone_name, status="active")
+    db.add(company)
+    db.flush()
+    ensure_company_roles(db, company.id)
+    seed_organization_catalogs(db, company.id)
+    seed_company_settings(db, company.id)
+    seed_productivity_rules(db, company.id)
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="system_company_created",
+            entity_type="company",
+            entity_id=company.id,
+            payload_json=json_text({"name": company.name, "timezone": company.timezone}),
+        )
+    )
+    db.commit()
+    db.refresh(company)
+    return {"ok": True, "company": serialize_system_company(db, company)}
+
+
+@app.patch("/api/system/companies/{company_id}/controls")
+def update_system_company_controls(
+    company_id: str,
+    payload: SystemCompanyControlsPayload,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    company = db.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    ends_at = clean_text(payload.subscription_ends_at, 10)
+    if ends_at:
+        validate_date(ends_at, "subscription_ends_at")
+
+    set_company_setting(
+        db,
+        company.id,
+        "employee_limit",
+        str(payload.employee_limit),
+        "Limite comercial de usuarios monitoreados; 0 significa sin limite.",
+    )
+    set_company_setting(db, company.id, "subscription_status", payload.subscription_status, "Estado comercial de la suscripcion.")
+    set_company_setting(db, company.id, "subscription_ends_at", ends_at, "Fecha de vencimiento comercial en formato YYYY-MM-DD.")
+    set_company_setting(db, company.id, "admin_notice", clean_text(payload.admin_notice, 255), "Mensaje visible para administradores de la empresa.")
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="system_company_controls_updated",
+            entity_type="company",
+            entity_id=company.id,
+            payload_json=json_text(company_controls(db, company.id)),
+        )
+    )
+    db.commit()
+    db.refresh(company)
+    return {"ok": True, "company": serialize_system_company(db, company)}
+
+
+@app.post("/api/system/users")
+def create_system_panel_user(
+    payload: SystemUserPayload,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    role_name = clean_text(payload.role, 40)
+    full_name = clean_text(payload.full_name, 180)
+    email = clean_email(payload.email)
+    company_id = clean_text(payload.company_id, 36) or admin.company_id
+    company = resolve_company(db, company_id)
+
+    if role_name != "system_admin" and not payload.company_id:
+        raise HTTPException(status_code=400, detail="company_id is required for company users")
+
+    duplicate = db.execute(select(User).where(User.email == email)).scalars().first()
+    if duplicate is not None:
+        raise HTTPException(status_code=409, detail="Email already has panel access")
+
+    roles = ensure_company_roles(db, company.id)
+    role = roles.get(role_name)
+    if role is None:
+        raise HTTPException(status_code=400, detail="Invalid panel role")
+
+    password = generate_password()
+    user = User(
+        company_id=company.id,
+        role_id=role.id,
+        email=email,
+        full_name=full_name,
+        password_hash=hash_password(password),
+        status="active",
+    )
+    db.add(user)
+    db.flush()
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="system_panel_user_created",
+            entity_type="user",
+            entity_id=user.id,
+            payload_json=json_text({"email": email, "role": role_name, "delivery_status": "pending"}),
+        )
+    )
+    db.commit()
+    db.refresh(user)
+
+    delivery_status = send_plain_email(
+        email,
+        "Acceso al panel VYNTRA",
+        panel_user_email_body(company, full_name, email, password, role_name),
+    )
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="system_panel_user_delivery_attempted",
+            entity_type="user",
+            entity_id=user.id,
+            payload_json=json_text({"email": email, "role": role_name, "delivery_status": delivery_status}),
+        )
+    )
+    db.commit()
+
+    credentials = {
+        "email": email,
+        "delivery_status": delivery_status,
+    }
+    if allow_local_testing_secrets():
+        credentials["password"] = password
+    return {"ok": True, "user": serialize_panel_user(db, user), "credentials": credentials}
+
+
+@app.patch("/api/system/users/{user_id}")
+def update_system_panel_user(
+    user_id: str,
+    payload: SystemUserPatchPayload,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Panel user not found")
+
+    data = payload.model_dump(exclude_unset=True)
+    next_role_name = clean_text(data.get("role"), 40) if "role" in data else None
+    if next_role_name:
+        roles = ensure_company_roles(db, user.company_id)
+        role = roles.get(next_role_name)
+        if role is None:
+            raise HTTPException(status_code=400, detail="Invalid panel role")
+        user.role_id = role.id
+
+    if "full_name" in data:
+        full_name = clean_text(data.get("full_name"), 180)
+        if len(full_name) < 2:
+            raise HTTPException(status_code=400, detail="User name is required")
+        user.full_name = full_name
+
+    if "status" in data:
+        next_status = clean_text(data.get("status"), 40)
+        if user.id == admin.user_id and next_status != "active":
+            raise HTTPException(status_code=400, detail="Cannot deactivate your own system session")
+        user.status = next_status
+
+    db.add(
+        AuditLog(
+            company_id=user.company_id,
+            user_id=admin.user_id,
+            action="system_panel_user_updated",
+            entity_type="user",
+            entity_id=user.id,
+            payload_json=json_text(
+                {
+                    "full_name": user.full_name,
+                    "role": next_role_name,
+                    "status": user.status,
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(user)
+    return {"ok": True, "user": serialize_panel_user(db, user)}
+
+
+@app.post("/api/system/users/{user_id}/reset-password")
+def reset_system_panel_user_password(
+    user_id: str,
+    payload: SystemUserPasswordResetPayload = Body(default_factory=SystemUserPasswordResetPayload),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Panel user not found")
+
+    company = resolve_company(db, user.company_id)
+    role = db.get(Role, user.role_id) if user.role_id else None
+    role_name = role.name if role else ""
+    password = generate_password()
+    user.password_hash = hash_password(password)
+    user.status = "active"
+    db.add(
+        AuditLog(
+            company_id=user.company_id,
+            user_id=admin.user_id,
+            action="system_panel_user_password_reset",
+            entity_type="user",
+            entity_id=user.id,
+            payload_json=json_text({"email": user.email, "reason": clean_text(payload.reason, 180)}),
+        )
+    )
+    db.commit()
+    db.refresh(user)
+
+    delivery_status = send_plain_email(
+        user.email,
+        "Nuevo acceso temporal al panel VYNTRA",
+        panel_user_email_body(company, user.full_name, user.email, password, role_name),
+    )
+    db.add(
+        AuditLog(
+            company_id=user.company_id,
+            user_id=admin.user_id,
+            action="system_panel_user_password_delivery_attempted",
+            entity_type="user",
+            entity_id=user.id,
+            payload_json=json_text({"email": user.email, "delivery_status": delivery_status}),
+        )
+    )
+    db.commit()
+
+    credentials = {
+        "email": user.email,
+        "delivery_status": delivery_status,
+    }
+    if allow_local_testing_secrets():
+        credentials["password"] = password
+    return {"ok": True, "user": serialize_panel_user(db, user), "credentials": credentials}
+
+
+@app.get("/api/devices")
+def list_devices(
+    company_id: str | None = None,
+    employee_id: str | None = None,
+    status_filter: str | None = None,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_permission(admin, "devices:read")
+    company = resolve_admin_company(db, admin, company_id)
+    query = select(Device).where(Device.company_id == company.id)
+    if employee_id:
+        query = query.where(Device.employee_id == clean_text(employee_id, 36))
+    devices = db.execute(query.order_by(Device.last_seen_at.desc().nullslast(), Device.name)).scalars().all()
+    employee_ids = {device.employee_id for device in devices if device.employee_id}
+    employees = {
+        employee.id: employee
+        for employee in db.execute(select(Employee).where(Employee.id.in_(employee_ids))).scalars().all()
+    } if employee_ids else {}
+    items = [serialize_device(device, company, employees.get(device.employee_id)) for device in devices]
+    clean_status = clean_text(status_filter, 40)
+    if clean_status:
+        items = [item for item in items if item["status"] == clean_status]
+    return {
+        "company": {"id": company.id, "name": company.name},
+        "count": len(items),
+        "devices": items,
+    }
+
+
+@app.post("/api/devices")
+def create_device(
+    payload: DeviceCreatePayload,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_permission(admin, "devices:manage")
+    data = payload.model_dump(exclude_unset=True)
+    company = resolve_admin_company(db, admin, data.get("company_id"))
+    name = clean_text(data.get("name"), 160)
+    hostname = clean_text(data.get("hostname") or name, 160)
+    location = clean_text(data.get("location"), 160)
+    agent_version = clean_text(data.get("agent_version") or "pending", 40)
+    employee_id = clean_text(data.get("employee_id"), 36) or None
+    employee = require_company_owned(db, Employee, employee_id, company.id, "Employee") if employee_id else None
+
+    duplicate = db.execute(
+        select(Device).where(Device.company_id == company.id, func.lower(Device.name) == name.lower())
+    ).scalar_one_or_none()
+    if duplicate is not None:
+        raise HTTPException(status_code=409, detail="Device name already exists")
+
+    token = generate_device_token()
+    while db.execute(select(Device).where(Device.token_sha256 == hash_token(token))).scalar_one_or_none():
+        token = generate_device_token()
+
+    device = Device(
+        company_id=company.id,
+        employee_id=employee.id if employee else None,
+        name=name,
+        hostname=hostname,
+        location=location,
+        token_sha256=hash_token(token),
+        is_active=True,
+        agent_version=agent_version,
+    )
+    db.add(device)
+    db.flush()
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="device_created",
+            entity_type="device",
+            entity_id=device.id,
+            payload_json=json_text({"name": device.name, "employee_id": device.employee_id, "agent_version": device.agent_version}),
+        )
+    )
+    db.commit()
+    db.refresh(device)
+    return {
+        "ok": True,
+        "device": serialize_device(device, company, employee),
+        "credentials": {"device_token": token, "delivery_status": "manual"},
+    }
+
+
+@app.patch("/api/devices/{device_id}")
+def update_device(
+    device_id: str,
+    payload: DevicePatchPayload,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_permission(admin, "devices:manage")
+    device = db.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    company = resolve_admin_company(db, admin, device.company_id)
+    if device.company_id != company.id:
+        raise HTTPException(status_code=403, detail="Cannot edit device from another company")
+    data = payload.model_dump(exclude_unset=True)
+
+    if "name" in data:
+        name = clean_text(data.get("name"), 160)
+        duplicate = db.execute(
+            select(Device).where(
+                Device.company_id == company.id,
+                Device.id != device.id,
+                func.lower(Device.name) == name.lower(),
+            )
+        ).scalar_one_or_none()
+        if duplicate is not None:
+            raise HTTPException(status_code=409, detail="Device name already exists")
+        device.name = name
+    if "hostname" in data:
+        device.hostname = clean_text(data.get("hostname"), 160)
+    if "location" in data:
+        device.location = clean_text(data.get("location"), 160)
+    if "agent_version" in data:
+        device.agent_version = clean_text(data.get("agent_version"), 40) or "unknown"
+    if "employee_id" in data:
+        employee_id = clean_text(data.get("employee_id"), 36) or None
+        require_company_owned(db, Employee, employee_id, company.id, "Employee") if employee_id else None
+        device.employee_id = employee_id
+    if "is_active" in data and data.get("is_active") is not None:
+        device.is_active = bool(data.get("is_active"))
+
+    employee = db.get(Employee, device.employee_id) if device.employee_id else None
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="device_updated",
+            entity_type="device",
+            entity_id=device.id,
+            payload_json=json_text(
+                {
+                    "name": device.name,
+                    "employee_id": device.employee_id,
+                    "is_active": device.is_active,
+                    "agent_version": device.agent_version,
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(device)
+    return {"ok": True, "device": serialize_device(device, company, employee)}
+
+
+@app.post("/api/devices/{device_id}/rotate-token")
+def rotate_device_token(
+    device_id: str,
+    payload: DeviceRotateTokenPayload = Body(default_factory=DeviceRotateTokenPayload),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_permission(admin, "devices:manage")
+    device = db.get(Device, device_id)
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    company = resolve_admin_company(db, admin, device.company_id)
+    if device.company_id != company.id:
+        raise HTTPException(status_code=403, detail="Cannot rotate token for another company")
+
+    token = generate_device_token()
+    while db.execute(select(Device).where(Device.token_sha256 == hash_token(token))).scalar_one_or_none():
+        token = generate_device_token()
+    device.token_sha256 = hash_token(token)
+    device.is_active = True
+    employee = db.get(Employee, device.employee_id) if device.employee_id else None
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="device_token_rotated",
+            entity_type="device",
+            entity_id=device.id,
+            payload_json=json_text({"name": device.name, "reason": clean_text(payload.reason, 180)}),
+        )
+    )
+    db.commit()
+    db.refresh(device)
+    return {
+        "ok": True,
+        "device": serialize_device(device, company, employee),
+        "credentials": {"device_token": token, "delivery_status": "manual"},
     }
 
 
@@ -2312,6 +3318,14 @@ def station_password_reset_request(
         credential.reset_requested_at = now_utc()
         credential.reset_verified_at = None
         credential.reset_attempts = 0
+        db.commit()
+        company = db.get(Company, device.company_id)
+        if company:
+            delivery_status = send_plain_email(
+                credential.email,
+                "Codigo de recuperacion VYNTRA",
+                reset_code_email_body(company, reset_code),
+            )
         db.add(
             AuditLog(
                 company_id=device.company_id,
@@ -2339,7 +3353,7 @@ def station_password_reset_request(
         "delivery_status": delivery_status,
         "message": "If the account exists, a verification code was sent.",
     }
-    if reset_code:
+    if reset_code and allow_local_testing_secrets():
         response["reset_code"] = reset_code
         response["note"] = "SMTP is not configured; reset code is returned for local testing."
     return response
@@ -2507,6 +3521,7 @@ def productivity_catalogs(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "employees:read")
     company = resolve_admin_company(db, admin, company_id)
     departments = db.execute(
         select(Department)
@@ -2554,6 +3569,7 @@ def create_department(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "settings:manage")
     payload = payload.model_dump(exclude_unset=True)
     company = resolve_admin_company(db, admin, payload.get("company_id"))
     name = clean_text(payload.get("name"), 120)
@@ -2590,6 +3606,7 @@ def create_monitored_employee(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "employees:manage")
     payload = payload.model_dump(exclude_unset=True)
     company = resolve_admin_company(db, admin, payload.get("company_id"))
     full_name = clean_text(payload.get("full_name") or payload.get("name"), 180)
@@ -2623,6 +3640,19 @@ def create_monitored_employee(
     ).scalar_one_or_none()
     if duplicate_credential:
         raise HTTPException(status_code=409, detail="Email already has station credentials")
+
+    controls = company_controls(db, company.id)
+    employee_limit = int(controls.get("employee_limit") or 0)
+    active_employee_count = db.execute(
+        select(func.count())
+        .select_from(Employee)
+        .where(Employee.company_id == company.id, Employee.status == "active")
+    ).scalar_one()
+    if employee_limit > 0 and int(active_employee_count or 0) >= employee_limit:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Employee limit reached for this company ({employee_limit})",
+        )
 
     next_count = db.execute(
         select(func.count()).select_from(Employee).where(Employee.company_id == company.id)
@@ -2659,7 +3689,7 @@ def create_monitored_employee(
                 {
                     "email": email,
                     "department_id": department_id,
-                    "email_delivery": "not_configured",
+                    "email_delivery": "pending",
                     "password_change_required": True,
                 }
             ),
@@ -2667,16 +3697,39 @@ def create_monitored_employee(
     )
     db.commit()
     db.refresh(employee)
+    delivery_status = send_plain_email(
+        email,
+        "Acceso temporal VYNTRA",
+        temporary_password_email_body(company, employee, email, password),
+    )
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="employee_credential_delivery_attempted",
+            entity_type="employee_credential",
+            entity_id=credential.id,
+            payload_json=json_text({"email": email, "delivery_status": delivery_status}),
+        )
+    )
+    db.commit()
+    credentials = {
+        "email": email,
+        "password_change_required": True,
+        "delivery_status": delivery_status,
+    }
+    if allow_local_testing_secrets():
+        credentials.update(
+            {
+                "password": password,
+                "note": "SMTP is not configured; password is returned once for local testing.",
+            }
+        )
+
     return {
         "ok": True,
         "employee": serialize_employee(employee, department),
-        "credentials": {
-            "email": email,
-            "password": password,
-            "password_change_required": True,
-            "delivery_status": "not_configured",
-            "note": "SMTP is not configured; password is returned once for local testing.",
-        },
+        "credentials": credentials,
     }
 
 
@@ -2687,6 +3740,7 @@ def update_monitored_employee(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "employees:manage")
     payload = payload.model_dump(exclude_unset=True)
     employee = db.get(Employee, employee_id)
     if employee is None:
@@ -2775,6 +3829,7 @@ def list_restore_codes(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "access_codes:read")
     company = resolve_admin_company(db, admin, company_id)
     codes = db.execute(
         select(StationRestoreCode)
@@ -2802,6 +3857,7 @@ def create_restore_code(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "access_codes:manage")
     payload = payload.model_dump(exclude_unset=True)
     employee_id = clean_text(payload.get("employee_id"), 36)
     employee = db.get(Employee, employee_id)
@@ -2838,7 +3894,7 @@ def create_restore_code(
                 {
                     "employee_id": employee.id,
                     "email": employee.email,
-                    "delivery_status": "not_configured",
+                    "delivery_status": "pending",
                     "valid_minutes": valid_minutes,
                 }
             ),
@@ -2846,12 +3902,30 @@ def create_restore_code(
     )
     db.commit()
     db.refresh(restore_code)
-    return {
+    delivery_status = send_plain_email(
+        employee.email,
+        "Codigo para restaurar estacion VYNTRA",
+        access_code_email_body(company, employee, "station_reopen", code_value, valid_minutes),
+    )
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="station_restore_code_delivery_attempted",
+            entity_type="station_restore_code",
+            entity_id=restore_code.id,
+            payload_json=json_text({"employee_id": employee.id, "email": employee.email, "delivery_status": delivery_status}),
+        )
+    )
+    db.commit()
+    response = {
         "ok": True,
         "code": serialize_restore_code(restore_code, employee),
-        "delivery_status": "not_configured",
-        "note": "SMTP is not configured; code is returned for local testing.",
+        "delivery_status": delivery_status,
     }
+    if allow_local_testing_secrets():
+        response["note"] = "SMTP is not configured; code is returned for local testing."
+    return response
 
 
 @app.get("/api/settings/access-codes")
@@ -2860,6 +3934,7 @@ def list_access_codes(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "access_codes:read")
     company = resolve_admin_company(db, admin, company_id)
     station_codes = db.execute(
         select(StationRestoreCode).where(StationRestoreCode.company_id == company.id)
@@ -2894,6 +3969,7 @@ def create_access_code(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "access_codes:manage")
     payload = payload.model_dump(exclude_unset=True)
     access_type = clean_text(payload.get("type"), 40)
     if access_type not in {"station_reopen", "overtime"}:
@@ -2918,13 +3994,17 @@ def create_access_code(
     ):
         code_value = generate_restore_code()
 
+    assigned_minutes = max(5, min(int(payload.get("assigned_minutes") or valid_minutes), 1440))
+    reason = clean_text(payload.get("reason"), 180)
+    if access_type == "overtime" and len(reason) < 3:
+        raise HTTPException(status_code=400, detail="reason is required for overtime codes")
     if access_type == "overtime":
         access_code = OvertimeAuthorization(
             company_id=company.id,
             employee_id=employee.id,
             code=code_value,
-            reason=clean_text(payload.get("reason") or "Designar horas extra", 180),
-            assigned_minutes=max(5, min(int(payload.get("assigned_minutes") or valid_minutes), 1440)),
+            reason=reason,
+            assigned_minutes=assigned_minutes,
             valid_from=issued_at,
             valid_until=issued_at + timedelta(minutes=valid_minutes),
             created_by_user_id=admin.user_id,
@@ -2936,7 +4016,7 @@ def create_access_code(
             company_id=company.id,
             employee_id=employee.id,
             code=code_value,
-            reason=clean_text(payload.get("reason") or "Reabrir estacion de marcaje", 180),
+            reason=reason or "Reabrir estacion de marcaje",
             valid_from=issued_at,
             valid_until=issued_at + timedelta(minutes=valid_minutes),
             created_by_user_id=admin.user_id,
@@ -2959,19 +4039,51 @@ def create_access_code(
                     "email": employee.email,
                     "type": access_type,
                     "valid_minutes": valid_minutes,
-                    "delivery_status": "not_configured",
+                    "delivery_status": "pending",
                 }
             ),
         )
     )
     db.commit()
     db.refresh(access_code)
-    return {
+    delivery_status = send_plain_email(
+        employee.email,
+        f"Codigo VYNTRA - {access_type}",
+        access_code_email_body(
+            company,
+            employee,
+            access_type,
+            code_value,
+            valid_minutes,
+            assigned_minutes if access_type == "overtime" else None,
+        ),
+    )
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action=f"{audit_entity}_delivery_attempted",
+            entity_type=audit_entity,
+            entity_id=access_code.id,
+            payload_json=json_text(
+                {
+                    "employee_id": employee.id,
+                    "email": employee.email,
+                    "type": access_type,
+                    "delivery_status": delivery_status,
+                }
+            ),
+        )
+    )
+    db.commit()
+    response = {
         "ok": True,
         "code": serialize_access_code(access_type, access_code, employee),
-        "delivery_status": "not_configured",
-        "note": "SMTP is not configured; code is returned for local testing.",
+        "delivery_status": delivery_status,
     }
+    if allow_local_testing_secrets():
+        response["note"] = "SMTP is not configured; code is returned for local testing."
+    return response
 
 
 @app.get("/api/incidents")
@@ -2983,6 +4095,7 @@ def list_incidents(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "incidents:read")
     company = resolve_admin_company(db, admin, company_id)
     query = select(Incident).where(Incident.company_id == company.id)
     if status_filter:
@@ -3008,12 +4121,15 @@ def resolve_incident(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "incidents:resolve")
     incident = db.get(Incident, incident_id)
     if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
     company = resolve_admin_company(db, admin, incident.company_id)
     incident.status = payload.status
     incident.resolution_notes = clean_text(payload.resolution_notes, 2000)
+    if len(incident.resolution_notes) < 3:
+        raise HTTPException(status_code=400, detail="resolution_notes is required")
     incident.resolved_at = now_utc()
     adjustment = None
     if incident.status == "approved":
@@ -3057,6 +4173,7 @@ def list_productivity_rules(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "rules:read")
     company = resolve_admin_company(db, admin, company_id)
     query = select(ProductivityRule).where(ProductivityRule.company_id == company.id)
     if classification:
@@ -3089,6 +4206,7 @@ def create_productivity_rule(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "rules:manage")
     payload = payload.model_dump(exclude_unset=True)
     company = resolve_admin_company(db, admin, payload.get("company_id"))
     classification = clean_text(payload.get("classification"), 40)
@@ -3172,6 +4290,7 @@ def update_productivity_rule(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "rules:manage")
     payload = payload.model_dump(exclude_unset=True)
     rule = db.get(ProductivityRule, rule_id)
     if rule is None:
@@ -3234,6 +4353,7 @@ def reclassify_productivity(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "rules:manage")
     payload = payload.model_dump(exclude_unset=True)
     company = resolve_admin_company(db, admin, payload.get("company_id"))
     result = reclassify_activities_for_company(db, company.id)
@@ -3253,6 +4373,7 @@ def uncategorized_activity_summary(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "rules:read")
     company = resolve_admin_company(db, admin, company_id)
     rows = db.execute(
         select(
@@ -3296,6 +4417,7 @@ def productivity_dashboard(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "dashboard:read")
     company = resolve_admin_company(db, admin, company_id)
     query = select(ProductivityBlock).where(ProductivityBlock.company_id == company.id)
     if date_from:
@@ -3387,6 +4509,7 @@ def employee_detail(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "employees:read")
     employee = db.get(Employee, employee_id)
     if employee is None:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -3517,6 +4640,7 @@ def attendance_overview(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "attendance:read")
     company = resolve_admin_company(db, admin, company_id)
     employee_query = select(Employee).where(Employee.company_id == company.id)
     if employee_id:
@@ -3607,6 +4731,7 @@ def update_employee_schedule(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "attendance:manage")
     payload = payload.model_dump(exclude_unset=True)
     employee = db.get(Employee, employee_id)
     if employee is None:
@@ -3677,6 +4802,7 @@ def update_attendance_shift(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "attendance:manage")
     payload = payload.model_dump(exclude_unset=True)
     shift = db.get(Shift, shift_id)
     if shift is None:
@@ -3766,6 +4892,7 @@ def create_attendance_shift(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
+    require_permission(admin, "attendance:manage")
     payload = payload.model_dump(exclude_unset=True)
     employee_id = clean_text(payload.get("employee_id"), 36)
     employee = db.get(Employee, employee_id)

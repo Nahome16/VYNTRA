@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Figtree, IBM_Plex_Mono } from "next/font/google";
+import Script from "next/script";
 import { AuthProvider } from "@/components/auth-provider";
 import { PreferencesProvider } from "@/components/preferences-provider";
 import { PREFERENCES_BOOT_SCRIPT } from "@/lib/i18n";
@@ -43,7 +44,9 @@ export default function RootLayout({
       className={`h-full antialiased ${sans.variable} ${mono.variable}`}
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: PREFERENCES_BOOT_SCRIPT }} />
+        <Script id="vyntra-preferences" strategy="beforeInteractive">
+          {PREFERENCES_BOOT_SCRIPT}
+        </Script>
       </head>
       <body className="min-h-full flex flex-col">
         <PreferencesProvider>

@@ -5,8 +5,94 @@ export type AdminUser = {
   email: string;
   full_name: string;
   role: string;
+  permissions: string[];
   status: string;
   last_login_at: string | null;
+};
+
+export type SystemCompany = {
+  id: string;
+  name: string;
+  legal_name: string;
+  status: string;
+  timezone: string;
+  created_at: string | null;
+  employees_count: number;
+  users_count: number;
+  devices_count: number;
+  controls: {
+    employee_limit: number;
+    subscription_status: "active" | "trial" | "past_due" | "suspended" | "cancelled";
+    subscription_ends_at: string;
+    admin_notice: string;
+  };
+};
+
+export type PanelUser = {
+  id: string;
+  company_id: string;
+  company: string;
+  email: string;
+  full_name: string;
+  role: string;
+  permissions: string[];
+  status: string;
+  created_at: string | null;
+  last_login_at: string | null;
+};
+
+export type SystemOverviewResponse = {
+  companies: SystemCompany[];
+  users: PanelUser[];
+  roles: Array<"system_admin" | "owner" | "admin" | "rrhh" | "supervisor" | "viewer">;
+};
+
+export type AuditLogEntry = {
+  id: string;
+  company_id: string | null;
+  company: string;
+  user_id: string | null;
+  actor: string;
+  actor_email: string;
+  device_id: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  ip_address: string;
+  payload: Record<string, unknown> | unknown[] | string;
+  created_at: string | null;
+};
+
+export type AuditLogsResponse = {
+  company_id: string | null;
+  count: number;
+  items: AuditLogEntry[];
+  filters: Record<string, string | number | null>;
+};
+
+export type DeviceStatus = "online" | "offline" | "revoked";
+
+export type DeviceRecord = {
+  id: string;
+  company_id: string;
+  company: string;
+  employee_id: string | null;
+  employee: string;
+  employee_code: string;
+  name: string;
+  hostname: string;
+  location: string;
+  is_active: boolean;
+  status: DeviceStatus;
+  agent_version: string;
+  created_at: string | null;
+  last_seen_at: string | null;
+};
+
+export type DevicesResponse = {
+  company: { id: string; name: string };
+  count: number;
+  devices: DeviceRecord[];
 };
 
 export type DashboardTotals = {
@@ -114,7 +200,7 @@ export type StationRestoreCode = {
   employee_id: string;
   employee: string | null;
   email: string;
-  code: string;
+  code?: string;
   status: string;
   reason: string;
   valid_from: string;

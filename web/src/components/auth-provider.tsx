@@ -51,27 +51,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const timer = window.setTimeout(() => {
       const storedToken = window.localStorage.getItem(tokenKey) || "";
       const storedUser = window.localStorage.getItem(userKey);
-      setToken(storedToken);
-      if (storedUser) {
-        try {
-          setUser(JSON.parse(storedUser));
-        } catch {
-          window.localStorage.removeItem(userKey);
-        }
+      if (!storedToken) {
+        window.localStorage.removeItem(userKey);
+        setReady(true);
+        return;
       }
-      setReady(true);
+
+      requestJson<{ user: AdminUser }>("/api/admin/me", storedToken)
+        .then((payload) => {
+          setToken(storedToken);
+          setUser(payload.user);
+          window.localStorage.setItem(userKey, JSON.stringify(payload.user));
+        })
+        .catch(() => {
+          setToken("");
+          setUser(null);
+          window.localStorage.removeItem(tokenKey);
+          window.localStorage.removeItem(userKey);
+        })
+        .finally(() => {
+          if (storedUser) {
+            try {
+              JSON.parse(storedUser);
+            } catch {
+              window.localStorage.removeItem(userKey);
+            }
+          }
+          setReady(true);
+        });
     }, 0);
 
     return () => window.clearTimeout(timer);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
+    const cleanEmail = email.trim().toLowerCase();
+    if (!cleanEmail || !password) {
+      throw new ApiError(400);
+    }
     const payload = await requestJson<{
       access_token: string;
       user: AdminUser;
     }>("/api/admin/login", "", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email: cleanEmail, password }),
     });
     setToken(payload.access_token);
     setUser(payload.user);

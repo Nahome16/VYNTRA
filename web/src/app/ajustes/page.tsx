@@ -87,6 +87,12 @@ function isCodeCurrent(code: AccessCode) {
   return code.status === "issued" && new Date(code.valid_until).getTime() > Date.now();
 }
 
+function deliveryStatusText(status?: string) {
+  if (status === "sent") return "Enviado por correo";
+  if (status === "failed") return "No se pudo enviar por correo";
+  return "Entrega pendiente";
+}
+
 export default function SettingsPage() {
   const { apiGet, apiPatch, apiPost, user } = useAuth();
   const [activeSection, setActiveSection] = useState<SectionKey>("usuarios");
@@ -106,7 +112,12 @@ export default function SettingsPage() {
   const [employeeEmail, setEmployeeEmail] = useState("");
   const [employeeDepartmentId, setEmployeeDepartmentId] = useState("");
   const [newDepartment, setNewDepartment] = useState("");
-  const [generatedCredential, setGeneratedCredential] = useState<{ email: string; password: string; password_change_required?: boolean } | null>(null);
+  const [generatedCredential, setGeneratedCredential] = useState<{
+    email: string;
+    password?: string;
+    password_change_required?: boolean;
+    delivery_status?: string;
+  } | null>(null);
 
   const [accessSearch, setAccessSearch] = useState("");
   const [accessDate, setAccessDate] = useState("");
@@ -316,24 +327,31 @@ export default function SettingsPage() {
 
       const response = await apiPost<{
         employee: Employee;
-        credentials: { email: string; password: string; delivery_status: string; password_change_required?: boolean };
+        credentials: { email: string; password?: string; delivery_status: string; password_change_required?: boolean };
       }>("/api/settings/employees", {
         full_name: employeeName,
         email: employeeEmail,
         department_id: employeeDepartmentId || null,
         new_department: newDepartment || null,
       });
-        setGeneratedCredential({
-          email: response.credentials.email,
-          password: response.credentials.password,
-          password_change_required: response.credentials.password_change_required,
-        });
+      setGeneratedCredential({
+        email: response.credentials.email,
+        password: response.credentials.password,
+        password_change_required: response.credentials.password_change_required,
+        delivery_status: response.credentials.delivery_status,
+      });
       setEmployeeName("");
       setEmployeeEmail("");
       setEmployeeDepartmentId("");
       setNewDepartment("");
       await loadSettings();
-      setStatusText("Usuario creado. Guarda la credencial generada antes de cerrar.");
+      setStatusText(
+        response.credentials.delivery_status === "sent"
+          ? "Usuario creado y credencial enviada por correo."
+          : response.credentials.password
+          ? "Usuario creado. Guarda la credencial generada antes de cerrar."
+          : "Usuario creado. Configura entrega de credenciales para activarlo."
+      );
     } catch {
       setStatusText("No se pudo guardar el usuario. Revisa correo duplicado o formato invalido.");
     }
@@ -377,9 +395,11 @@ export default function SettingsPage() {
       setAccessCodes((current) => [response.code, ...current.filter((code) => code.id !== response.code.id)]);
       closeAccessModal();
       setStatusText(
-        response.delivery_status === "not_configured"
-          ? "Codigo generado. Queda pendiente de entrega por correo cuando SMTP este configurado."
-          : "Codigo generado y agregado a la tabla"
+        response.delivery_status === "sent"
+          ? "Codigo generado y enviado por correo."
+          : response.code.code
+          ? "Codigo generado y agregado a la tabla"
+          : "Codigo generado. Configura entrega segura para enviarlo."
       );
     } catch {
       setStatusText("No se pudo generar el codigo");
@@ -678,7 +698,7 @@ export default function SettingsPage() {
                       <tr key={code.id}>
                         <td>{code.employee || code.email}</td>
                         <td><span className={`settings-type settings-type-${code.type}`}>{code.type_label || accessTypeLabels[code.type]}</span></td>
-                        <td><strong>{code.code}</strong></td>
+                        <td><strong>{code.code || "Entrega pendiente"}</strong></td>
                         <td><span className={`settings-access-status settings-access-status-${code.status}`}>{accessStatusLabel(code)}</span></td>
                         <td>{new Date(code.valid_until).toLocaleString("es-NI")}</td>
                       </tr>
@@ -877,8 +897,12 @@ export default function SettingsPage() {
               <div className="credential-box">
                 <span>Credencial generada</span>
                 <strong>{generatedCredential.email}</strong>
-                <code>{generatedCredential.password}</code>
-                {generatedCredential.password_change_required ? <small>Temporal: el usuario debera cambiarla al primer ingreso.</small> : null}
+                {generatedCredential.password ? (
+                  <code>{generatedCredential.password}</code>
+                ) : (
+                  <small>{deliveryStatusText(generatedCredential.delivery_status)}</small>
+                )}
+                {generatedCredential.password_change_required && generatedCredential.password ? <small>Temporal: el usuario debera cambiarla al primer ingreso.</small> : null}
               </div>
             ) : null}
           </form>

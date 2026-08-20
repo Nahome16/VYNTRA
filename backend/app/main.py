@@ -2166,6 +2166,7 @@ def bootstrap_data():
 
         seed_organization_catalogs(db, company.id)
         seed_company_settings(db, company.id)
+        db.flush()
         if settings.bootstrap_employee_limit > 0:
             set_company_setting(
                 db,

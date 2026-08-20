@@ -3832,6 +3832,95 @@ def update_monitored_employee(
     return {"ok": True, "employee": serialize_employee(employee, department)}
 
 
+@app.post("/api/settings/employees/{employee_id}/reset-credentials")
+def reset_monitored_employee_credentials(
+    employee_id: str,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_permission(admin, "employees:manage")
+    employee = db.get(Employee, employee_id)
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    company = resolve_admin_company(db, admin, employee.company_id)
+    if employee.company_id != company.id:
+        raise HTTPException(status_code=403, detail="Cannot edit employee from another company")
+    if employee.status != "active":
+        raise HTTPException(status_code=400, detail="Employee must be active to reset credentials")
+
+    email = clean_email(employee.email)
+    duplicate_credential = db.execute(
+        select(EmployeeCredential).where(
+            EmployeeCredential.company_id == company.id,
+            EmployeeCredential.email == email,
+            EmployeeCredential.employee_id != employee.id,
+        )
+    ).scalar_one_or_none()
+    if duplicate_credential:
+        raise HTTPException(status_code=409, detail="Email already has station credentials")
+
+    credential = db.execute(
+        select(EmployeeCredential).where(EmployeeCredential.employee_id == employee.id)
+    ).scalar_one_or_none()
+    password = generate_password()
+    if credential is None:
+        credential = EmployeeCredential(
+            company_id=company.id,
+            employee_id=employee.id,
+            email=email,
+            status="active",
+        )
+        db.add(credential)
+    credential.email = email
+    credential.password_hash = hash_password(password)
+    credential.password_change_required = True
+    credential.password_changed_at = None
+    credential.reset_code_hash = ""
+    credential.reset_code_expires_at = None
+    credential.reset_requested_at = None
+    credential.reset_verified_at = None
+    credential.reset_attempts = 0
+    credential.status = "active"
+    db.flush()
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="employee_credential_reset",
+            entity_type="employee_credential",
+            entity_id=credential.id,
+            payload_json=json_text({"email": email, "employee_id": employee.id}),
+        )
+    )
+    db.commit()
+    db.refresh(credential)
+
+    delivery_status = send_plain_email(
+        email,
+        "Acceso temporal VYNTRA",
+        temporary_password_email_body(company, employee, email, password),
+    )
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="employee_credential_delivery_attempted",
+            entity_type="employee_credential",
+            entity_id=credential.id,
+            payload_json=json_text({"email": email, "delivery_status": delivery_status, "reason": "manual_reset"}),
+        )
+    )
+    db.commit()
+    credentials = {
+        "email": email,
+        "password_change_required": True,
+        "delivery_status": delivery_status,
+    }
+    if allow_local_testing_secrets():
+        credentials["password"] = password
+    return {"ok": True, "employee": serialize_employee(employee), "credentials": credentials}
+
+
 @app.get("/api/settings/restore-codes")
 def list_restore_codes(
     company_id: str | None = None,

@@ -118,6 +118,7 @@ export default function SettingsPage() {
     password_change_required?: boolean;
     delivery_status?: string;
   } | null>(null);
+  const [resettingCredentialId, setResettingCredentialId] = useState("");
 
   const [accessSearch, setAccessSearch] = useState("");
   const [accessDate, setAccessDate] = useState("");
@@ -354,6 +355,31 @@ export default function SettingsPage() {
       );
     } catch {
       setStatusText("No se pudo guardar el usuario. Revisa correo duplicado o formato invalido.");
+    }
+  }
+
+  async function resetEmployeeCredentials(employee: Employee) {
+    if (employee.status !== "active") {
+      setStatusText("Activa el usuario antes de reenviar credenciales.");
+      return;
+    }
+    setResettingCredentialId(employee.id);
+    setStatusText(`Regenerando credencial para ${employee.full_name}...`);
+    try {
+      const response = await apiPost<{
+        credentials: { email: string; password?: string; delivery_status: string; password_change_required?: boolean };
+      }>(`/api/settings/employees/${employee.id}/reset-credentials`, {});
+      setStatusText(
+        response.credentials.delivery_status === "sent"
+          ? `Credencial enviada por correo a ${response.credentials.email}.`
+          : response.credentials.password
+          ? `Credencial regenerada para ${response.credentials.email}.`
+          : `No se pudo enviar la credencial a ${response.credentials.email}. Revisa SMTP o el buzon.`,
+      );
+    } catch {
+      setStatusText("No se pudo regenerar la credencial del usuario.");
+    } finally {
+      setResettingCredentialId("");
     }
   }
 
@@ -631,9 +657,19 @@ export default function SettingsPage() {
                           </button>
                         </td>
                         <td>
-                          <button className="row-action" type="button" onClick={() => openEmployeeModal(employee)}>
-                            Editar
-                          </button>
+                          <div className="settings-row-actions">
+                            <button className="row-action" type="button" onClick={() => openEmployeeModal(employee)}>
+                              Editar
+                            </button>
+                            <button
+                              className="row-action"
+                              type="button"
+                              disabled={resettingCredentialId === employee.id || employee.status !== "active"}
+                              onClick={() => void resetEmployeeCredentials(employee)}
+                            >
+                              {resettingCredentialId === employee.id ? "Enviando..." : "Reenviar"}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );

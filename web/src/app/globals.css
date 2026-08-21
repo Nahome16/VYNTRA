@@ -2321,6 +2321,13 @@ tbody tr:hover {
   color: var(--muted);
   font-size: 12px;
   font-weight: 650;
+  overflow: hidden;
+}
+
+.evidence-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .evidence-tile strong {

@@ -22,7 +22,7 @@ from typing import Literal
 
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.exc import IntegrityError
@@ -690,6 +690,28 @@ def resolve_admin_company(
     if company_id and company_id != admin.company_id:
         raise HTTPException(status_code=403, detail="Cannot access another company")
     return resolve_company(db, admin.company_id)
+
+
+def evidence_media_type(evidence: EvidenceFile) -> str:
+    content_type = (evidence.content_type or "").lower()
+    if content_type.startswith("image/"):
+        return content_type
+    extension = os.path.splitext(evidence.original_filename or evidence.storage_path)[1].lower()
+    if extension == ".webp":
+        return "image/webp"
+    if extension == ".png":
+        return "image/png"
+    if extension in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    return "application/octet-stream"
+
+
+def evidence_full_path(evidence: EvidenceFile) -> str:
+    storage_root = os.path.abspath(settings.storage_dir)
+    full_path = os.path.abspath(os.path.join(storage_root, evidence.storage_path))
+    if os.path.commonpath([full_path, storage_root]) != storage_root:
+        raise HTTPException(status_code=400, detail="Invalid evidence path")
+    return full_path
 
 
 def require_system_admin(admin: AdminPrincipal):
@@ -5086,12 +5108,42 @@ def employee_detail(
                 "captured_at": row.captured_at.isoformat(),
                 "original_filename": row.original_filename,
                 "equipment": row.equipment,
-                "content_type": row.content_type,
+                "content_type": evidence_media_type(row),
                 "status": row.status,
+                "view_url": f"/api/evidence/{row.id}/content",
             }
             for row in evidence
         ],
     }
+
+
+@app.get("/api/evidence/{evidence_id}/content")
+def view_evidence_content(
+    evidence_id: str,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_permission(admin, "employees:read")
+    evidence = db.get(EvidenceFile, clean_text(evidence_id, 36))
+    if evidence is None:
+        raise HTTPException(status_code=404, detail="Evidence not found")
+    company = resolve_admin_company(db, admin, evidence.company_id)
+    if evidence.company_id != company.id:
+        raise HTTPException(status_code=403, detail="Cannot access evidence from another company")
+
+    full_path = evidence_full_path(evidence)
+    if not os.path.exists(full_path):
+        raise HTTPException(status_code=404, detail="Evidence file missing")
+
+    return FileResponse(
+        full_path,
+        media_type=evidence_media_type(evidence),
+        headers={
+            "Cache-Control": "private, max-age=60",
+            "Content-Disposition": f'inline; filename="{evidence.original_filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.get("/api/attendance/overview")

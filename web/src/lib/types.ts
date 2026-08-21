@@ -357,5 +357,6 @@ export type EmployeeDetailResponse = {
     equipment: string;
     content_type: string;
     status: string;
+    view_url: string;
   }>;
 };

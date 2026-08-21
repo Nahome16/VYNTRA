@@ -104,9 +104,10 @@ export function EmployeeProfile({
   initialDateFrom?: string;
   initialDateTo?: string;
 }) {
-  const { apiGet } = useAuth();
+  const { apiGet, token } = useAuth();
   const { t } = usePreferences();
   const [employeeDetail, setEmployeeDetail] = useState<EmployeeDetailResponse | null>(null);
+  const [evidencePreviews, setEvidencePreviews] = useState<Record<string, string>>({});
   const [dateFrom, setDateFrom] = useState(initialDateFrom || monthStartISO());
   const [dateTo, setDateTo] = useState(initialDateTo || todayISO());
   const [detailTab, setDetailTab] = useState<"resumen" | "registro">("resumen");
@@ -139,6 +140,51 @@ export function EmployeeProfile({
     }, 0);
     return () => window.clearTimeout(timer);
   }, [initialDateFrom, initialDateTo, loadProfile]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const urls: string[] = [];
+
+    async function loadEvidencePreviews() {
+      const evidence = (employeeDetail?.evidence || []).filter((item) => item.content_type.includes("image"));
+      if (!token || !evidence.length) {
+        setEvidencePreviews({});
+        return;
+      }
+
+      const entries = await Promise.all(
+        evidence.map(async (item) => {
+          try {
+            const response = await fetch(item.view_url, {
+              headers: { Authorization: `Bearer ${token}` },
+              cache: "no-store",
+            });
+            if (!response.ok) return null;
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            urls.push(url);
+            return [item.id, url] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+
+      if (cancelled) {
+        urls.forEach((url) => URL.revokeObjectURL(url));
+        return;
+      }
+
+      setEvidencePreviews(Object.fromEntries(entries.filter(Boolean) as Array<readonly [string, string]>));
+    }
+
+    void loadEvidencePreviews();
+
+    return () => {
+      cancelled = true;
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [employeeDetail?.evidence, token]);
 
   const productiveApps = useMemo(
     () => (employeeDetail?.apps || []).filter((app) => app.classification === "productive").slice(0, 5),
@@ -413,7 +459,16 @@ export function EmployeeProfile({
               <div className="evidence-grid">
                 {employeeDetail.evidence.map((item) => (
                   <article className="evidence-tile" key={item.id}>
-                    <div className="evidence-thumb">{item.content_type.includes("image") ? "IMG" : "FILE"}</div>
+                    <div className="evidence-thumb">
+                      {evidencePreviews[item.id] ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={evidencePreviews[item.id]} alt={item.original_filename} />
+                      ) : item.content_type.includes("image") ? (
+                        "IMG"
+                      ) : (
+                        "FILE"
+                      )}
+                    </div>
                     <strong>{item.original_filename}</strong>
                     <span>{new Date(item.captured_at).toLocaleString("es-NI")}</span>
                     <small>

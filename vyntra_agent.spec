@@ -41,6 +41,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
+    icon="assets/vyntra.ico",
 )
 
 coll = COLLECT(

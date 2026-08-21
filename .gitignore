@@ -22,6 +22,7 @@ capturas/
 build/
 dist/
 .installer_build/
+.installer_exe_build/
 release/
 web.zip
 *.spec.bak

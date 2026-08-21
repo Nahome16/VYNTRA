@@ -6,6 +6,11 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
+$iconPath = Join-Path $root "assets\vyntra.ico"
+if (-not (Test-Path -LiteralPath $iconPath)) {
+    & $Python (Join-Path $PSScriptRoot "create_vyntra_icon.py")
+}
+
 $rootConfig = Join-Path $root "config.ini"
 $templateConfig = Join-Path $PSScriptRoot "config.production.template.ini"
 $generatedBuildConfig = $false

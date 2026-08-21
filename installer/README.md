@@ -108,3 +108,23 @@ un `DeviceToken` unico localmente en esa instalacion.
 
 Si necesitas preparar un paquete tecnico ya enrolado para una PC especifica,
 puedes pasar `-DeviceToken`, pero el flujo recomendado es enrolamiento automatico.
+
+## Instalador `.exe` para Windows
+
+Para generar un archivo `.exe` de instalacion como aplicacion de Windows:
+
+```powershell
+.\installer\build_windows_exe_installer.ps1 `
+  -CompanyName "InsureMeBetter" `
+  -ContactEmail "carlos@insuremebetter.com"
+```
+
+El resultado queda en:
+
+```text
+release\VYNTRAAgent-InsureMeBetter-Setup.exe
+```
+
+Este instalador es para Windows. macOS y Linux requieren agentes/instaladores
+separados porque el agente actual usa APIs de Windows, tarea programada y
+dependencias como `pywin32`.

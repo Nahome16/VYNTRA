@@ -34,7 +34,15 @@ function Safe-RemoveDirectory {
     if (-not $resolvedPath.StartsWith($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Ruta fuera del workspace: $resolvedPath"
     }
-    Remove-Item -LiteralPath $resolvedPath -Recurse -Force
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $resolvedPath -Recurse -Force
+            return
+        } catch {
+            if ($attempt -eq 5) { throw }
+            Start-Sleep -Seconds 2
+        }
+    }
 }
 
 Assert-CleanToken -Token $DeviceToken

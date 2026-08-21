@@ -79,7 +79,7 @@ function Install-VyntraAgent {
     $principal = New-ScheduledTaskPrincipal `
         -UserId $principalUser `
         -LogonType Interactive `
-        -RunLevel LeastPrivilege
+        -RunLevel Limited
 
     Register-ScheduledTask `
         -TaskName $ResolvedTaskName `

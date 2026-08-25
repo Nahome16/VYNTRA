@@ -5,6 +5,7 @@ import { AppShell } from "@/components/app-shell";
 import { EmptyState, Panel, RefreshButton, StatCard, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { AgentDownload, AgentDownloadsResponse } from "@/lib/types";
+import { downloadAuthenticatedFile } from "@/lib/download-file";
 
 function formatSize(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
@@ -63,20 +64,7 @@ export default function DownloadsPage() {
     setDownloading(item.filename);
     setStatusText(`Descargando ${item.filename}...`);
     try {
-      const response = await fetch(item.download_url, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = item.filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      await downloadAuthenticatedFile(item.download_url, token, item.filename);
       setStatusText("Descarga iniciada");
     } catch {
       setStatusText("No se pudo descargar el instalador");

@@ -8,14 +8,16 @@ import { usePreferences } from "@/components/preferences-provider";
 import { CompositionChart, CompositionSegment, TrendChart } from "@/components/charts";
 import { formatDuration, formatPercent, fullDate, metricTone } from "@/lib/format";
 import { CatalogsResponse, DashboardResponse, UncategorizedItem } from "@/lib/types";
+import { downloadAuthenticatedFile } from "@/lib/download-file";
 
 export default function DashboardPage() {
-  const { apiGet, user } = useAuth();
+  const { apiGet, token, user } = useAuth();
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [uncategorized, setUncategorized] = useState<UncategorizedItem[]>([]);
   const [catalogs, setCatalogs] = useState<CatalogsResponse | null>(null);
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
 
   const { t } = usePreferences();
   const totals = dashboard?.totals;
@@ -88,11 +90,35 @@ export default function DashboardPage() {
     return () => window.clearTimeout(timer);
   }, [loadDashboard, user]);
 
+  async function downloadReport() {
+    setReportLoading(true);
+    setStatusText(t("Generando PDF..."));
+    try {
+      await downloadAuthenticatedFile("/api/reports/operations.pdf", token, "vyntra-reporte-operativo.pdf");
+      setStatusText(t("Reporte descargado"));
+    } catch {
+      setStatusText(t("No se pudo generar el PDF"));
+    } finally {
+      setReportLoading(false);
+    }
+  }
+
   return (
     <AppShell
       title={t("Dashboard")}
       description={`${user?.company || t("Empresa")} · ${t("productividad calculada desde actividad real del agente.")}`}
-      actions={<RefreshButton loading={loading} onClick={loadDashboard} />}
+      actions={(
+        <>
+          <button className="secondary-button" onClick={downloadReport} disabled={reportLoading || !totals}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6M8 13h8M8 17h5" />
+            </svg>
+            <span>{reportLoading ? t("Generando PDF...") : "PDF"}</span>
+          </button>
+          <RefreshButton loading={loading} onClick={loadDashboard} />
+        </>
+      )}
     >
       {!totals ? (
         <Panel title={t("Estado")}>

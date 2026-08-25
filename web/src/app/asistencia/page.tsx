@@ -7,6 +7,7 @@ import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { AttendanceEmployee, AttendanceOverviewResponse, AttendanceShift } from "@/lib/types";
 import { formatDuration, fullDate } from "@/lib/format";
+import { downloadAuthenticatedFile } from "@/lib/download-file";
 
 type AttendanceView = "live" | "history" | "groups" | "summary";
 
@@ -122,7 +123,7 @@ function dateTimeFromInput(date: string, time: string) {
 }
 
 export default function AttendancePage() {
-  const { apiGet, apiPost, apiPatch, user } = useAuth();
+  const { apiGet, apiPost, apiPatch, token, user } = useAuth();
   const { t } = usePreferences();
   const [view, setView] = useState<AttendanceView>("history");
   const [overview, setOverview] = useState<AttendanceOverviewResponse | null>(null);
@@ -143,6 +144,7 @@ export default function AttendancePage() {
   const [dateTo, setDateTo] = useState(todayISO());
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
   const didInitialLoad = useRef(false);
 
   const loadAttendance = useCallback(async (range?: { dateFrom?: string; dateTo?: string }) => {
@@ -392,11 +394,45 @@ export default function AttendancePage() {
     }
   }
 
+  async function downloadReport() {
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("date_from", dateFrom);
+    if (dateTo) params.set("date_to", dateTo);
+    if (selectedDepartment) params.set("department_id", selectedDepartment);
+    if (selectedEmployee) params.set("employee_id", selectedEmployee);
+    const query = params.toString();
+    setReportLoading(true);
+    setStatusText(t("Generando PDF..."));
+    try {
+      await downloadAuthenticatedFile(
+        `/api/reports/operations.pdf${query ? `?${query}` : ""}`,
+        token,
+        "vyntra-reporte-asistencia.pdf",
+      );
+      setStatusText(t("Reporte descargado"));
+    } catch {
+      setStatusText(t("No se pudo generar el PDF"));
+    } finally {
+      setReportLoading(false);
+    }
+  }
+
   return (
     <AppShell
       title={t("Asistencia")}
       description={`${user?.company || t("Empresa")} - ${t("control de jornada, ausencias, break y lunch.")}`}
-      actions={<RefreshButton loading={loading} onClick={loadAttendance} />}
+      actions={(
+        <>
+          <button className="secondary-button" onClick={downloadReport} disabled={reportLoading || !overview}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6M8 13h8M8 17h5" />
+            </svg>
+            <span>{reportLoading ? t("Generando PDF...") : "PDF"}</span>
+          </button>
+          <RefreshButton loading={loading} onClick={loadAttendance} />
+        </>
+      )}
     >
       <div className="attendance-toolbar">
         <div className="tabs">

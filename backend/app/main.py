@@ -74,6 +74,7 @@ from app.models import (
     new_id,
     now_utc,
 )
+from app.reports import build_operations_pdf
 from app.storage import (
     IMAGE_CONTENT_TYPES,
     build_storage_path,
@@ -5324,6 +5325,51 @@ def attendance_overview(
         "time_adjustments": [serialize_time_adjustment(row) for row in adjustments],
         "shifts": [serialize_shift_for_attendance(shift, events_by_shift, justified_by_shift) for shift in shifts],
     }
+
+
+@app.get("/api/reports/operations.pdf")
+def operations_pdf_report(
+    company_id: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    employee_id: str | None = None,
+    department_id: str | None = None,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_permission(admin, "dashboard:read")
+    require_permission(admin, "attendance:read")
+    dashboard = productivity_dashboard(
+        company_id=company_id,
+        date_from=date_from,
+        date_to=date_to,
+        employee_id=employee_id,
+        department_id=department_id,
+        admin=admin,
+        db=db,
+    )
+    attendance = attendance_overview(
+        company_id=company_id,
+        date_from=date_from,
+        date_to=date_to,
+        employee_id=employee_id,
+        department_id=department_id,
+        admin=admin,
+        db=db,
+    )
+    pdf_bytes = build_operations_pdf(dashboard, attendance, admin.email)
+    company_name = clean_text(dashboard.get("company", {}).get("name") or "vyntra", 80)
+    safe_company = re.sub(r"[^a-zA-Z0-9_-]+", "-", company_name).strip("-").lower() or "vyntra"
+    filename = f"vyntra-reporte-operativo-{safe_company}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @app.patch("/api/attendance/employees/{employee_id}/schedule")

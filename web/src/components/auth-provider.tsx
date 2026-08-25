@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { AdminUser } from "@/lib/types";
 
 type AuthContextValue = {
@@ -8,6 +8,7 @@ type AuthContextValue = {
   user: AdminUser | null;
   ready: boolean;
   login: (email: string, password: string) => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   logout: () => void;
   apiGet: <T,>(path: string) => Promise<T>;
   apiPost: <T,>(path: string, body: unknown) => Promise<T>;
@@ -102,6 +103,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.localStorage.setItem(userKey, JSON.stringify(payload.user));
   }, []);
 
+  const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
+    const payload = await requestJson<{ user: AdminUser }>("/api/admin/password/change", token, {
+      method: "POST",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+    });
+    setUser(payload.user);
+    window.localStorage.setItem(userKey, JSON.stringify(payload.user));
+  }, [token]);
+
   const logout = useCallback(() => {
     const currentToken = window.localStorage.getItem(tokenKey) || token;
     if (currentToken) {
@@ -138,6 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       ready,
       login,
+      changePassword,
       logout,
       apiGet: <T,>(path: string) => requestAuthorized<T>(path),
       apiPost: <T,>(path: string, body: unknown) =>
@@ -151,14 +165,105 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify(body),
         }),
     }),
-    [login, logout, ready, requestAuthorized, token, user],
+    [changePassword, login, logout, ready, requestAuthorized, token, user],
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+      {ready && token && user?.password_change_required ? <PasswordChangeGate /> : null}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {
   const value = useContext(AuthContext);
   if (!value) throw new Error("useAuth must be used inside AuthProvider");
   return value;
+}
+
+function passwordPolicyOk(password: string) {
+  const signs = "!@#$%*?_-.";
+  return (
+    password.length >= 8
+    && /[a-z]/.test(password)
+    && /[A-Z]/.test(password)
+    && /\d/.test(password)
+    && Array.from(password).some((char) => signs.includes(char))
+  );
+}
+
+function PasswordChangeGate() {
+  const { changePassword } = useAuth();
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [statusText, setStatusText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const canSubmit = Boolean(currentPassword) && passwordPolicyOk(newPassword) && newPassword === confirmation && !saving;
+
+  async function submitPasswordChange(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!canSubmit) {
+      setStatusText("La nueva contrasena debe cumplir la politica y coincidir.");
+      return;
+    }
+    setSaving(true);
+    setStatusText("Actualizando contrasena...");
+    try {
+      await changePassword(currentPassword, newPassword);
+      setStatusText("Contrasena actualizada.");
+    } catch {
+      setStatusText("No se pudo cambiar. Revisa la contrasena temporal.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="password-gate" role="dialog" aria-modal="true">
+      <form className="password-gate-panel" onSubmit={submitPasswordChange}>
+        <header>
+          <span>Credencial temporal</span>
+          <h2>Cambia tu contrasena para continuar</h2>
+          <p>Tu acceso fue creado con una contrasena temporal. Define una nueva contrasena antes de usar el panel.</p>
+        </header>
+        <label>
+          Contrasena temporal
+          <input
+            type="password"
+            value={currentPassword}
+            onChange={(event) => setCurrentPassword(event.target.value)}
+            autoComplete="current-password"
+            required
+          />
+        </label>
+        <label>
+          Nueva contrasena
+          <input
+            type="password"
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.target.value)}
+            autoComplete="new-password"
+            required
+          />
+        </label>
+        <label>
+          Confirmar nueva contrasena
+          <input
+            type="password"
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+            autoComplete="new-password"
+            required
+          />
+        </label>
+        <small>Minimo 8 caracteres, mayuscula, minuscula, numero y signo.</small>
+        {statusText ? <p className="password-gate-status">{statusText}</p> : null}
+        <button type="submit" disabled={!canSubmit}>
+          {saving ? "Guardando..." : "Guardar y continuar"}
+        </button>
+      </form>
+    </div>
+  );
 }

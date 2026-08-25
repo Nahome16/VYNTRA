@@ -106,6 +106,11 @@ class AdminLoginPayload(StrictPayload):
     password: str = Field(..., min_length=1, max_length=256)
 
 
+class AdminPasswordChangePayload(StrictPayload):
+    current_password: str = Field(..., min_length=1, max_length=256)
+    new_password: str = Field(..., min_length=8, max_length=256)
+
+
 class StationLoginPayload(StrictPayload):
     email: str | None = Field(default=None, max_length=180)
     correo: str | None = Field(default=None, max_length=180)
@@ -245,6 +250,8 @@ class SystemCompanyPayload(StrictPayload):
     name: str = Field(..., min_length=2, max_length=160)
     legal_name: str | None = Field(default=None, max_length=220)
     timezone: str | None = Field(default=None, max_length=80)
+    admin_full_name: str = Field(..., min_length=2, max_length=180)
+    admin_email: str = Field(..., min_length=3, max_length=180)
 
 
 class SystemCompanyControlsPayload(StrictPayload):
@@ -302,6 +309,7 @@ LOGIN_LOCKOUT_MINUTES = 15
 
 RATE_LIMITS = {
     ("POST", "/api/admin/login"): (8, 300),
+    ("POST", "/api/admin/password/change"): (8, 300),
     ("POST", "/api/station/enroll"): (10, 300),
     ("POST", "/api/station/login"): (20, 300),
     ("POST", "/api/station/password/change"): (8, 300),
@@ -648,7 +656,7 @@ def panel_user_email_body(company: Company, full_name: str, email: str, password
         f"Correo: {email}\n"
         f"Contrasena temporal: {password}\n"
         f"{public_app_line()}"
-        "\nCambia esta contrasena despues del primer ingreso y no la compartas."
+        "\nPor seguridad, el panel te pedira cambiar esta contrasena en el primer ingreso."
     )
 
 
@@ -2524,11 +2532,35 @@ def ensure_employee_credential_schema():
                 conn.execute(text(f"ALTER TABLE employee_credentials ADD COLUMN {column} {ddl}"))
 
 
+def ensure_user_schema():
+    columns = {
+        "password_change_required": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "password_changed_at": "TIMESTAMP WITH TIME ZONE",
+    }
+    with engine.begin() as conn:
+        existing = {
+            row[0]
+            for row in conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'users'
+                    """
+                )
+            )
+        }
+        for column, ddl in columns.items():
+            if column not in existing:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {column} {ddl}"))
+
+
 @app.on_event("startup")
 def on_startup():
     os.makedirs(settings.storage_dir, exist_ok=True)
     Base.metadata.create_all(bind=engine)
     ensure_employee_credential_schema()
+    ensure_user_schema()
     bootstrap_data()
 
 
@@ -2550,6 +2582,8 @@ def serialize_admin_user(db: Session, user: User, role_name: str | None = None) 
         "role": resolved_role,
         "permissions": permissions_for_role(resolved_role),
         "status": user.status,
+        "password_change_required": bool(user.password_change_required),
+        "password_changed_at": user.password_changed_at.isoformat() if user.password_changed_at else None,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
     }
 
@@ -2599,6 +2633,8 @@ def serialize_panel_user(db: Session, user: User) -> dict:
         "role": role.name if role else "",
         "permissions": permissions_for_role(role.name if role else ""),
         "status": user.status,
+        "password_change_required": bool(user.password_change_required),
+        "password_changed_at": user.password_changed_at.isoformat() if user.password_changed_at else None,
         "created_at": user.created_at.isoformat() if user.created_at else None,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
         "active_sessions": int(active_sessions or 0),
@@ -2837,6 +2873,53 @@ def admin_me(
     }
 
 
+@app.post("/api/admin/password/change")
+def admin_change_password(
+    payload: AdminPasswordChangePayload,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    if admin.auth_method == "legacy_token" or not admin.user_id:
+        raise HTTPException(status_code=403, detail="Panel user session required")
+    user = db.get(User, admin.user_id)
+    if user is None or user.status != "active":
+        raise HTTPException(status_code=401, detail="Invalid admin session")
+    if not verify_password_hash(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid current password")
+    if verify_password_hash(payload.new_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="New password must be different")
+    validate_password_policy(payload.new_password)
+
+    user.password_hash = hash_password(payload.new_password)
+    user.password_change_required = False
+    user.password_changed_at = now_utc()
+    revoked_count = revoke_admin_sessions(
+        db,
+        user.id,
+        actor_id=user.id,
+        reason="Contrasena actualizada por el usuario",
+        exclude_session_id=admin.session_id,
+    )
+    db.add(
+        AuditLog(
+            company_id=user.company_id,
+            user_id=user.id,
+            action="admin_password_changed",
+            entity_type="user",
+            entity_id=user.id,
+            payload_json=json_text({"revoked_sessions": revoked_count}),
+        )
+    )
+    db.commit()
+    db.refresh(user)
+    return {
+        "ok": True,
+        "password_change_required": False,
+        "revoked_sessions": revoked_count,
+        "user": serialize_admin_user(db, user, admin.role),
+    }
+
+
 @app.post("/api/admin/logout")
 def admin_logout(
     admin: AdminPrincipal = Depends(require_admin),
@@ -3013,19 +3096,38 @@ def create_system_company(
     name = clean_text(payload.name, 160)
     legal_name = clean_text(payload.legal_name, 220)
     timezone_name = clean_text(payload.timezone, 80) or "America/Managua"
+    admin_full_name = clean_text(payload.admin_full_name, 180)
+    admin_email = clean_email(payload.admin_email)
     existing = db.execute(
         select(Company).where(func.lower(Company.name) == name.lower())
     ).scalar_one_or_none()
     if existing is not None:
         raise HTTPException(status_code=409, detail="Company already exists")
+    duplicate_user = db.execute(select(User).where(User.email == admin_email)).scalars().first()
+    if duplicate_user is not None:
+        raise HTTPException(status_code=409, detail="Admin email already has panel access")
 
     company = Company(name=name, legal_name=legal_name, timezone=timezone_name, status="active")
     db.add(company)
     db.flush()
-    ensure_company_roles(db, company.id)
+    roles = ensure_company_roles(db, company.id)
     seed_organization_catalogs(db, company.id)
     seed_company_settings(db, company.id)
     seed_productivity_rules(db, company.id)
+    owner_role = roles["owner"]
+    password = generate_password()
+    company_owner = User(
+        company_id=company.id,
+        role_id=owner_role.id,
+        email=admin_email,
+        full_name=admin_full_name,
+        password_hash=hash_password(password),
+        password_change_required=True,
+        password_changed_at=None,
+        status="active",
+    )
+    db.add(company_owner)
+    db.flush()
     db.add(
         AuditLog(
             company_id=company.id,
@@ -3033,12 +3135,52 @@ def create_system_company(
             action="system_company_created",
             entity_type="company",
             entity_id=company.id,
-            payload_json=json_text({"name": company.name, "timezone": company.timezone}),
+            payload_json=json_text({"name": company.name, "timezone": company.timezone, "owner_email": admin_email}),
+        )
+    )
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="system_company_owner_created",
+            entity_type="user",
+            entity_id=company_owner.id,
+            payload_json=json_text({"email": admin_email, "role": "owner", "delivery_status": "pending"}),
         )
     )
     db.commit()
     db.refresh(company)
-    return {"ok": True, "company": serialize_system_company(db, company)}
+    db.refresh(company_owner)
+
+    delivery_status = send_plain_email(
+        admin_email,
+        "Acceso al panel VYNTRA",
+        panel_user_email_body(company, admin_full_name, admin_email, password, "owner"),
+    )
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="system_company_owner_delivery_attempted",
+            entity_type="user",
+            entity_id=company_owner.id,
+            payload_json=json_text({"email": admin_email, "role": "owner", "delivery_status": delivery_status}),
+        )
+    )
+    db.commit()
+    credentials = {
+        "email": admin_email,
+        "delivery_status": delivery_status,
+        "password_change_required": True,
+    }
+    if allow_local_testing_secrets():
+        credentials["password"] = password
+    return {
+        "ok": True,
+        "company": serialize_system_company(db, company),
+        "user": serialize_panel_user(db, company_owner),
+        "credentials": credentials,
+    }
 
 
 @app.patch("/api/system/companies/{company_id}/controls")
@@ -3203,6 +3345,8 @@ def create_system_panel_user(
         email=email,
         full_name=full_name,
         password_hash=hash_password(password),
+        password_change_required=True,
+        password_changed_at=None,
         status="active",
     )
     db.add(user)
@@ -3240,6 +3384,7 @@ def create_system_panel_user(
     credentials = {
         "email": email,
         "delivery_status": delivery_status,
+        "password_change_required": True,
     }
     if allow_local_testing_secrets():
         credentials["password"] = password
@@ -3324,6 +3469,8 @@ def reset_system_panel_user_password(
     role_name = role.name if role else ""
     password = generate_password()
     user.password_hash = hash_password(password)
+    user.password_change_required = True
+    user.password_changed_at = None
     user.status = "active"
     revoked_count = revoke_admin_sessions(
         db,
@@ -3371,6 +3518,7 @@ def reset_system_panel_user_password(
     credentials = {
         "email": user.email,
         "delivery_status": delivery_status,
+        "password_change_required": True,
     }
     if allow_local_testing_secrets():
         credentials["password"] = password

@@ -7,6 +7,8 @@ export type AdminUser = {
   role: string;
   permissions: string[];
   status: string;
+  password_change_required: boolean;
+  password_changed_at: string | null;
   last_login_at: string | null;
 };
 
@@ -37,6 +39,8 @@ export type PanelUser = {
   role: string;
   permissions: string[];
   status: string;
+  password_change_required: boolean;
+  password_changed_at: string | null;
   created_at: string | null;
   last_login_at: string | null;
   active_sessions?: number;
@@ -127,6 +131,8 @@ export type DashboardTotals = {
   neutral_pct: number;
   uncategorized_pct: number;
   idle_pct: number;
+  break_pct: number;
+  lunch_pct: number;
 };
 
 export type DashboardDay = {

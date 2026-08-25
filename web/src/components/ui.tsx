@@ -8,16 +8,21 @@ export function StatCard({
   value,
   detail,
   tone = "plain",
+  delta,
+  deltaTone = "plain",
 }: {
   label: string;
   value: string;
   detail: string;
   tone?: "plain" | "good" | "warn" | "bad";
+  delta?: string;
+  deltaTone?: "plain" | "good" | "warn" | "bad";
 }) {
   return (
     <section className={`stat stat-${tone}`}>
       <span>{label}</span>
       <strong>{value}</strong>
+      {delta ? <b className={`stat-delta delta-${deltaTone}`}>{delta}</b> : null}
       <small>{detail}</small>
     </section>
   );

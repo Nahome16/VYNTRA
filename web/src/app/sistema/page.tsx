@@ -54,6 +54,8 @@ export default function SystemPage() {
   const [companyName, setCompanyName] = useState("");
   const [companyLegalName, setCompanyLegalName] = useState("");
   const [companyTimezone, setCompanyTimezone] = useState("America/Managua");
+  const [companyAdminName, setCompanyAdminName] = useState("");
+  const [companyAdminEmail, setCompanyAdminEmail] = useState("");
   const [controlsCompanyId, setControlsCompanyId] = useState("");
   const [employeeLimit, setEmployeeLimit] = useState("0");
   const [subscriptionStatus, setSubscriptionStatus] = useState<SystemCompany["controls"]["subscription_status"]>("active");
@@ -64,7 +66,12 @@ export default function SystemPage() {
   const [panelFullName, setPanelFullName] = useState("");
   const [panelEmail, setPanelEmail] = useState("");
   const [panelRole, setPanelRole] = useState<PanelRole>("supervisor");
-  const [generatedCredential, setGeneratedCredential] = useState<{ email: string; password?: string; delivery_status?: string } | null>(null);
+  const [generatedCredential, setGeneratedCredential] = useState<{
+    email: string;
+    password?: string;
+    delivery_status?: string;
+    password_change_required?: boolean;
+  } | null>(null);
 
   const [selectedUserId, setSelectedUserId] = useState("");
   const [editFullName, setEditFullName] = useState("");
@@ -132,20 +139,31 @@ export default function SystemPage() {
     if (!companyName.trim()) return;
     setStatusText("Creando empresa...");
     try {
-      const response = await apiPost<{ company: SystemCompany }>("/api/system/companies", {
+      const response = await apiPost<{
+        company: SystemCompany;
+        user: PanelUser;
+        credentials: { email: string; password?: string; delivery_status?: string; password_change_required?: boolean };
+      }>("/api/system/companies", {
         name: companyName,
         legal_name: companyLegalName || null,
         timezone: companyTimezone || "America/Managua",
+        admin_full_name: companyAdminName,
+        admin_email: companyAdminEmail,
       });
       setCompanies((current) => [response.company, ...current.filter((company) => company.id !== response.company.id)]);
+      setUsers((current) => [response.user, ...current.filter((row) => row.id !== response.user.id)]);
+      setGeneratedCredential(response.credentials);
       setPanelCompanyId(response.company.id);
+      loadPanelUser(response.user);
       loadCompanyControls(response.company);
       setCompanyName("");
       setCompanyLegalName("");
-      setStatusText("Empresa creada");
+      setCompanyAdminName("");
+      setCompanyAdminEmail("");
+      setStatusText(`Empresa creada. ${deliveryText(response.credentials.delivery_status)}`);
       await loadSystem();
     } catch {
-      setStatusText("No se pudo crear la empresa");
+      setStatusText("No se pudo crear la empresa. Revisa duplicados y correo del administrador.");
     }
   }
 
@@ -413,6 +431,8 @@ export default function SystemPage() {
                 <label>Nombre comercial<input value={companyName} onChange={(event) => setCompanyName(event.target.value)} placeholder="Empresa cliente" required /></label>
                 <label>Razon social<input value={companyLegalName} onChange={(event) => setCompanyLegalName(event.target.value)} placeholder="Opcional" /></label>
                 <label>Zona horaria<input value={companyTimezone} onChange={(event) => setCompanyTimezone(event.target.value)} placeholder="America/Managua" /></label>
+                <label>Administrador<input value={companyAdminName} onChange={(event) => setCompanyAdminName(event.target.value)} placeholder="Nombre completo" required /></label>
+                <label>Correo administrador<input type="email" value={companyAdminEmail} onChange={(event) => setCompanyAdminEmail(event.target.value)} placeholder="admin@empresa.com" required /></label>
                 <button type="submit" className="primary-action">Crear empresa</button>
               </form>
             </Panel>

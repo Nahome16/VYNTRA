@@ -90,6 +90,8 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(180), nullable=False)
     full_name: Mapped[str] = mapped_column(String(180), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    password_change_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -14,10 +14,10 @@ LANGUAGE="es" \
 bash installer/build_macos_app.sh
 ```
 
-The result is:
+The result is the macOS version:
 
 ```text
-release/VYNTRAAgent-InsureMeBetter-macOS.zip
+release/VYNTRAAgent-InsureMeBetter-macOS-v1.2.1.zip
 ```
 
 The user extracts the ZIP and runs:
@@ -39,6 +39,11 @@ iOS does not allow a third-party app to monitor other apps, capture the screen i
 the background, inspect active window titles, or run a persistent desktop-style
 agent. For iPhone/iPad, VYNTRA would need a different product scope, such as a
 manual clock-in/clock-out app, MDM-managed controls, or integration with Apple
-Business Manager. It cannot be the same monitored desktop agent used on Windows
-or macOS.
+Business Manager.
 
+There is no iOS installer equivalent to the Windows/macOS monitored desktop
+agent. Product distribution should be labeled as:
+
+- Windows desktop agent
+- macOS desktop agent
+- iOS companion app only if a separate, limited app is built later

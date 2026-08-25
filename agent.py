@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import socket
+import subprocess
 import sys
 import tkinter as tk
 
@@ -29,7 +30,7 @@ from screenshots import ScreenshotEngine
 from shift import ShiftManager, fmt_hms
 
 
-VERSION = "1.2.0"  # consentimiento global, idioma ES/EN y centro legal
+VERSION = "1.2.1"
 
 
 AGENT_I18N = {
@@ -62,6 +63,13 @@ AGENT_I18N = {
         "Version del aviso": "Notice version",
         "Fecha de aceptacion": "Accepted at",
         "Abrir carpeta legal": "Open legal folder",
+        "Desinstalar agente": "Uninstall agent",
+        "Desinstalar VYNTRA Agent": "Uninstall VYNTRA Agent",
+        "Se eliminara el inicio automatico y la carpeta instalada despues de cerrar esta ventana.":
+            "Autostart and the installed folder will be removed after this window closes.",
+        "La desinstalacion se ejecutara ahora. VYNTRA se cerrara en unos segundos.":
+            "Uninstall will run now. VYNTRA will close in a few seconds.",
+        "No se pudo iniciar la desinstalacion.": "Could not start uninstall.",
         "Cerrar": "Close",
     }
 }
@@ -1622,9 +1630,96 @@ class StationWindow(ctk.CTk):
         folder = self._legal_folder()
         try:
             if os.path.isdir(folder):
-                os.startfile(folder)
+                if sys.platform == "win32":
+                    os.startfile(folder)
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", folder])
+                else:
+                    subprocess.Popen(["xdg-open", folder])
         except Exception:
             pass
+
+    def _schedule_windows_uninstall(self):
+        install_dir = os.path.abspath(self.cfg.base_dir)
+        ps_install_dir = install_dir.replace("'", "''")
+        pid = os.getpid()
+        script = f"""
+$ErrorActionPreference = 'SilentlyContinue'
+$taskName = 'VYNTRA Agent'
+$installDir = '{ps_install_dir}'
+$pidToWait = {pid}
+Stop-ScheduledTask -TaskName $taskName
+Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+Wait-Process -Id $pidToWait
+Start-Sleep -Seconds 2
+Remove-Item -LiteralPath $installDir -Recurse -Force
+"""
+        subprocess.Popen(
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                script,
+            ],
+            close_fds=True,
+        )
+
+    def _schedule_macos_uninstall(self):
+        pid = os.getpid()
+        executable = os.path.abspath(sys.executable)
+        if ".app/Contents/MacOS/" in executable:
+            app_path = executable.split(".app/Contents/MacOS/", 1)[0] + ".app"
+        else:
+            app_path = os.path.abspath(os.path.join(self.cfg.base_dir, ".."))
+        plist = os.path.expanduser("~/Library/LaunchAgents/com.vyntralab.agent.plist")
+        script = f"""
+launchctl unload {json.dumps(plist)} >/dev/null 2>&1 || true
+rm -f {json.dumps(plist)}
+while kill -0 {pid} >/dev/null 2>&1; do sleep 1; done
+rm -rf {json.dumps(app_path)}
+rm -rf "$HOME/Applications/VYNTRAAgentLegal"
+"""
+        subprocess.Popen(["/bin/sh", "-c", script], close_fds=True)
+
+    def _desinstalar_agente(self):
+        def run():
+            try:
+                if sys.platform == "win32":
+                    self._schedule_windows_uninstall()
+                elif sys.platform == "darwin":
+                    self._schedule_macos_uninstall()
+                else:
+                    raise RuntimeError("Unsupported platform")
+                aviso = self._modal("VYNTRA", 470, 190)
+                ctk.CTkLabel(
+                    aviso,
+                    text=tr(self.cfg, "La desinstalacion se ejecutara ahora. VYNTRA se cerrara en unos segundos."),
+                    font=ctk.CTkFont(size=13),
+                    text_color=TEXT_BODY,
+                    wraplength=400,
+                    justify="left",
+                ).pack(padx=24, pady=28)
+                self.after(1800, self.destroy)
+            except Exception as exc:
+                aviso = self._modal("VYNTRA", 460, 190)
+                ctk.CTkLabel(
+                    aviso,
+                    text=f"{tr(self.cfg, 'No se pudo iniciar la desinstalacion.')}\n{exc}",
+                    font=ctk.CTkFont(size=12),
+                    text_color=DANGER,
+                    wraplength=390,
+                    justify="left",
+                ).pack(padx=24, pady=28)
+
+        self._confirmar(
+            tr(self.cfg, "Desinstalar VYNTRA Agent"),
+            tr(self.cfg, "Se eliminara el inicio automatico y la carpeta instalada despues de cerrar esta ventana."),
+            run,
+        )
 
     def _modal_legal(self):
         top = self._modal(tr(self.cfg, "VYNTRA - Centro legal"), 650, 560)
@@ -1686,6 +1781,16 @@ class StationWindow(ctk.CTk):
             height=40,
             corner_radius=8,
         ).pack(side="left")
+        ctk.CTkButton(
+            row,
+            text=tr(self.cfg, "Desinstalar agente"),
+            command=self._desinstalar_agente,
+            fg_color=DANGER,
+            hover_color="#B91C1C",
+            text_color="#FFFFFF",
+            height=40,
+            corner_radius=8,
+        ).pack(side="left", padx=(10, 0))
         ctk.CTkButton(
             row,
             text=tr(self.cfg, "Cerrar"),

@@ -8,7 +8,8 @@ COMPANY_NAME="${COMPANY_NAME:-InsureMeBetter}"
 CONTACT_EMAIL="${CONTACT_EMAIL:-carlos@insuremebetter.com}"
 API_URL="${API_URL:-https://api.vyntralab.com}"
 LANGUAGE="${LANGUAGE:-es}"
-PACKAGE_NAME="${PACKAGE_NAME:-VYNTRAAgent-${COMPANY_NAME// /-}-macOS}"
+AGENT_VERSION="${AGENT_VERSION:-1.2.1}"
+PACKAGE_NAME="${PACKAGE_NAME:-VYNTRAAgent-${COMPANY_NAME// /-}-macOS-v$AGENT_VERSION}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "This builder must run on macOS because PyInstaller creates native .app bundles per OS."

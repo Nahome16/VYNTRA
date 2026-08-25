@@ -8,7 +8,7 @@ param(
     [string]$DeviceToken = "",
 
     [string]$ApiUrl = "https://api.vyntralab.com",
-    [string]$AgentVersion = "1.2.0",
+    [string]$AgentVersion = "1.2.1",
     [string]$OutputDir = "release",
     [string]$PackageName = "",
     [switch]$Build

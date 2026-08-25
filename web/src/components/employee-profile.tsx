@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { EmptyState, Panel, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
@@ -108,6 +107,7 @@ export function EmployeeProfile({
   const { t } = usePreferences();
   const [employeeDetail, setEmployeeDetail] = useState<EmployeeDetailResponse | null>(null);
   const [evidencePreviews, setEvidencePreviews] = useState<Record<string, string>>({});
+  const [selectedEvidenceId, setSelectedEvidenceId] = useState("");
   const [dateFrom, setDateFrom] = useState(initialDateFrom || monthStartISO());
   const [dateTo, setDateTo] = useState(initialDateTo || todayISO());
   const [detailTab, setDetailTab] = useState<"resumen" | "registro">("resumen");
@@ -195,6 +195,10 @@ export function EmployeeProfile({
     [employeeDetail],
   );
   const detailTotal = employeeDetail?.totals.active_seconds || employeeDetail?.totals.total_seconds || 0;
+  const selectedEvidence = useMemo(
+    () => employeeDetail?.evidence.find((item) => item.id === selectedEvidenceId) || null,
+    [employeeDetail?.evidence, selectedEvidenceId],
+  );
   const activityMap = useMemo(() => {
     if (!employeeDetail) return [];
     const dayLabels = new Map(employeeDetail.days.slice(-7).map((day) => [day.date, shortDay(day.date)]));
@@ -250,9 +254,6 @@ export function EmployeeProfile({
   return (
     <div className="employee-profile-view">
       <div className="profile-page-actions">
-        <Link className="row-action profile-return" href="/empleados">
-          {t("Volver a empleados")}
-        </Link>
         <div className="date-range-control">
           <span>{t("Periodo")}</span>
           <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
@@ -459,7 +460,13 @@ export function EmployeeProfile({
               <div className="evidence-grid">
                 {employeeDetail.evidence.map((item) => (
                   <article className="evidence-tile" key={item.id}>
-                    <div className="evidence-thumb">
+                    <button
+                      type="button"
+                      className="evidence-thumb evidence-open"
+                      onClick={() => setSelectedEvidenceId(item.id)}
+                      disabled={!evidencePreviews[item.id]}
+                      title={evidencePreviews[item.id] ? t("Abrir captura") : t("Vista previa no disponible")}
+                    >
                       {evidencePreviews[item.id] ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={evidencePreviews[item.id]} alt={item.original_filename} />
@@ -468,18 +475,50 @@ export function EmployeeProfile({
                       ) : (
                         "FILE"
                       )}
-                    </div>
+                    </button>
                     <strong>{item.original_filename}</strong>
                     <span>{new Date(item.captured_at).toLocaleString("es-NI")}</span>
                     <small>
                       {item.equipment} - {item.status}
                     </small>
+                    <button
+                      type="button"
+                      className="row-action"
+                      onClick={() => setSelectedEvidenceId(item.id)}
+                      disabled={!evidencePreviews[item.id]}
+                    >
+                      {t("Ver evidencia")}
+                    </button>
                   </article>
                 ))}
               </div>
             ) : (
               <EmptyState>{t("No hay capturas asociadas a este empleado en el rango.")}</EmptyState>
             )}
+          </section>
+        </div>
+      ) : null}
+
+      {selectedEvidence && evidencePreviews[selectedEvidence.id] ? (
+        <div className="evidence-modal" role="dialog" aria-modal="true" onClick={() => setSelectedEvidenceId("")}>
+          <section className="evidence-modal-panel" onClick={(event) => event.stopPropagation()}>
+            <header>
+              <div>
+                <h2>{t("Evidencia")}</h2>
+                <p>{selectedEvidence.original_filename}</p>
+              </div>
+              <button type="button" className="row-action" onClick={() => setSelectedEvidenceId("")}>
+                {t("Cerrar")}
+              </button>
+            </header>
+            <div className="evidence-modal-image">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={evidencePreviews[selectedEvidence.id]} alt={selectedEvidence.original_filename} />
+            </div>
+            <footer>
+              <span>{new Date(selectedEvidence.captured_at).toLocaleString("es-NI")}</span>
+              <span>{selectedEvidence.equipment} - {selectedEvidence.status}</span>
+            </footer>
           </section>
         </div>
       ) : null}

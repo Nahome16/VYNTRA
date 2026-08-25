@@ -2334,6 +2334,16 @@ tbody tr:hover {
   overflow: hidden;
 }
 
+.evidence-thumb.evidence-open {
+  width: 100%;
+  cursor: zoom-in;
+  padding: 0;
+}
+
+.evidence-thumb.evidence-open:disabled {
+  cursor: not-allowed;
+}
+
 .evidence-thumb img {
   width: 100%;
   height: 100%;
@@ -2365,6 +2375,66 @@ tbody tr:hover {
 .evidence-placeholder span,
 .evidence-placeholder small {
   color: var(--muted);
+}
+
+.evidence-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 13, 25, 0.78);
+  padding: 18px;
+}
+
+.evidence-modal-panel {
+  display: grid;
+  width: min(1120px, 100%);
+  max-height: 92vh;
+  gap: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  padding: 14px;
+}
+
+.evidence-modal-panel header,
+.evidence-modal-panel footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.evidence-modal-panel h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.evidence-modal-panel p,
+.evidence-modal-panel footer span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.evidence-modal-image {
+  display: grid;
+  min-height: 280px;
+  max-height: 72vh;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface-sunken);
+  overflow: auto;
+}
+
+.evidence-modal-image img {
+  max-width: 100%;
+  height: auto;
+  display: block;
 }
 
 /* ==========================================================================

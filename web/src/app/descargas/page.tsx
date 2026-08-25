@@ -1,0 +1,159 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AppShell } from "@/components/app-shell";
+import { EmptyState, Panel, RefreshButton, StatCard, StatusLine } from "@/components/ui";
+import { useAuth } from "@/components/auth-provider";
+import { AgentDownload, AgentDownloadsResponse } from "@/lib/types";
+
+function formatSize(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDate(value: string) {
+  if (!value) return "-";
+  return new Date(value).toLocaleString("es-NI");
+}
+
+function platformTone(platform: string) {
+  if (platform === "Windows") return "badge attendance-good";
+  if (platform === "macOS") return "badge attendance-warn";
+  return "badge";
+}
+
+export default function DownloadsPage() {
+  const { apiGet, token, user } = useAuth();
+  const [downloads, setDownloads] = useState<AgentDownload[]>([]);
+  const [directoryReady, setDirectoryReady] = useState(false);
+  const [statusText, setStatusText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [downloading, setDownloading] = useState("");
+
+  const canManageDevices = Boolean(user?.permissions?.includes("devices:manage"));
+  const windowsCount = useMemo(() => downloads.filter((item) => item.platform === "Windows").length, [downloads]);
+  const macCount = useMemo(() => downloads.filter((item) => item.platform === "macOS").length, [downloads]);
+
+  const loadDownloads = useCallback(async () => {
+    if (!canManageDevices) return;
+    setLoading(true);
+    setStatusText("Cargando instaladores...");
+    try {
+      const response = await apiGet<AgentDownloadsResponse>("/api/downloads/agent");
+      setDownloads(response.downloads);
+      setDirectoryReady(response.directory_ready);
+      setStatusText(response.count ? `${response.count} instaladores disponibles` : "No hay instaladores publicados");
+    } catch {
+      setDownloads([]);
+      setDirectoryReady(false);
+      setStatusText("No se pudieron cargar las descargas");
+    } finally {
+      setLoading(false);
+    }
+  }, [apiGet, canManageDevices]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadDownloads();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadDownloads]);
+
+  async function downloadFile(item: AgentDownload) {
+    setDownloading(item.filename);
+    setStatusText(`Descargando ${item.filename}...`);
+    try {
+      const response = await fetch(item.download_url, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = item.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setStatusText("Descarga iniciada");
+    } catch {
+      setStatusText("No se pudo descargar el instalador");
+    } finally {
+      setDownloading("");
+    }
+  }
+
+  if (!canManageDevices) {
+    return (
+      <AppShell title="Descargas" description="Instaladores oficiales del agente VYNTRA">
+        <EmptyState>Tu rol no tiene permiso para descargar instaladores.</EmptyState>
+      </AppShell>
+    );
+  }
+
+  return (
+    <AppShell
+      title="Descargas"
+      description="Instaladores oficiales para estaciones monitoreadas."
+      actions={<RefreshButton loading={loading} onClick={loadDownloads} />}
+    >
+      <section className="settings-page downloads-page">
+        <div className="stat-grid">
+          <StatCard label="Instaladores" value={`${downloads.length}`} detail="Publicados en servidor" />
+          <StatCard label="Windows" value={`${windowsCount}`} detail="Listo para usuarios PC" tone={windowsCount ? "good" : "warn"} />
+          <StatCard label="macOS" value={`${macCount}`} detail="Builder o paquete Mac" tone={macCount ? "good" : "warn"} />
+        </div>
+
+        <div className="downloads-layout">
+          <Panel title="Archivos disponibles" meta={directoryReady ? "Carpeta activa" : "Carpeta no preparada"}>
+            {!directoryReady ? (
+              <div className="download-warning">
+                <strong>Falta publicar la carpeta de descargas en el servidor.</strong>
+                <p>Sube los instaladores a <code>/opt/vyntra/downloads</code> y reconstruye la API para activar el montaje.</p>
+              </div>
+            ) : null}
+
+            <div className="download-list">
+              {downloads.map((item) => (
+                <article className="download-card" key={item.filename}>
+                  <div>
+                    <span className={platformTone(item.platform)}>{item.platform}</span>
+                    <h3>{item.filename}</h3>
+                    <p>{formatSize(item.size_bytes)} · actualizado {formatDate(item.updated_at)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="primary-action"
+                    onClick={() => downloadFile(item)}
+                    disabled={downloading === item.filename}
+                  >
+                    {downloading === item.filename ? "Descargando..." : "Descargar"}
+                  </button>
+                </article>
+              ))}
+            </div>
+
+            {!downloads.length ? <EmptyState>No hay instaladores para descargar.</EmptyState> : null}
+          </Panel>
+
+          <Panel title="Uso recomendado">
+            <ol className="download-steps">
+              <li>Descarga el instalador de Windows desde esta vista.</li>
+              <li>Envialo al empleado por correo corporativo o canal interno autorizado.</li>
+              <li>El empleado instala, inicia sesion, cambia clave si aplica y acepta consentimiento.</li>
+              <li>Verifica el equipo en Dispositivos y las capturas en el perfil del empleado.</li>
+            </ol>
+            <div className="download-note">
+              <strong>macOS requiere prueba en una Mac real.</strong>
+              <p>iOS no permite un agente de monitoreo equivalente al de escritorio; si se hace algo para iPhone/iPad debe ser una app complementaria limitada.</p>
+            </div>
+          </Panel>
+        </div>
+
+        <StatusLine>{statusText}</StatusLine>
+      </section>
+    </AppShell>
+  );
+}

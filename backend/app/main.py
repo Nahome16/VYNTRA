@@ -714,6 +714,49 @@ def evidence_full_path(evidence: EvidenceFile) -> str:
     return full_path
 
 
+DOWNLOAD_EXTENSIONS = {".exe", ".zip", ".dmg", ".pkg"}
+
+
+def downloads_root() -> str:
+    return os.path.abspath(settings.downloads_dir)
+
+
+def safe_download_path(filename: str) -> str:
+    clean_name = clean_text(filename, 180)
+    if clean_name != os.path.basename(clean_name):
+        raise HTTPException(status_code=400, detail="Invalid download name")
+    if not clean_name.startswith("VYNTRAAgent-"):
+        raise HTTPException(status_code=400, detail="Invalid download name")
+    extension = os.path.splitext(clean_name)[1].lower()
+    if extension not in DOWNLOAD_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Invalid download type")
+
+    root = downloads_root()
+    full_path = os.path.abspath(os.path.join(root, clean_name))
+    if os.path.commonpath([full_path, root]) != root:
+        raise HTTPException(status_code=400, detail="Invalid download path")
+    return full_path
+
+
+def serialize_download(path: str) -> dict:
+    filename = os.path.basename(path)
+    lower_name = filename.lower()
+    if "windows" in lower_name or filename.endswith(".exe"):
+        platform = "Windows"
+    elif "macos" in lower_name or lower_name.endswith((".dmg", ".pkg")):
+        platform = "macOS"
+    else:
+        platform = "General"
+    stat = os.stat(path)
+    return {
+        "filename": filename,
+        "platform": platform,
+        "size_bytes": stat.st_size,
+        "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
+        "download_url": f"/api/downloads/agent/{filename}",
+    }
+
+
 def require_system_admin(admin: AdminPrincipal):
     if admin.role != "system_admin":
         raise HTTPException(status_code=403, detail="System administrator role required")
@@ -5141,6 +5184,49 @@ def view_evidence_content(
         headers={
             "Cache-Control": "private, max-age=60",
             "Content-Disposition": f'inline; filename="{evidence.original_filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@app.get("/api/downloads/agent")
+def list_agent_downloads(admin: AdminPrincipal = Depends(require_admin)):
+    require_permission(admin, "devices:manage")
+    root = downloads_root()
+    downloads: list[dict] = []
+    if os.path.isdir(root):
+        for filename in sorted(os.listdir(root)):
+            try:
+                full_path = safe_download_path(filename)
+            except HTTPException:
+                continue
+            if os.path.isfile(full_path):
+                downloads.append(serialize_download(full_path))
+
+    return {
+        "count": len(downloads),
+        "directory_ready": os.path.isdir(root),
+        "downloads": downloads,
+    }
+
+
+@app.get("/api/downloads/agent/{filename}")
+def download_agent_installer(
+    filename: str,
+    admin: AdminPrincipal = Depends(require_admin),
+):
+    require_permission(admin, "devices:manage")
+    full_path = safe_download_path(filename)
+    if not os.path.isfile(full_path):
+        raise HTTPException(status_code=404, detail="Download not found")
+    extension = os.path.splitext(full_path)[1].lower()
+    media_type = "application/zip" if extension == ".zip" else "application/octet-stream"
+    return FileResponse(
+        full_path,
+        media_type=media_type,
+        filename=os.path.basename(full_path),
+        headers={
+            "Cache-Control": "private, no-store",
             "X-Content-Type-Options": "nosniff",
         },
     )

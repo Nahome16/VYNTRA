@@ -37,6 +37,7 @@ class Settings:
         "postgresql+psycopg://vyntra:vyntra_dev_password@db:5432/vyntra",
     )
     storage_dir: str = os.environ.get("STORAGE_DIR", "/data/evidence")
+    downloads_dir: str = os.environ.get("DOWNLOADS_DIR", "/data/downloads")
     max_upload_bytes: int = int(os.environ.get("MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
     admin_api_token: str = os.environ.get("ADMIN_API_TOKEN", "")
     jwt_secret: str = os.environ.get("JWT_SECRET", _jwt_secret_default())

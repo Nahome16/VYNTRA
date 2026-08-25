@@ -21,6 +21,7 @@ services:
       - ${VYNTRA_ENV_FILE:-.env.production}
     volumes:
       - evidence_data:/data/evidence
+      - ../downloads:/data/downloads:ro
     depends_on:
       db:
         condition: service_healthy

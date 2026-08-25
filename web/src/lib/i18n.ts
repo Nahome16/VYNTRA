@@ -10,6 +10,7 @@ const en: Record<string, string> = {
   Dashboard: "Dashboard",
   Empleados: "Employees",
   Asistencia: "Attendance",
+  Descargas: "Downloads",
   Ajustes: "Settings",
   Control: "Control",
   Salir: "Sign out",

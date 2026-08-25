@@ -16,6 +16,7 @@ backend/.env.production
 backend/.certs/
 backend/storage/
 backend/data/
+downloads/
 capturas/
 
 # Build artifacts

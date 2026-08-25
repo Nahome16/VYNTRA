@@ -73,6 +73,20 @@ export type AuditLogsResponse = {
 
 export type DeviceStatus = "online" | "offline" | "revoked";
 
+export type AgentDownload = {
+  filename: string;
+  platform: string;
+  size_bytes: number;
+  updated_at: string;
+  download_url: string;
+};
+
+export type AgentDownloadsResponse = {
+  count: number;
+  directory_ready: boolean;
+  downloads: AgentDownload[];
+};
+
 export type DeviceRecord = {
   id: string;
   company_id: string;

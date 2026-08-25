@@ -3496,6 +3496,40 @@ tbody tr:hover {
 .device-rotate-box {display: grid;gap: 10px;margin-top: 14px;border-top: 1px solid var(--line);padding-top: 14px;
 }
 
+.downloads-page {gap: 16px;
+}
+
+.downloads-layout {display: grid;grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr);gap: 16px;align-items: start;min-width: 0;
+}
+
+.download-list {display: grid;gap: 12px;
+}
+
+.download-card {display: grid;grid-template-columns: minmax(0, 1fr) auto;gap: 14px;align-items: center;border: 1px solid var(--line);border-radius: 8px;background: var(--surface-sunken);padding: 14px;
+}
+
+.download-card h3 {margin: 8px 0 4px;color: var(--ink);font-size: 15px;line-height: 1.25;overflow-wrap: anywhere;
+}
+
+.download-card p,
+.download-note p,
+.download-warning p {margin: 0;color: var(--muted);font-size: 12px;line-height: 1.5;
+}
+
+.download-warning,
+.download-note {display: grid;gap: 6px;border: 1px solid var(--warn-line);border-radius: 8px;background: var(--warn-soft);padding: 12px;margin-bottom: 14px;
+}
+
+.download-warning strong,
+.download-note strong {color: var(--ink);font-size: 13px;
+}
+
+.download-warning code {border: 1px solid var(--line);border-radius: 6px;background: var(--surface);color: var(--ink);padding: 1px 5px;font-size: 11px;
+}
+
+.download-steps {display: grid;gap: 10px;margin: 0 0 14px;padding-left: 20px;color: var(--ink-soft);font-size: 13px;line-height: 1.5;
+}
+
 .settings-modal {display: grid;position: fixed;inset: 0;z-index: 80;place-items: center;background: rgba(14, 23, 38, 0.44);padding: 18px;
 }
 
@@ -3531,6 +3565,7 @@ tbody tr:hover {
   .incidents-layout,
   .system-console-grid,
   .system-access-grid,
+  .downloads-layout,
   .employee-metric-grid,
   .settings-overview {grid-template-columns: 1fr;
   }

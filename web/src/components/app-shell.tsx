@@ -73,6 +73,18 @@ const navItems = [
     ),
   },
   {
+    href: "/descargas",
+    label: "Descargas",
+    permission: "devices:manage",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M12 3v11" />
+        <path d="m7 10 5 5 5-5" />
+        <path d="M5 21h14" />
+      </svg>
+    ),
+  },
+  {
     href: "/incidencias",
     label: "Incidencias",
     permission: "incidents:read",

@@ -20,6 +20,7 @@ import tkinter as tk
 import customtkinter as ctk
 
 from agent_event_uploader import AgentEventUploader
+import legal_docs
 import local_auth
 from config import Config
 from outbox import append_event, count_pending
@@ -28,7 +29,51 @@ from screenshots import ScreenshotEngine
 from shift import ShiftManager, fmt_hms
 
 
-VERSION = "1.1.0"  # subio de 1.0.0: se reescribio el aviso de consentimiento
+VERSION = "1.2.0"  # consentimiento global, idioma ES/EN y centro legal
+
+
+AGENT_I18N = {
+    "en": {
+        "VYNTRA - Verificacion de usuario": "VYNTRA - User verification",
+        "Estacion de marcaje laboral": "Work clock station",
+        "Idioma": "Language",
+        "Inicia sesion": "Sign in",
+        "Verifica tu identidad para continuar con tu jornada en este equipo.":
+            "Verify your identity to continue your shift on this device.",
+        "Correo electronico": "Email address",
+        "tu.correo@empresa.com": "your.email@company.com",
+        "Contrasena": "Password",
+        "Tu contrasena": "Your password",
+        "¿Olvidaste tu contrasena?": "Forgot your password?",
+        "Iniciar sesion": "Sign in",
+        "Salir": "Exit",
+        "¿Problemas para entrar? Contacta a {contact}": "Trouble signing in? Contact {contact}",
+        "Ingresa tu correo y tu contrasena.": "Enter your email and password.",
+        "No se pudo conectar con el servidor de VYNTRA. Intenta de nuevo.":
+            "Could not connect to the VYNTRA server. Please try again.",
+        "Correo o contrasena incorrectos.": "Incorrect email or password.",
+        "VYNTRA - Consentimiento": "VYNTRA - Consent",
+        "Aviso de monitoreo y consentimiento": "Monitoring notice and consent",
+        "Antes de continuar": "Before continuing",
+        "VYNTRA - Centro legal": "VYNTRA - Legal center",
+        "Documentos y consentimiento": "Documents and consent",
+        "Resumen de terminos": "Terms summary",
+        "Aviso aceptado": "Accepted notice",
+        "Version del aviso": "Notice version",
+        "Fecha de aceptacion": "Accepted at",
+        "Abrir carpeta legal": "Open legal folder",
+        "Cerrar": "Close",
+    }
+}
+
+
+def lang_for(cfg: Config) -> str:
+    return legal_docs.normalized_language(getattr(cfg, "language", "es"))
+
+
+def tr(cfg: Config, text: str, **kwargs) -> str:
+    value = AGENT_I18N.get(lang_for(cfg), {}).get(text, text)
+    return value.format(**kwargs) if kwargs else value
 
 
 # ==========================================================================
@@ -96,7 +141,7 @@ class LoginWindow(ctk.CTk):
         self.decision = None  # True si quedo autenticado, False si cancelo/salio
         self.authenticated_email = ""
 
-        self.title("VYNTRA - Verificacion de usuario")
+        self.title(tr(self.cfg, "VYNTRA - Verificacion de usuario"))
         self.geometry("500x620")
         self.minsize(480, 600)
         self.configure(fg_color=APP_BG)
@@ -133,29 +178,50 @@ class LoginWindow(ctk.CTk):
         ).pack(anchor="w")
         ctk.CTkLabel(
             brand_copy,
-            text="Estacion de marcaje laboral",
+            text=tr(self.cfg, "Estacion de marcaje laboral"),
             font=ctk.CTkFont(size=11),
             text_color=TEXT_MUTED,
         ).pack(anchor="w", pady=(2, 0))
 
-        ctk.CTkLabel(cont, text="Inicia sesion",
+        language_row = ctk.CTkFrame(cont, fg_color="transparent")
+        language_row.pack(fill="x", pady=(0, 12))
+        ctk.CTkLabel(
+            language_row,
+            text=tr(self.cfg, "Idioma"),
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=TEXT_MUTED,
+        ).pack(side="left")
+        language_menu = ctk.CTkOptionMenu(
+            language_row,
+            values=["ES", "EN"],
+            command=self._set_language,
+            width=78,
+            height=30,
+            fg_color=PRIMARY,
+            button_color=PRIMARY_DARK,
+            button_hover_color=PRIMARY_DEEP,
+        )
+        language_menu.set(lang_for(self.cfg).upper())
+        language_menu.pack(side="right")
+
+        ctk.CTkLabel(cont, text=tr(self.cfg, "Inicia sesion"),
                     font=ctk.CTkFont(size=19, weight="bold"),
                     text_color=TEXT_DARK).pack(anchor="w")
         ctk.CTkLabel(
             cont,
-            text="Verifica tu identidad para continuar con tu jornada en este equipo.",
+            text=tr(self.cfg, "Verifica tu identidad para continuar con tu jornada en este equipo."),
             font=ctk.CTkFont(size=12),
             text_color=TEXT_MUTED,
             wraplength=380,
             justify="left",
         ).pack(anchor="w", pady=(6, 18))
 
-        self.entry_correo = self._campo(cont, "Correo electronico", "tu.correo@empresa.com")
-        self.entry_pass = self._campo(cont, "Contrasena", "Tu contrasena", show="*")
+        self.entry_correo = self._campo(cont, tr(self.cfg, "Correo electronico"), tr(self.cfg, "tu.correo@empresa.com"))
+        self.entry_pass = self._campo(cont, tr(self.cfg, "Contrasena"), tr(self.cfg, "Tu contrasena"), show="*")
 
         ctk.CTkButton(
             cont,
-            text="¿Olvidaste tu contrasena?",
+            text=tr(self.cfg, "¿Olvidaste tu contrasena?"),
             command=self._modal_recuperar_password,
             fg_color="transparent",
             hover_color=PRIMARY_LIGHT,
@@ -170,13 +236,13 @@ class LoginWindow(ctk.CTk):
         self.error_lbl.pack(anchor="w", pady=(4, 0))
 
         ctk.CTkButton(
-            cont, text="Iniciar sesion", command=self._iniciar_sesion,
+            cont, text=tr(self.cfg, "Iniciar sesion"), command=self._iniciar_sesion,
             fg_color=PRIMARY, hover_color=PRIMARY_DARK, text_color="#FFFFFF",
             height=44, corner_radius=8, font=ctk.CTkFont(size=13, weight="bold"),
         ).pack(fill="x", pady=(16, 8))
 
         ctk.CTkButton(
-            cont, text="Salir", command=self._salir,
+            cont, text=tr(self.cfg, "Salir"), command=self._salir,
             fg_color=SURFACE, hover_color=APP_BG, text_color=TEXT_BODY,
             border_width=1, border_color=BORDER_STRONG,
             height=40, corner_radius=8,
@@ -184,10 +250,18 @@ class LoginWindow(ctk.CTk):
 
         ctk.CTkLabel(
             cont,
-            text=f"¿Problemas para entrar? Contacta a {self.cfg.correo_contacto}",
+            text=tr(self.cfg, "¿Problemas para entrar? Contacta a {contact}", contact=self.cfg.correo_contacto),
             font=ctk.CTkFont(size=11),
             text_color=TEXT_FAINT,
         ).pack(anchor="w", pady=(14, 0))
+
+    def _set_language(self, value):
+        language = "en" if str(value).lower().startswith("en") else "es"
+        self.cfg.save_language(language)
+        for child in self.winfo_children():
+            child.destroy()
+        self.title(tr(self.cfg, "VYNTRA - Verificacion de usuario"))
+        self._build()
 
     def _campo(self, parent, etiqueta, placeholder, show=None):
         ctk.CTkLabel(parent, text=etiqueta, font=ctk.CTkFont(size=12, weight="bold"),
@@ -263,7 +337,7 @@ class LoginWindow(ctk.CTk):
         correo = self.entry_correo.get().strip()
         pw = self.entry_pass.get()
         if not correo or not pw:
-            self.error_lbl.configure(text="Ingresa tu correo y tu contrasena.", text_color=DANGER)
+            self.error_lbl.configure(text=tr(self.cfg, "Ingresa tu correo y tu contrasena."), text_color=DANGER)
             return
         auth_result = local_auth.autenticar_credenciales(correo, pw, self.cfg, VERSION)
         if auth_result.get("ok"):
@@ -302,11 +376,11 @@ class LoginWindow(ctk.CTk):
                 )
             if reason == "backend_unavailable":
                 self.error_lbl.configure(
-                    text="No se pudo conectar con el servidor de VYNTRA. Intenta de nuevo.",
+                    text=tr(self.cfg, "No se pudo conectar con el servidor de VYNTRA. Intenta de nuevo."),
                     text_color=DANGER,
                 )
             else:
-                self.error_lbl.configure(text="Correo o contrasena incorrectos.", text_color=DANGER)
+                self.error_lbl.configure(text=tr(self.cfg, "Correo o contrasena incorrectos."), text_color=DANGER)
 
     def _finish_authenticated_session(self):
         self.decision = True
@@ -678,7 +752,7 @@ class ConsentWindow(ctk.CTk):
         self.detalles = {}
         self.req_vars = []
 
-        self.title("VYNTRA - Consentimiento")
+        self.title(tr(self.cfg, "VYNTRA - Consentimiento"))
         self.geometry("900x680")
         self.minsize(820, 600)
         self.configure(fg_color=CONSENT_BG)
@@ -705,7 +779,7 @@ class ConsentWindow(ctk.CTk):
         ctk.CTkLabel(textos, text="VYNTRA",
                     font=ctk.CTkFont(size=21, weight="bold"),
                     text_color="#FFFFFF").pack(anchor="w")
-        ctk.CTkLabel(textos, text="Autorizacion para participar en programa piloto",
+        ctk.CTkLabel(textos, text=tr(self.cfg, "Aviso de monitoreo y consentimiento"),
                     font=ctk.CTkFont(size=12),
                     text_color="#C7D9FB").pack(anchor="w")
 
@@ -716,96 +790,34 @@ class ConsentWindow(ctk.CTk):
         content = ctk.CTkScrollableFrame(body, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=22, pady=18)
 
-        ctk.CTkLabel(content, text="Antes de continuar",
+        interval_minutes = max(1, int(getattr(self.cfg, "captura_intervalo_segundos", 300) or 300) // 60)
+        self.notice = legal_docs.employee_notice(
+            lang_for(self.cfg),
+            self.cfg.empresa,
+            self.cfg.correo_contacto,
+            interval_minutes,
+        )
+
+        ctk.CTkLabel(content, text=tr(self.cfg, "Antes de continuar"),
                     font=ctk.CTkFont(size=20, weight="bold"),
                     text_color=CONSENT_TEXT).pack(anchor="w")
         ctk.CTkLabel(
             content,
-            text=(
-                f"{self.cfg.empresa} usara VYNTRA para registrar jornada, pausas, "
-                "capturas durante horario laboral, estado de actividad y solicitudes "
-                "relacionadas con asistencia. La app permanece visible en todo momento y "
-                "este aviso se basa en la legislacion vigente de Nicaragua."
-            ),
+            text=self.notice["subtitle"],
             font=ctk.CTkFont(size=13),
             text_color=CONSENT_MUTED,
             wraplength=790,
             justify="left",
         ).pack(anchor="w", pady=(8, 18))
 
-        self._section(content, "Base legal de este aviso")
-        for text in [
-            "Constitucion Politica de Nicaragua, articulo 26: derecho a la vida privada "
-            "y a conocer que informacion se registra sobre la persona, por que y con "
-            "que finalidad.",
-            "Ley No. 787, Ley de Proteccion de Datos Personales (La Gaceta No. 61 del "
-            "29 de marzo de 2012) y su Reglamento, Decreto No. 36-2012: exige "
-            "consentimiento libre, especifico e informado para tratar datos personales, "
-            "y establece los derechos del titular.",
-            "Codigo del Trabajo, Ley No. 185: articulo 17 (obligacion del empleador de "
-            "tratar al trabajador con respeto y de certificar el tiempo trabajado) y "
-            "articulo 49 (limites de la jornada laboral).",
-            "Nicaragua no cuenta con una ley especial de teletrabajo; el trabajo "
-            "supervisado a distancia se rige por el Codigo del Trabajo y por la Ley 787 "
-            "en lo relativo al tratamiento de datos.",
-        ]:
-            self._bullet(content, text)
+        self._section(content, self.notice["title"])
+        for title, bullets in self.notice["sections"]:
+            self._section(content, title)
+            for text in bullets:
+                self._bullet(content, text)
 
-        self._section(content, "Que datos recopila y por que")
-        for text in [
-            "Inicio, break, almuerzo y finalizacion de jornada, para llevar el registro "
-            "de asistencia que exige el Codigo del Trabajo.",
-            "Capturas de pantalla durante jornada activa, para verificar continuidad de "
-            "la operacion durante el horario laboral.",
-            "Aplicacion o ventana activa, tiempo de inactividad y clics, solo con fines "
-            "administrativos de control de asistencia.",
-            "Solicitudes de incidencia (permisos, correcciones, horas extra) enviadas "
-            "por el propio usuario.",
-        ]:
-            self._bullet(content, text)
-
-        self._section(content, "Principios con los que se tratan tus datos (Ley 787)")
-        for text in [
-            "Los datos se usan unicamente para los fines descritos en este aviso, de "
-            "forma adecuada, proporcional y necesaria.",
-            "Se protegen con medidas tecnicas, organizativas y fisicas razonables.",
-            "No se comparten con terceros ajenos a la relacion laboral.",
-        ]:
-            self._bullet(content, text)
-
-        self._section(content, "Tus derechos como titular de los datos")
-        for text in [
-            "Acceso: pedir una copia de los datos que VYNTRA ha registrado sobre ti.",
-            "Rectificacion: pedir que se corrijan datos inexactos.",
-            "Cancelacion: pedir la eliminacion de datos cuando ya no sean necesarios "
-            "para el fin que motivo su recoleccion.",
-            "Oposicion y revocacion: puedes revocar este consentimiento en cualquier "
-            "momento y sin costo, escribiendo a "
-            f"{self.cfg.correo_contacto}. Revocarlo detiene el monitoreo, pero no "
-            "borra retroactivamente los registros ya generados mientras estuvo activo.",
-        ]:
-            self._bullet(content, text)
-
-        self._section(content, "Limites (lo que VYNTRA no hace)")
-        for text in [
-            "No registra contrasenas.",
-            "No captura contenido escrito con el teclado.",
-            "No activa camara ni microfono.",
-            "No funciona de forma oculta: la app permanece visible en todo momento.",
-        ]:
-            self._bullet(content, text)
-
-        self._section(content, "Autorizaciones requeridas")
-        for text in [
-            "Confirmo que lei y comprendo este aviso, incluida la base legal citada.",
-            "Autorizo el tratamiento de mis datos personales conforme a la Ley No. 787 "
-            "y su Reglamento (Decreto No. 36-2012).",
-            "Autorizo el registro de mi jornada laboral conforme al Codigo del Trabajo "
-            "(Ley No. 185).",
-            "Autorizo las capturas de pantalla durante mi jornada laboral activa.",
-            "Entiendo que puedo revocar este consentimiento en cualquier momento, sin "
-            "costo, contactando a RR. HH.",
-        ]:
+        self._section(content, "Confirmacion" if lang_for(self.cfg) == "es" else "Confirmation")
+        for text in self.notice["checks"]:
             self._checkbox(content, text)
 
         footer = ctk.CTkFrame(self, fg_color=CONSENT_BG, corner_radius=0, height=74)
@@ -813,18 +825,18 @@ class ConsentWindow(ctk.CTk):
         footer.pack_propagate(False)
         row = ctk.CTkFrame(footer, fg_color="transparent")
         row.pack(fill="both", expand=True, padx=24)
-        ctk.CTkLabel(row, text=f"Contacto: {self.cfg.correo_contacto}",
+        ctk.CTkLabel(row, text=self.notice["contact"],
                     font=ctk.CTkFont(size=12),
                     text_color=CONSENT_MUTED).pack(side="left")
 
-        ctk.CTkButton(row, text="No aceptar y salir", command=self._rechazar,
+        ctk.CTkButton(row, text=self.notice["reject"], command=self._rechazar,
                      fg_color=SURFACE, text_color=CONSENT_TEXT,
                      hover_color=APP_BG, border_width=1,
                      border_color=BORDER_STRONG, width=155, height=42,
                      corner_radius=8).pack(side="right")
         self.btn_aceptar = ctk.CTkButton(
             row,
-            text="Aceptar y continuar",
+            text=self.notice["accept"],
             command=self._aceptar,
             state="disabled",
             fg_color=BORDER_STRONG,
@@ -878,13 +890,17 @@ class ConsentWindow(ctk.CTk):
 
     def _aceptar(self):
         self.decision = True
+        rendered_notice = json.dumps(self.notice, ensure_ascii=False, sort_keys=True)
         self.detalles = {
             "leido_aviso": True,
-            "tratamiento_datos_ley_787": True,
-            "registro_jornada_codigo_trabajo": True,
+            "tratamiento_datos": True,
+            "registro_jornada": True,
             "capturas_pantalla": True,
             "conoce_derecho_revocacion": True,
-            "base_legal": "Constitucion Art. 26; Ley 787 y Decreto 36-2012; Codigo del Trabajo (Ley 185) Art. 17 y 49",
+            "notice_version": legal_docs.NOTICE_VERSION,
+            "notice_language": lang_for(self.cfg),
+            "notice_hash": hashlib.sha256(rendered_notice.encode("utf-8")).hexdigest(),
+            "base_legal": "Global workplace notice; customer-specific jurisdiction and lawful basis must be configured by employer.",
         }
         self.destroy()
 
@@ -1023,7 +1039,7 @@ class StationWindow(ctk.CTk):
             corner_radius=17,
             fg_color="#2F5AC7",
             hover_color=PRIMARY,
-            command=self._modal_incidencia,
+            command=self._modal_legal,
             font=ctk.CTkFont(size=14, weight="bold"),
         ).pack(side="left")
 
@@ -1598,6 +1614,90 @@ class StationWindow(ctk.CTk):
             corner_radius=8,
             font=ctk.CTkFont(weight="bold"),
         ).pack(side="left", padx=6)
+
+    def _legal_folder(self):
+        return os.path.join(self.cfg.base_dir, "legal")
+
+    def _open_legal_folder(self):
+        folder = self._legal_folder()
+        try:
+            if os.path.isdir(folder):
+                os.startfile(folder)
+        except Exception:
+            pass
+
+    def _modal_legal(self):
+        top = self._modal(tr(self.cfg, "VYNTRA - Centro legal"), 650, 560)
+        cont = ctk.CTkFrame(top, fg_color="transparent")
+        cont.pack(fill="both", expand=True, padx=22, pady=20)
+
+        ctk.CTkLabel(
+            cont,
+            text=tr(self.cfg, "Documentos y consentimiento"),
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=TEXT_DARK,
+        ).pack(anchor="w")
+
+        terms = legal_docs.terms_summary(lang_for(self.cfg))
+        ctk.CTkLabel(
+            cont,
+            text=terms["title"],
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=TEXT_DARK,
+        ).pack(anchor="w", pady=(16, 4))
+        ctk.CTkLabel(
+            cont,
+            text=terms["body"],
+            font=ctk.CTkFont(size=12),
+            text_color=TEXT_MUTED,
+            wraplength=590,
+            justify="left",
+        ).pack(anchor="w")
+
+        ctk.CTkLabel(
+            cont,
+            text=tr(self.cfg, "Aviso aceptado"),
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=TEXT_DARK,
+        ).pack(anchor="w", pady=(18, 4))
+
+        details = self.consentimiento.get("detalles") or {}
+        accepted_at = self.consentimiento.get("timestamp") or self.consentimiento.get("fecha") or ""
+        consent_text = (
+            f"{tr(self.cfg, 'Version del aviso')}: {details.get('notice_version') or legal_docs.NOTICE_VERSION}\n"
+            f"{tr(self.cfg, 'Fecha de aceptacion')}: {accepted_at}\n"
+            f"Hash: {details.get('notice_hash') or '--'}\n"
+            f"Language: {details.get('notice_language') or lang_for(self.cfg)}"
+        )
+        box = ctk.CTkTextbox(cont, height=120, fg_color=SURFACE, text_color=TEXT_BODY)
+        box.pack(fill="x", pady=(6, 14))
+        box.insert("1.0", consent_text)
+        box.configure(state="disabled")
+
+        row = ctk.CTkFrame(cont, fg_color="transparent")
+        row.pack(fill="x", side="bottom", pady=(12, 0))
+        ctk.CTkButton(
+            row,
+            text=tr(self.cfg, "Abrir carpeta legal"),
+            command=self._open_legal_folder,
+            fg_color=PRIMARY,
+            hover_color=PRIMARY_DARK,
+            text_color="#FFFFFF",
+            height=40,
+            corner_radius=8,
+        ).pack(side="left")
+        ctk.CTkButton(
+            row,
+            text=tr(self.cfg, "Cerrar"),
+            command=top.destroy,
+            fg_color=SURFACE,
+            hover_color=APP_BG,
+            text_color=TEXT_BODY,
+            border_width=1,
+            border_color=BORDER_STRONG,
+            height=40,
+            corner_radius=8,
+        ).pack(side="right")
 
     def _modal_incidencia(self):
         top = self._modal("Incidencias y ajustes", 500, 350)

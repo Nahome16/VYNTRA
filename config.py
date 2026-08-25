@@ -29,6 +29,8 @@ class Config:
             "Server", "Url", fallback="https://localhost:7168"
         )
         self.agent_version = parser.get("Agent", "Version", fallback="1.0.0")
+        language = parser.get("Interface", "Language", fallback="es").strip().lower()
+        self.language = "en" if language.startswith("en") else "es"
 
         self.intervalo_segundos = parser.getint(
             "Capture", "IntervalSeconds", fallback=300
@@ -82,6 +84,17 @@ class Config:
             "Telemetria", "IdleUmbralSegundos", fallback=60
         )
         self.admin_pin = parser.get("Admin", "PIN", fallback="1234")
+
+    def save_language(self, language: str):
+        clean_language = "en" if str(language or "").lower().startswith("en") else "es"
+        parser = configparser.ConfigParser()
+        parser.read(self.config_path, encoding="utf-8")
+        if not parser.has_section("Interface"):
+            parser.add_section("Interface")
+        parser.set("Interface", "Language", clean_language)
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            parser.write(f)
+        self.language = clean_language
 
     def save_device_token(self, token: str):
         clean_token = (token or "").strip()

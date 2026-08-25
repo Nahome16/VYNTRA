@@ -8,7 +8,7 @@ param(
     [string]$DeviceToken = "",
 
     [string]$ApiUrl = "https://api.vyntralab.com",
-    [string]$AgentVersion = "1.1.0",
+    [string]$AgentVersion = "1.2.0",
     [string]$OutputDir = "release",
     [string]$PackageName = "",
     [switch]$Build
@@ -70,6 +70,7 @@ $stageRoot = Join-Path $root ".installer_build"
 $packageRoot = Join-Path $stageRoot $PackageName
 $packageAgent = Join-Path $packageRoot "VYNTRAAgent"
 $packageInstaller = Join-Path $packageRoot "installer"
+$packageLegal = Join-Path $packageRoot "legal"
 $zipPath = Join-Path $outputRoot "$PackageName.zip"
 
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
@@ -78,11 +79,13 @@ Safe-RemoveDirectory -Path $packageRoot -AllowedRoot $stageRoot
 New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $packageAgent -Force | Out-Null
 New-Item -ItemType Directory -Path $packageInstaller -Force | Out-Null
+New-Item -ItemType Directory -Path $packageLegal -Force | Out-Null
 
 Copy-Item -Path (Join-Path $distAgent "*") -Destination $packageAgent -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install_agent_wizard.ps1") -Destination $packageInstaller -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install_agent_autostart.ps1") -Destination $packageInstaller -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "uninstall_agent_autostart.ps1") -Destination $packageInstaller -Force
+Copy-Item -Path (Join-Path $root "docs\legal\*") -Destination $packageLegal -Recurse -Force
 
 $forbiddenFiles = @("credentials.json", "credentials.previous.json", "token.json")
 foreach ($name in $forbiddenFiles) {
@@ -96,6 +99,9 @@ Url = $ApiUrl
 
 [Agent]
 Version = $AgentVersion
+
+[Interface]
+Language = es
 
 [Capture]
 IntervalSeconds = 300
@@ -184,6 +190,7 @@ Notas:
 - Este paquete es generico y puede instalarse en varias PCs de la empresa.
 - En el primer inicio de sesion, VYNTRA registra automaticamente la PC y guarda un DeviceToken unico.
 - No incluye credenciales de Google Drive ni secretos del panel.
+- La carpeta legal incluye terminos y aviso de consentimiento en espanol e ingles.
 - Para quitarlo, ejecuta "Desinstalar VYNTRA.ps1".
 "@
 Set-Content -LiteralPath (Join-Path $packageRoot "LEEME-INSTALACION.txt") -Value $readme -Encoding UTF8

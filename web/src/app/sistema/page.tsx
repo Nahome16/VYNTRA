@@ -262,6 +262,39 @@ export default function SystemPage() {
     }
   }
 
+  async function archiveCompany(company: SystemCompany) {
+    if (!window.confirm(`Archivar empresa ${company.name}? Se desactivaran usuarios, empleados monitoreados y dispositivos de esa empresa.`)) {
+      return;
+    }
+    setStatusText("Archivando empresa...");
+    try {
+      const response = await apiPost<{ company: SystemCompany }>(`/api/system/companies/${company.id}/archive`, {
+        reason: "Archivada desde consola sistema",
+      });
+      setCompanies((current) => current.map((row) => (row.id === response.company.id ? response.company : row)));
+      loadCompanyControls(response.company);
+      await loadSystem();
+      setStatusText("Empresa archivada");
+    } catch {
+      setStatusText("No se pudo archivar la empresa");
+    }
+  }
+
+  async function restoreCompany(company: SystemCompany) {
+    setStatusText("Restaurando empresa...");
+    try {
+      const response = await apiPost<{ company: SystemCompany }>(`/api/system/companies/${company.id}/restore`, {
+        reason: "Restaurada desde consola sistema",
+      });
+      setCompanies((current) => current.map((row) => (row.id === response.company.id ? response.company : row)));
+      loadCompanyControls(response.company);
+      await loadSystem();
+      setStatusText("Empresa restaurada");
+    } catch {
+      setStatusText("No se pudo restaurar la empresa");
+    }
+  }
+
   if (!isSystemAdmin) {
     return (
       <AppShell title="Sistema" description="Controles globales de VYNTRA">
@@ -345,11 +378,26 @@ export default function SystemPage() {
                       <td>{company.controls.employee_limit || "Sin limite"}</td>
                       <td>{company.controls.subscription_ends_at || "-"}</td>
                       <td>{company.devices_count}</td>
-                      <td><span className={badgeClass(company.controls.subscription_status || company.status)}>{company.controls.subscription_status || company.status}</span></td>
                       <td>
-                        <button className="row-action" type="button" onClick={() => loadCompanyControls(company)}>
-                          Seleccionar
-                        </button>
+                        <span className={badgeClass(company.status === "archived" ? "archived" : company.controls.subscription_status || company.status)}>
+                          {company.status === "archived" ? "archived" : company.controls.subscription_status || company.status}
+                        </span>
+                      </td>
+                      <td>
+                        <div className="settings-row-actions">
+                          <button className="row-action" type="button" onClick={() => loadCompanyControls(company)}>
+                            Seleccionar
+                          </button>
+                          {company.status === "archived" ? (
+                            <button className="row-action" type="button" onClick={() => void restoreCompany(company)}>
+                              Restaurar
+                            </button>
+                          ) : (
+                            <button className="row-action danger" type="button" onClick={() => void archiveCompany(company)}>
+                              Archivar
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}

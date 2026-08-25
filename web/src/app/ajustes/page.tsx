@@ -531,6 +531,10 @@ export default function SettingsPage() {
   }
 
   async function toggleEmployeeStatus(employee: Employee) {
+    if (employee.status === "archived") {
+      setStatusText("El usuario esta archivado. Usa Restaurar para recuperarlo.");
+      return;
+    }
     const status = employee.status === "active" ? "inactive" : "active";
     setStatusText("Actualizando estado del usuario...");
     try {
@@ -548,6 +552,53 @@ export default function SettingsPage() {
       setStatusText(status === "active" ? "Usuario activado" : "Usuario desactivado");
     } catch {
       setStatusText("No se pudo actualizar el estado del usuario");
+    }
+  }
+
+  async function archiveEmployee(employee: Employee) {
+    if (!window.confirm(`Eliminar usuario monitoreado ${employee.full_name}? Se archivara su acceso y se revocaran sus dispositivos asignados.`)) {
+      return;
+    }
+    setStatusText("Eliminando usuario monitoreado...");
+    try {
+      const response = await apiPost<{ employee: Employee }>(`/api/settings/employees/${employee.id}/archive`, {
+        reason: "Eliminado desde ajustes",
+      });
+      setCatalogs((current) =>
+        current
+          ? {
+              ...current,
+              employees: current.employees.map((row) =>
+                row.id === response.employee.id ? response.employee : row,
+              ),
+            }
+          : current,
+      );
+      setStatusText("Usuario monitoreado eliminado");
+    } catch {
+      setStatusText("No se pudo eliminar el usuario monitoreado");
+    }
+  }
+
+  async function restoreEmployee(employee: Employee) {
+    setStatusText("Restaurando usuario monitoreado...");
+    try {
+      const response = await apiPost<{ employee: Employee }>(`/api/settings/employees/${employee.id}/restore`, {
+        reason: "Restaurado desde ajustes",
+      });
+      setCatalogs((current) =>
+        current
+          ? {
+              ...current,
+              employees: current.employees.map((row) =>
+                row.id === response.employee.id ? response.employee : row,
+              ),
+            }
+          : current,
+      );
+      setStatusText("Usuario monitoreado restaurado");
+    } catch {
+      setStatusText("No se pudo restaurar el usuario monitoreado");
     }
   }
 
@@ -669,6 +720,15 @@ export default function SettingsPage() {
                             >
                               {resettingCredentialId === employee.id ? "Enviando..." : "Reenviar"}
                             </button>
+                            {employee.status === "archived" ? (
+                              <button className="row-action" type="button" onClick={() => void restoreEmployee(employee)}>
+                                Restaurar
+                              </button>
+                            ) : (
+                              <button className="row-action danger" type="button" onClick={() => void archiveEmployee(employee)}>
+                                Eliminar
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

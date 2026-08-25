@@ -1183,6 +1183,16 @@ tbody tr:hover {
   color: var(--primary-ink);
 }
 
+.row-action.danger {
+  border-color: var(--danger-line);
+  color: var(--danger);
+}
+
+.row-action.danger:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
 .row-action:disabled {
   cursor: not-allowed;
   opacity: 0.55;

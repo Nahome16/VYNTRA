@@ -254,6 +254,10 @@ class SystemCompanyControlsPayload(StrictPayload):
     admin_notice: str | None = Field(default=None, max_length=255)
 
 
+class ArchivePayload(StrictPayload):
+    reason: str | None = Field(default=None, max_length=180)
+
+
 class SystemUserPayload(StrictPayload):
     company_id: str | None = Field(default=None, max_length=36)
     full_name: str = Field(..., min_length=2, max_length=180)
@@ -2601,6 +2605,70 @@ def serialize_panel_user(db: Session, user: User) -> dict:
     }
 
 
+def archive_monitored_employee_record(
+    db: Session,
+    employee: Employee,
+    *,
+    actor_id: str | None,
+    reason: str,
+    action: str = "monitored_employee_archived",
+) -> dict:
+    employee.status = "archived"
+    credentials = db.execute(
+        select(EmployeeCredential).where(EmployeeCredential.employee_id == employee.id)
+    ).scalars().all()
+    for credential in credentials:
+        credential.status = "archived"
+    devices = db.execute(
+        select(Device).where(Device.employee_id == employee.id)
+    ).scalars().all()
+    for device in devices:
+        device.is_active = False
+    db.add(
+        AuditLog(
+            company_id=employee.company_id,
+            user_id=actor_id,
+            action=action,
+            entity_type="employee",
+            entity_id=employee.id,
+            payload_json=json_text(
+                {
+                    "reason": clean_text(reason, 180),
+                    "credentials_archived": len(credentials),
+                    "devices_revoked": len(devices),
+                }
+            ),
+        )
+    )
+    return {"credentials_archived": len(credentials), "devices_revoked": len(devices)}
+
+
+def restore_monitored_employee_record(
+    db: Session,
+    employee: Employee,
+    *,
+    actor_id: str | None,
+    reason: str,
+) -> dict:
+    employee.status = "active"
+    credentials = db.execute(
+        select(EmployeeCredential).where(EmployeeCredential.employee_id == employee.id)
+    ).scalars().all()
+    for credential in credentials:
+        credential.status = "active"
+    db.add(
+        AuditLog(
+            company_id=employee.company_id,
+            user_id=actor_id,
+            action="monitored_employee_restored",
+            entity_type="employee",
+            entity_id=employee.id,
+            payload_json=json_text({"reason": clean_text(reason, 180), "credentials_restored": len(credentials)}),
+        )
+    )
+    return {"credentials_restored": len(credentials)}
+
+
 def company_admin_messages(db: Session, company_id: str) -> list[dict]:
     controls = company_controls(db, company_id)
     messages = []
@@ -2678,6 +2746,23 @@ def admin_login(
                 entity_id=user.id if user else "",
                 ip_address=client_ip_address[:80],
                 payload_json=json_text({"email": email}),
+            )
+        )
+        db.commit()
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    company = db.get(Company, user.company_id)
+    if company and company.status != "active" and role_name != "system_admin":
+        record_admin_login_result(db, email, client_ip_address, False)
+        db.add(
+            AuditLog(
+                company_id=user.company_id,
+                user_id=user.id,
+                action="admin_login_failed",
+                entity_type="user",
+                entity_id=user.id,
+                ip_address=client_ip_address[:80],
+                payload_json=json_text({"email": email, "reason": "company_archived"}),
             )
         )
         db.commit()
@@ -2990,6 +3075,95 @@ def update_system_company_controls(
             entity_type="company",
             entity_id=company.id,
             payload_json=json_text(company_controls(db, company.id)),
+        )
+    )
+    db.commit()
+    db.refresh(company)
+    return {"ok": True, "company": serialize_system_company(db, company)}
+
+
+@app.post("/api/system/companies/{company_id}/archive")
+def archive_system_company(
+    company_id: str,
+    payload: ArchivePayload = Body(default_factory=ArchivePayload),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    company = db.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    reason = clean_text(payload.reason, 180) or "Empresa archivada desde consola sistema"
+    company.status = "archived"
+    users = db.execute(select(User).where(User.company_id == company.id)).scalars().all()
+    deactivated_users = 0
+    for user in users:
+        role = db.get(Role, user.role_id) if user.role_id else None
+        if role and role.name == "system_admin":
+            continue
+        if user.status != "inactive":
+            user.status = "inactive"
+            deactivated_users += 1
+        revoke_admin_sessions(db, user.id, actor_id=admin.user_id, reason=reason)
+
+    employees = db.execute(select(Employee).where(Employee.company_id == company.id)).scalars().all()
+    for employee in employees:
+        employee.status = "archived"
+    credentials = db.execute(select(EmployeeCredential).where(EmployeeCredential.company_id == company.id)).scalars().all()
+    for credential in credentials:
+        credential.status = "archived"
+    devices = db.execute(select(Device).where(Device.company_id == company.id)).scalars().all()
+    for device in devices:
+        device.is_active = False
+
+    set_company_setting(db, company.id, "subscription_status", "suspended", "Estado comercial de la suscripcion.")
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="system_company_archived",
+            entity_type="company",
+            entity_id=company.id,
+            payload_json=json_text(
+                {
+                    "reason": reason,
+                    "users_deactivated": deactivated_users,
+                    "employees_archived": len(employees),
+                    "credentials_archived": len(credentials),
+                    "devices_revoked": len(devices),
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(company)
+    return {"ok": True, "company": serialize_system_company(db, company)}
+
+
+@app.post("/api/system/companies/{company_id}/restore")
+def restore_system_company(
+    company_id: str,
+    payload: ArchivePayload = Body(default_factory=ArchivePayload),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    company = db.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    reason = clean_text(payload.reason, 180) or "Empresa restaurada desde consola sistema"
+    company.status = "active"
+    set_company_setting(db, company.id, "subscription_status", "active", "Estado comercial de la suscripcion.")
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="system_company_restored",
+            entity_type="company",
+            entity_id=company.id,
+            payload_json=json_text({"reason": reason}),
         )
     )
     db.commit()
@@ -4262,6 +4436,54 @@ def update_monitored_employee(
     db.commit()
     db.refresh(employee)
     return {"ok": True, "employee": serialize_employee(employee, department)}
+
+
+@app.post("/api/settings/employees/{employee_id}/archive")
+def archive_monitored_employee(
+    employee_id: str,
+    payload: ArchivePayload = Body(default_factory=ArchivePayload),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_permission(admin, "employees:manage")
+    employee = db.get(Employee, employee_id)
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    company = resolve_admin_company(db, admin, employee.company_id)
+    if employee.company_id != company.id:
+        raise HTTPException(status_code=403, detail="Cannot archive employee from another company")
+
+    reason = clean_text(payload.reason, 180) or "Usuario monitoreado eliminado desde ajustes"
+    archive_result = archive_monitored_employee_record(db, employee, actor_id=admin.user_id, reason=reason)
+    db.commit()
+    db.refresh(employee)
+    department = db.get(Department, employee.department_id) if employee.department_id else None
+    return {"ok": True, "employee": serialize_employee(employee, department), "archive": archive_result}
+
+
+@app.post("/api/settings/employees/{employee_id}/restore")
+def restore_monitored_employee(
+    employee_id: str,
+    payload: ArchivePayload = Body(default_factory=ArchivePayload),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_permission(admin, "employees:manage")
+    employee = db.get(Employee, employee_id)
+    if employee is None:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    company = resolve_admin_company(db, admin, employee.company_id)
+    if employee.company_id != company.id:
+        raise HTTPException(status_code=403, detail="Cannot restore employee from another company")
+    if company.status != "active":
+        raise HTTPException(status_code=400, detail="Company must be active to restore employees")
+
+    reason = clean_text(payload.reason, 180) or "Usuario monitoreado restaurado desde ajustes"
+    restore_result = restore_monitored_employee_record(db, employee, actor_id=admin.user_id, reason=reason)
+    db.commit()
+    db.refresh(employee)
+    department = db.get(Department, employee.department_id) if employee.department_id else None
+    return {"ok": True, "employee": serialize_employee(employee, department), "restore": restore_result}
 
 
 @app.post("/api/settings/employees/{employee_id}/reset-credentials")

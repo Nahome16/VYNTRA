@@ -8,6 +8,9 @@ param(
     [string]$PackageName = "",
     [string]$SetupName = "",
     [string]$ApiUrl = "https://api.vyntralab.com",
+    [string]$CertificateThumbprint = "",
+    [string]$TimestampServer = "http://timestamp.digicert.com",
+    [string]$SignToolPath = "signtool.exe",
     [switch]$BuildAgent
 )
 
@@ -33,6 +36,47 @@ function Safe-RemoveDirectory {
             Start-Sleep -Seconds 2
         }
     }
+}
+
+function Invoke-CodeSign {
+    param([string]$Path)
+    if (-not $CertificateThumbprint) { return }
+    if ($CertificateThumbprint -eq "CERT_THUMBPRINT") {
+        throw "Reemplaza CERT_THUMBPRINT por el thumbprint real de tu certificado de code signing."
+    }
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $resolvedSignTool = Resolve-SignToolPath
+    & $resolvedSignTool sign `
+        /fd SHA256 `
+        /tr $TimestampServer `
+        /td SHA256 `
+        /sha1 $CertificateThumbprint `
+        $Path
+}
+
+function Resolve-SignToolPath {
+    if ($SignToolPath -and $SignToolPath -ne "signtool.exe") {
+        if (Test-Path -LiteralPath $SignToolPath) {
+            return $SignToolPath
+        }
+        throw "No se encontro signtool.exe en: $SignToolPath"
+    }
+
+    $fromCommand = Get-Command "signtool.exe" -ErrorAction SilentlyContinue
+    if ($fromCommand) {
+        return $fromCommand.Source
+    }
+
+    $kitsRoot = "C:\Program Files (x86)\Windows Kits\10\bin"
+    $found = Get-ChildItem -LiteralPath $kitsRoot -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match "\\x64\\signtool\.exe$" } |
+        Sort-Object FullName -Descending |
+        Select-Object -First 1
+    if ($found) {
+        return $found.FullName
+    }
+
+    throw "No se encontro signtool.exe. Instala Windows SDK Signing Tools o pasa -SignToolPath con la ruta completa."
 }
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -66,6 +110,9 @@ if ($BuildAgent -or -not (Test-Path -LiteralPath $zipPath)) {
         -ContactEmail $ContactEmail `
         -ApiUrl $ApiUrl `
         -PackageName $PackageName `
+        -CertificateThumbprint $CertificateThumbprint `
+        -TimestampServer $TimestampServer `
+        -SignToolPath $SignToolPath `
         -Build:$BuildAgent
 }
 
@@ -117,7 +164,9 @@ if (-not (Test-Path -LiteralPath $builtExe)) {
     throw "PyInstaller no genero el instalador esperado: $builtExe"
 }
 
+Invoke-CodeSign -Path $builtExe
 Copy-Item -LiteralPath $builtExe -Destination $setupPath -Force
+Invoke-CodeSign -Path $setupPath
 
 Write-Host "Instalador .exe listo:"
 Write-Host $setupPath

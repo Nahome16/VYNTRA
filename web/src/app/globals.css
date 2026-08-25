@@ -1466,22 +1466,64 @@ tbody tr:hover {
   padding: 0 11px;
 }
 
-.dashboard-filter-bar {
+.dashboard-control-panel {
   display: grid;
-  grid-template-columns: minmax(260px, 0.9fr) repeat(3, minmax(160px, 1fr));
-  gap: 10px;
-  align-items: center;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(420px, 1.2fr);
+  gap: 14px;
+  align-items: stretch;
   margin-bottom: 18px;
+}
+
+.dashboard-filter-group {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
   border: 1px solid var(--line);
-  border-radius: var(--r);
+  border-radius: 8px;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   padding: 12px;
 }
 
-.dashboard-filter-bar select,
-.dashboard-filter-bar input,
-.dashboard-date-range input {
+.dashboard-filter-group > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.dashboard-scope-grid,
+.dashboard-period-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+}
+
+.dashboard-scope-grid.system {
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+}
+
+.dashboard-period-control {
+  grid-template-columns: minmax(190px, 0.75fr) minmax(135px, 0.55fr) minmax(135px, 0.55fr);
+  align-items: end;
+}
+
+.dashboard-filter-group label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dashboard-filter-group label small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.dashboard-filter-group select,
+.dashboard-filter-group input {
   width: 100%;
   min-width: 0;
   height: 38px;
@@ -1495,9 +1537,8 @@ tbody tr:hover {
   outline: none;
 }
 
-.dashboard-filter-bar select:focus,
-.dashboard-filter-bar input:focus,
-.dashboard-date-range input:focus {
+.dashboard-filter-group select:focus,
+.dashboard-filter-group input:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-soft);
 }
@@ -1530,6 +1571,12 @@ tbody tr:hover {
   box-shadow: var(--shadow-xs);
 }
 
+.period-tabs.compact {
+  height: 38px;
+  align-self: end;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .dashboard-date-range {
   display: flex;
   align-items: center;
@@ -1540,6 +1587,14 @@ tbody tr:hover {
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.dashboard-metric-grid {
+  margin-bottom: 18px;
+}
+
+.dashboard-main-grid {
+  align-items: stretch;
 }
 
 .settings-filter {
@@ -4019,6 +4074,7 @@ tbody tr:hover {
   .system-access-grid,
   .downloads-layout,
   .employee-metric-grid,
+  .dashboard-control-panel,
   .settings-overview {grid-template-columns: 1fr;
   }
   .settings-sectionbar {align-items: stretch;flex-direction: column;
@@ -4044,6 +4100,8 @@ tbody tr:hover {
   }
   .insight-strip {grid-template-columns: minmax(0, 1fr);
   }
+  .dashboard-period-control {grid-template-columns: minmax(0, 1fr) minmax(140px, 0.5fr) minmax(140px, 0.5fr);
+  }
 }
 
 @media (max-width: 640px) {
@@ -4068,8 +4126,13 @@ tbody tr:hover {
   .settings-primary-action,
   .settings-actionbar input,
   .settings-actionbar select,
+  .dashboard-scope-grid.system,
+  .dashboard-period-control,
   .settings-filter,
   .settings-filter select {min-width: 0;width: 100%;
+  }
+  .dashboard-scope-grid.system,
+  .dashboard-period-control {grid-template-columns: 1fr;
   }
   .settings-dropdown-menu {left: 0;right: auto;width: 100%;
   }

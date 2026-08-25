@@ -119,6 +119,17 @@ Para generar un archivo `.exe` de instalacion como aplicacion de Windows:
   -ContactEmail "carlos@insuremebetter.com"
 ```
 
+Para produccion, firmar el agente y el instalador con un certificado de code
+signing confiable:
+
+```powershell
+.\installer\build_windows_exe_installer.ps1 `
+  -CompanyName "InsureMeBetter" `
+  -ContactEmail "carlos@insuremebetter.com" `
+  -BuildAgent `
+  -CertificateThumbprint "CERT_THUMBPRINT"
+```
+
 El resultado queda en:
 
 ```text

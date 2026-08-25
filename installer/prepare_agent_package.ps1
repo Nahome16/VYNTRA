@@ -8,9 +8,12 @@ param(
     [string]$DeviceToken = "",
 
     [string]$ApiUrl = "https://api.vyntralab.com",
-    [string]$AgentVersion = "1.2.1",
+    [string]$AgentVersion = "1.2.2",
     [string]$OutputDir = "release",
     [string]$PackageName = "",
+    [string]$CertificateThumbprint = "",
+    [string]$TimestampServer = "http://timestamp.digicert.com",
+    [string]$SignToolPath = "signtool.exe",
     [switch]$Build
 )
 
@@ -52,7 +55,12 @@ $distAgent = Join-Path $root "dist\VYNTRAAgent"
 $agentExe = Join-Path $distAgent "VYNTRAAgent.exe"
 
 if ($Build -or -not (Test-Path -LiteralPath $agentExe)) {
-    & (Join-Path $PSScriptRoot "build_agent.ps1")
+    $buildArgs = @{
+        CertificateThumbprint = $CertificateThumbprint
+        TimestampServer = $TimestampServer
+        SignToolPath = $SignToolPath
+    }
+    & (Join-Path $PSScriptRoot "build_agent.ps1") @buildArgs
 }
 
 if (-not (Test-Path -LiteralPath $agentExe)) {
@@ -99,6 +107,9 @@ Url = $ApiUrl
 
 [Agent]
 Version = $AgentVersion
+
+[AgentUpdate]
+Enabled = true
 
 [Interface]
 Language = es

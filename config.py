@@ -31,6 +31,9 @@ class Config:
         self.agent_version = parser.get("Agent", "Version", fallback="1.0.0")
         language = parser.get("Interface", "Language", fallback="es").strip().lower()
         self.language = "en" if language.startswith("en") else "es"
+        self.agent_auto_update_enabled = parser.getboolean(
+            "AgentUpdate", "Enabled", fallback=True
+        )
 
         self.intervalo_segundos = parser.getint(
             "Capture", "IntervalSeconds", fallback=300

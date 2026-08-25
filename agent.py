@@ -21,6 +21,7 @@ import tkinter as tk
 import customtkinter as ctk
 
 from agent_event_uploader import AgentEventUploader
+from agent_updater import AgentUpdater, run_startup_update
 import legal_docs
 import local_auth
 from config import Config
@@ -30,7 +31,7 @@ from screenshots import ScreenshotEngine
 from shift import ShiftManager, fmt_hms
 
 
-VERSION = "1.2.1"
+VERSION = "1.2.2"
 
 
 AGENT_I18N = {
@@ -930,6 +931,7 @@ class StationWindow(ctk.CTk):
         self.screens = ScreenshotEngine(cfg, on_event=self._on_screen_event)
         self.event_uploader = AgentEventUploader(cfg, on_event=self._on_sync_event)
         self.rules_downloader = RulesDownloader(cfg, on_event=self._on_rules_event)
+        self.updater = AgentUpdater(cfg, VERSION, on_event=self._on_sync_event)
         self.shift.on_shift_start = self.screens.start
         self.shift.on_shift_pause = self.screens.pause
         self.shift.on_shift_resume = self.screens.resume
@@ -952,6 +954,7 @@ class StationWindow(ctk.CTk):
             self.after(200, lambda: self._draw_clock(0))
             self.event_uploader.start()
             self.rules_downloader.start()
+            self.updater.start_background()
             self._start_healthcheck()
         except Exception as exc:
             self._ui_error = exc
@@ -2607,6 +2610,8 @@ def _mensaje_rechazo(cfg: Config):
 def main():
     ctk.set_appearance_mode("light")
     cfg = Config()
+    if run_startup_update(cfg, VERSION):
+        sys.exit(0)
 
     # 1) Login: se pide cada vez que se abre la app. Esta identidad permite
     #    asociar el consentimiento y la jornada con la credencial del empleado.

@@ -45,9 +45,9 @@ This creates:
 From the local PC, upload the final release files:
 
 ```powershell
-scp "C:\Users\Yoga\OneDrive\Desktop\VYNTRA\release\VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.1.exe" root@2.25.100.25:/opt/vyntra/downloads/
-scp "C:\Users\Yoga\OneDrive\Desktop\VYNTRA\release\VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.1.zip" root@2.25.100.25:/opt/vyntra/downloads/
-scp "C:\Users\Yoga\OneDrive\Desktop\VYNTRA\release\VYNTRAAgent-InsureMeBetter-macOS-Builder-v1.2.1.zip" root@2.25.100.25:/opt/vyntra/downloads/
+scp "C:\Users\Yoga\OneDrive\Desktop\VYNTRA\release\VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.2.exe" root@2.25.100.25:/opt/vyntra/downloads/
+scp "C:\Users\Yoga\OneDrive\Desktop\VYNTRA\release\VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.2.zip" root@2.25.100.25:/opt/vyntra/downloads/
+scp "C:\Users\Yoga\OneDrive\Desktop\VYNTRA\release\VYNTRAAgent-InsureMeBetter-macOS-Builder-v1.2.2.zip" root@2.25.100.25:/opt/vyntra/downloads/
 ```
 
 Then rebuild the API once so the read-only downloads mount is active:
@@ -61,6 +61,28 @@ Panel users with device management permission can then open:
 
 ```text
 https://app.vyntralab.com/descargas
+```
+
+Windows agents already enrolled with a valid `DeviceToken` also check:
+
+```text
+GET /api/agent/update
+```
+
+When a newer Windows ZIP is published, the agent downloads it with
+`X-Device-Token`, validates SHA-256, preserves `config.ini` and local queues,
+copies the new binaries and restarts itself.
+
+For Smart App Control, sign every release binary before upload:
+
+```powershell
+.\installer\build_windows_exe_installer.ps1 `
+  -CompanyName "InsureMeBetter" `
+  -ContactEmail "rrhh@insuremebetter.com" `
+  -PackageName "VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.2" `
+  -SetupName "VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.2" `
+  -BuildAgent `
+  -CertificateThumbprint "CERT_THUMBPRINT"
 ```
 
 ## 4. Security before wider rollout

@@ -734,6 +734,27 @@ def downloads_root() -> str:
     return os.path.abspath(settings.downloads_dir)
 
 
+def file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def parse_version_tuple(value: str) -> tuple[int, ...]:
+    parts = re.findall(r"\d+", value or "")
+    return tuple(int(part) for part in parts[:4]) if parts else (0,)
+
+
+def version_from_filename(filename: str) -> str:
+    match = re.search(r"-v(\d+(?:\.\d+){1,3})(?:\.|[-_])", filename, re.IGNORECASE)
+    return match.group(1) if match else "0.0.0"
+
+
 def safe_download_path(filename: str) -> str:
     clean_name = clean_text(filename, 180)
     if clean_name != os.path.basename(clean_name):
@@ -764,10 +785,41 @@ def serialize_download(path: str) -> dict:
     return {
         "filename": filename,
         "platform": platform,
+        "version": version_from_filename(filename),
         "size_bytes": stat.st_size,
+        "sha256": file_sha256(path),
         "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
         "download_url": f"/api/downloads/agent/{filename}",
     }
+
+
+def latest_agent_update(platform: str = "windows") -> dict | None:
+    root = downloads_root()
+    if not os.path.isdir(root):
+        return None
+    platform_text = platform.strip().lower() or "windows"
+    candidates = []
+    for filename in os.listdir(root):
+        lower_name = filename.lower()
+        if not filename.startswith("VYNTRAAgent-"):
+            continue
+        if not lower_name.endswith(".zip"):
+            continue
+        if platform_text == "windows" and "windows" not in lower_name:
+            continue
+        if platform_text == "macos" and "macos" not in lower_name:
+            continue
+        try:
+            full_path = safe_download_path(filename)
+        except HTTPException:
+            continue
+        if os.path.isfile(full_path):
+            stat = os.stat(full_path)
+            candidates.append((parse_version_tuple(version_from_filename(filename)), stat.st_mtime, full_path))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return serialize_download(candidates[0][2])
 
 
 def require_system_admin(admin: AdminPrincipal):
@@ -6097,6 +6149,67 @@ def get_agent_rules(
             for rule in all_rules
         ],
     }
+
+
+@app.get("/api/agent/update")
+def get_agent_update(
+    platform: str = "windows",
+    current_version: str = "",
+    device: Device = Depends(require_device),
+):
+    latest = latest_agent_update(platform)
+    if latest is None:
+        return {
+            "ok": True,
+            "update_available": False,
+            "reason": "no_update_published",
+        }
+
+    latest_version = latest.get("version") or "0.0.0"
+    update_available = parse_version_tuple(latest_version) > parse_version_tuple(current_version)
+    return {
+        "ok": True,
+        "device_id": device.id,
+        "platform": latest.get("platform"),
+        "current_version": current_version or "",
+        "latest_version": latest_version,
+        "update_available": update_available,
+        "package": {
+            "filename": latest["filename"],
+            "version": latest_version,
+            "size_bytes": latest["size_bytes"],
+            "sha256": latest["sha256"],
+            "download_url": f"/api/agent/update/download/{latest['filename']}",
+            "published_at": latest["updated_at"],
+        } if update_available else None,
+    }
+
+
+@app.get("/api/agent/update/download/{filename}")
+def download_agent_update(
+    filename: str,
+    device: Device = Depends(require_device),
+):
+    full_path = safe_download_path(filename)
+    if not os.path.isfile(full_path):
+        raise HTTPException(status_code=404, detail="Update not found")
+    lower_name = os.path.basename(full_path).lower()
+    if (
+        not lower_name.startswith("vyntraagent-")
+        or not lower_name.endswith(".zip")
+        or "windows" not in lower_name
+    ):
+        raise HTTPException(status_code=400, detail="Invalid update package")
+    return FileResponse(
+        full_path,
+        media_type="application/zip",
+        filename=os.path.basename(full_path),
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "X-Agent-Update-Sha256": file_sha256(full_path),
+        },
+    )
 
 
 @app.post("/api/agent/events")

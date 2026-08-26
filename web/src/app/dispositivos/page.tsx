@@ -52,7 +52,17 @@ export default function DevicesPage() {
   const assignedCount = useMemo(() => devices.filter((device) => device.employee_id).length, [devices]);
 
   function loadDeviceForEdit(device: DeviceRecord | null) {
-    if (!device) return;
+    if (!device) {
+      setSelectedDeviceId("");
+      setEditName("");
+      setEditHostname("");
+      setEditLocation("");
+      setEditEmployeeId("");
+      setEditAgentVersion("");
+      setEditActive(true);
+      setRotateReason("");
+      return;
+    }
     setSelectedDeviceId(device.id);
     setEditName(device.name);
     setEditHostname(device.hostname);
@@ -72,6 +82,12 @@ export default function DevicesPage() {
 
   const loadDevices = useCallback(async () => {
     if (!canRead) return;
+    if (isSystemAdmin && !companyId) {
+      setDevices([]);
+      loadDeviceForEdit(null);
+      setStatusText("Selecciona una empresa para ver sus dispositivos");
+      return;
+    }
     setLoading(true);
     setStatusText("Cargando dispositivos...");
     try {
@@ -85,10 +101,14 @@ export default function DevicesPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiGet, canRead, queryString, selectedDeviceId]);
+  }, [apiGet, canRead, companyId, isSystemAdmin, queryString, selectedDeviceId]);
 
   const loadCatalogs = useCallback(async () => {
     if (!canRead) return;
+    if (isSystemAdmin && !companyId) {
+      setCatalogs(null);
+      return;
+    }
     try {
       const qs = isSystemAdmin && companyId ? `?company_id=${encodeURIComponent(companyId)}` : "";
       const response = await apiGet<CatalogsResponse>(`/api/productivity/catalogs${qs}`);
@@ -103,6 +123,7 @@ export default function DevicesPage() {
     try {
       const response = await apiGet<SystemOverviewResponse>("/api/system/overview");
       setCompanies(response.companies);
+      setCompanyId((current) => current || response.companies[0]?.id || "");
     } catch {
       setCompanies([]);
     }
@@ -120,6 +141,10 @@ export default function DevicesPage() {
   async function createDevice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canManage) return;
+    if (isSystemAdmin && !companyId) {
+      setStatusText("Selecciona una empresa antes de crear el dispositivo");
+      return;
+    }
     setStatusText("Creando dispositivo...");
     try {
       const response = await apiPost<{
@@ -215,7 +240,7 @@ export default function DevicesPage() {
             {isSystemAdmin ? (
               <label>Empresa
                 <select value={companyId} onChange={(event) => setCompanyId(event.target.value)}>
-                  <option value="">Todas / empresa propia</option>
+                  <option value="">Selecciona empresa</option>
                   {companies.map((company) => (
                     <option key={company.id} value={company.id}>{company.name}</option>
                   ))}

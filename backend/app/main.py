@@ -721,6 +721,13 @@ def require_company_owned(db: Session, model, row_id: str | None, company_id: st
     return row
 
 
+def require_active_employee(db: Session, employee_id: str | None, company_id: str) -> Employee | None:
+    employee = require_company_owned(db, Employee, employee_id, company_id, "Employee") if employee_id else None
+    if employee and employee.status != "active":
+        raise HTTPException(status_code=400, detail="Employee must be active")
+    return employee
+
+
 def resolve_admin_company(
     db: Session,
     admin: AdminPrincipal,
@@ -1106,13 +1113,14 @@ def serialize_access_code(kind: str, code: StationRestoreCode | OvertimeAuthoriz
 def serialize_device(device: Device, company: Company | None = None, employee: Employee | None = None) -> dict:
     online_cutoff = now_utc() - timedelta(minutes=10)
     is_online = bool(device.is_active and device.last_seen_at and _as_aware_utc(device.last_seen_at) >= online_cutoff)
+    active_employee = employee if employee and employee.status != "archived" else None
     return {
         "id": device.id,
         "company_id": device.company_id,
         "company": company.name if company else "",
-        "employee_id": device.employee_id,
-        "employee": employee.full_name if employee else "",
-        "employee_code": employee.employee_code if employee else "",
+        "employee_id": active_employee.id if active_employee else None,
+        "employee": active_employee.full_name if active_employee else "",
+        "employee_code": active_employee.employee_code if active_employee else "",
         "name": device.name,
         "hostname": device.hostname,
         "location": device.location,
@@ -2710,7 +2718,12 @@ def serialize_system_company(db: Session, company: Company) -> dict:
         )
     ).scalar_one()
     devices_count = db.execute(
-        select(func.count()).select_from(Device).where(Device.company_id == company.id)
+        select(func.count())
+        .select_from(Device)
+        .where(
+            Device.company_id == company.id,
+            Device.is_active.is_(True),
+        )
     ).scalar_one()
     return {
         "id": company.id,
@@ -2779,6 +2792,7 @@ def archive_monitored_employee_record(
     ).scalars().all()
     for device in devices:
         device.is_active = False
+        device.employee_id = None
     db.add(
         AuditLog(
             company_id=employee.company_id,
@@ -3412,6 +3426,7 @@ def archive_system_company(
     devices = db.execute(select(Device).where(Device.company_id == company.id)).scalars().all()
     for device in devices:
         device.is_active = False
+        device.employee_id = None
 
     set_company_setting(db, company.id, "subscription_status", "suspended", "Estado comercial de la suscripcion.")
     db.add(
@@ -3767,16 +3782,39 @@ def list_devices(
 ):
     require_permission(admin, "devices:read")
     company = resolve_admin_company(db, admin, company_id)
+    if company.status == "archived":
+        return {
+            "company": {"id": company.id, "name": company.name},
+            "count": 0,
+            "devices": [],
+        }
     query = select(Device).where(Device.company_id == company.id)
     if employee_id:
-        query = query.where(Device.employee_id == clean_text(employee_id, 36))
+        clean_employee_id = clean_text(employee_id, 36)
+        employee = db.get(Employee, clean_employee_id)
+        if employee is None or employee.company_id != company.id or employee.status != "active":
+            return {
+                "company": {"id": company.id, "name": company.name},
+                "count": 0,
+                "devices": [],
+            }
+        query = query.where(Device.employee_id == clean_employee_id)
     devices = db.execute(query.order_by(Device.last_seen_at.desc().nullslast(), Device.name)).scalars().all()
     employee_ids = {device.employee_id for device in devices if device.employee_id}
     employees = {
         employee.id: employee
-        for employee in db.execute(select(Employee).where(Employee.id.in_(employee_ids))).scalars().all()
+        for employee in db.execute(
+            select(Employee).where(
+                Employee.id.in_(employee_ids),
+                Employee.status == "active",
+            )
+        ).scalars().all()
     } if employee_ids else {}
-    items = [serialize_device(device, company, employees.get(device.employee_id)) for device in devices]
+    items = [
+        serialize_device(device, company, employees.get(device.employee_id))
+        for device in devices
+        if not device.employee_id or device.employee_id in employees
+    ]
     clean_status = clean_text(status_filter, 40)
     if clean_status:
         items = [item for item in items if item["status"] == clean_status]
@@ -3801,7 +3839,7 @@ def create_device(
     location = clean_text(data.get("location"), 160)
     agent_version = clean_text(data.get("agent_version") or "pending", 40)
     employee_id = clean_text(data.get("employee_id"), 36) or None
-    employee = require_company_owned(db, Employee, employee_id, company.id, "Employee") if employee_id else None
+    employee = require_active_employee(db, employee_id, company.id)
 
     duplicate = db.execute(
         select(Device).where(Device.company_id == company.id, func.lower(Device.name) == name.lower())
@@ -3880,8 +3918,8 @@ def update_device(
         device.agent_version = clean_text(data.get("agent_version"), 40) or "unknown"
     if "employee_id" in data:
         employee_id = clean_text(data.get("employee_id"), 36) or None
-        require_company_owned(db, Employee, employee_id, company.id, "Employee") if employee_id else None
-        device.employee_id = employee_id
+        employee = require_active_employee(db, employee_id, company.id)
+        device.employee_id = employee.id if employee else None
     if "is_active" in data and data.get("is_active") is not None:
         device.is_active = bool(data.get("is_active"))
 

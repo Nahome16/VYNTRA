@@ -2167,21 +2167,35 @@ tbody tr:hover {
 }
 
 .time-edit-row,
+.duration-edit-row,
 .shift-edit-form {
   display: grid;
   gap: 10px;
 }
 
-.time-edit-row {
+.time-edit-row,
+.duration-edit-row {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .time-edit-row input,
+.duration-edit-row input,
 .shift-edit-form input,
 .detail-date-filter input {
   height: 38px;
   min-width: 0;
   padding: 0 11px;
+}
+
+.duration-edit-row label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: left;
+  text-transform: uppercase;
 }
 
 .detail-date-filter {
@@ -2226,7 +2240,8 @@ tbody tr:hover {
   gap: 12px;
 }
 
-.associate-metrics div {
+.associate-metrics div,
+.associate-metrics button {
   display: grid;
   gap: 6px;
   min-height: 84px;
@@ -2238,12 +2253,90 @@ tbody tr:hover {
   text-align: center;
 }
 
+.associate-metrics button {
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.associate-metrics button:hover,
+.associate-metrics button.active {
+  border-color: rgba(88, 132, 255, 0.62);
+  box-shadow: 0 0 0 3px rgba(88, 132, 255, 0.1);
+  transform: translateY(-1px);
+}
+
 .associate-metrics strong {
   color: var(--ink);
   font-size: 26px;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
   line-height: 1;
+}
+
+.metric-detail-card {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+  padding: 14px;
+}
+
+.metric-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.metric-detail-header span {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.metric-detail-header button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.metric-detail-list {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.metric-detail-list article {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  padding: 10px;
+}
+
+.metric-detail-list small,
+.metric-detail-list span,
+.metric-detail-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.metric-detail-list strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 750;
 }
 
 /* ==========================================================================
@@ -2604,6 +2697,34 @@ tbody tr:hover {
 
 .event-strip {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.break-lunch-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.break-lunch-comparison span {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+  padding: 9px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.break-lunch-comparison .ok {
+  border-color: rgba(52, 211, 153, 0.28);
+  color: var(--good);
+}
+
+.break-lunch-comparison .over {
+  border-color: rgba(255, 105, 133, 0.35);
+  color: var(--bad);
 }
 
 .event-strip span {
@@ -4319,6 +4440,8 @@ tbody tr:hover {
   .mini-stats,
   .associate-metrics,
   .time-edit-row,
+  .duration-edit-row,
+  .break-lunch-comparison,
   .shift-edit-form,
   .timeline-list.compact,
   .composition-row,
@@ -4766,6 +4889,8 @@ tbody tr:hover {
   .mini-stats,
   .associate-metrics,
   .time-edit-row,
+  .duration-edit-row,
+  .break-lunch-comparison,
   .shift-edit-form,
   .timeline-list.compact,
   .composition-row,

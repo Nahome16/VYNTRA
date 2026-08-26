@@ -256,6 +256,8 @@ class EmployeeSchedule(Base):
     employee_id: Mapped[str] = mapped_column(ForeignKey("employees.id"), nullable=False)
     start_time: Mapped[str] = mapped_column(String(5), nullable=False, default="08:00")
     end_time: Mapped[str] = mapped_column(String(5), nullable=False, default="17:00")
+    expected_break_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=15)
+    expected_lunch_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     effective_from: Mapped[str] = mapped_column(String(10), nullable=False, default="1970-01-01")
     timezone: Mapped[str] = mapped_column(String(80), nullable=False, default="America/Managua")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

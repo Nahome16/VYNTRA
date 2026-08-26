@@ -10,6 +10,7 @@ import { formatDuration, fullDate } from "@/lib/format";
 import { downloadAuthenticatedFile } from "@/lib/download-file";
 
 type AttendanceView = "live" | "history" | "groups" | "summary";
+type MetricDetailKey = "punctual" | "tardy" | "justified" | "break" | "lunch";
 
 const viewLabels: Record<AttendanceView, string> = {
   live: "En vivo",
@@ -122,6 +123,20 @@ function dateTimeFromInput(date: string, time: string) {
   return new Date(`${date}T${time}:00`).toISOString();
 }
 
+function parseMinutes(value: string, fallback: number) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return fallback;
+  return Math.min(240, Math.max(0, Math.round(numberValue)));
+}
+
+function comparisonText(actualSeconds: number, expectedSeconds: number) {
+  const delta = actualSeconds - expectedSeconds;
+  if (delta === 0) return "En tiempo";
+  return delta > 0
+    ? `+${formatDuration(delta)} sobre`
+    : `${formatDuration(Math.abs(delta))} menos`;
+}
+
 export default function AttendancePage() {
   const { apiGet, apiPost, apiPatch, token, user } = useAuth();
   const { t } = usePreferences();
@@ -133,6 +148,9 @@ export default function AttendancePage() {
   const [detailDate, setDetailDate] = useState(todayISO());
   const [scheduleStart, setScheduleStart] = useState("08:00");
   const [scheduleEnd, setScheduleEnd] = useState("17:00");
+  const [expectedBreakMinutes, setExpectedBreakMinutes] = useState("15");
+  const [expectedLunchMinutes, setExpectedLunchMinutes] = useState("60");
+  const [metricDetailKey, setMetricDetailKey] = useState<MetricDetailKey | null>(null);
   const [entryTime, setEntryTime] = useState("");
   const [exitTime, setExitTime] = useState("");
   const [breakStartTime, setBreakStartTime] = useState("");
@@ -225,10 +243,70 @@ export default function AttendancePage() {
     const justifiedSeconds = selectedAssociateShifts.reduce((sum, shift) => sum + (shift.justified_seconds || 0), 0);
     return { completed, punctual, tardy, workSeconds, breakSeconds, lunchSeconds, justifiedSeconds };
   }, [selectedAssociate, selectedAssociateShifts]);
+  const expectedBreakSeconds = parseMinutes(
+    expectedBreakMinutes,
+    selectedAssociate?.schedule.expected_break_minutes ?? 15,
+  ) * 60;
+  const expectedLunchSeconds = parseMinutes(
+    expectedLunchMinutes,
+    selectedAssociate?.schedule.expected_lunch_minutes ?? 60,
+  ) * 60;
   const selectedDayShift = useMemo(
     () => selectedAssociateShifts.find((shift) => shift.shift_date === detailDate),
     [detailDate, selectedAssociateShifts],
   );
+  const metricDetail = useMemo(() => {
+    if (!metricDetailKey || !selectedAssociate) return null;
+    const orderedShifts = [...selectedAssociateShifts].sort((a, b) => b.shift_date.localeCompare(a.shift_date));
+    const rows = orderedShifts.flatMap((shift) => {
+      if (metricDetailKey === "punctual") {
+        if (!shift.started_at || !isPunctual(shift, selectedAssociate.schedule.start_time)) return [];
+        return [{
+          date: fullDate(shift.shift_date),
+          primary: `${t("Entrada")} ${timeOnly(shift.started_at)}`,
+          secondary: `${t("Asignado")} ${selectedAssociate.schedule.start_time}`,
+        }];
+      }
+      if (metricDetailKey === "tardy") {
+        if (!shift.started_at || isPunctual(shift, selectedAssociate.schedule.start_time)) return [];
+        return [{
+          date: fullDate(shift.shift_date),
+          primary: `${t("Entrada")} ${timeOnly(shift.started_at)}`,
+          secondary: `${t("Asignado")} ${selectedAssociate.schedule.start_time}`,
+        }];
+      }
+      if (metricDetailKey === "justified") {
+        if (!shift.justified_seconds) return [];
+        return [{
+          date: fullDate(shift.shift_date),
+          primary: formatDuration(shift.justified_seconds),
+          secondary: `${t("Jornada")} ${timeOnly(shift.started_at)} - ${timeOnly(shift.ended_at)}`,
+        }];
+      }
+      if (metricDetailKey === "break") {
+        if (!shift.break_seconds) return [];
+        return [{
+          date: fullDate(shift.shift_date),
+          primary: `${t("Real")} ${formatDuration(shift.break_seconds)}`,
+          secondary: `${t("Esperado")} ${formatDuration(expectedBreakSeconds)} - ${comparisonText(shift.break_seconds, expectedBreakSeconds)}`,
+        }];
+      }
+      if (!shift.lunch_seconds) return [];
+      return [{
+        date: fullDate(shift.shift_date),
+        primary: `${t("Real")} ${formatDuration(shift.lunch_seconds)}`,
+        secondary: `${t("Esperado")} ${formatDuration(expectedLunchSeconds)} - ${comparisonText(shift.lunch_seconds, expectedLunchSeconds)}`,
+      }];
+    });
+    const titles: Record<MetricDetailKey, string> = {
+      punctual: "Puntuales",
+      tardy: "Tardanzas",
+      justified: "Justificados",
+      break: "Break",
+      lunch: "Lunch",
+    };
+    return { title: titles[metricDetailKey], rows };
+  }, [expectedBreakSeconds, expectedLunchSeconds, metricDetailKey, selectedAssociate, selectedAssociateShifts, t]);
   const employeeReportRows = useMemo(
     () =>
       employees.map((employee) => {
@@ -298,6 +376,9 @@ export default function AttendancePage() {
     const timer = window.setTimeout(() => {
       setScheduleStart(selectedAssociate.schedule.start_time || "08:00");
       setScheduleEnd(selectedAssociate.schedule.end_time || "17:00");
+      setExpectedBreakMinutes(String(selectedAssociate.schedule.expected_break_minutes ?? 15));
+      setExpectedLunchMinutes(String(selectedAssociate.schedule.expected_lunch_minutes ?? 60));
+      setMetricDetailKey(null);
     }, 0);
     return () => window.clearTimeout(timer);
   }, [selectedAssociate]);
@@ -335,6 +416,8 @@ export default function AttendancePage() {
       await apiPatch(`/api/attendance/employees/${selectedAssociate.id}/schedule`, {
         start_time: scheduleStart,
         end_time: scheduleEnd,
+        expected_break_minutes: parseMinutes(expectedBreakMinutes, 15),
+        expected_lunch_minutes: parseMinutes(expectedLunchMinutes, 60),
         effective_from: detailDate,
       });
       await loadAttendance();
@@ -664,6 +747,30 @@ export default function AttendancePage() {
                             onChange={(event) => setScheduleEnd(event.target.value)}
                           />
                         </div>
+                        <div className="duration-edit-row">
+                          <label>
+                            {t("Break esperado")}
+                            <input
+                              aria-label={t("Minutos de break esperados")}
+                              type="number"
+                              min="0"
+                              max="240"
+                              value={expectedBreakMinutes}
+                              onChange={(event) => setExpectedBreakMinutes(event.target.value)}
+                            />
+                          </label>
+                          <label>
+                            {t("Lunch esperado")}
+                            <input
+                              aria-label={t("Minutos de lunch esperados")}
+                              type="number"
+                              min="0"
+                              max="240"
+                              value={expectedLunchMinutes}
+                              onChange={(event) => setExpectedLunchMinutes(event.target.value)}
+                            />
+                          </label>
+                        </div>
                         <button className="row-action" type="button" onClick={saveSchedule}>
                           {t("Guardar horario")}
                         </button>
@@ -673,14 +780,35 @@ export default function AttendancePage() {
                     <section className="associate-month">
                       <h3>{t("Resumen del mes")}</h3>
                       <div className="associate-metrics">
-                        <div><span>{t("Puntuales")}</span><strong className="metric-good">{selectedAssociateStats.punctual}</strong></div>
-                        <div><span>{t("Tardanzas")}</span><strong className="metric-bad">{selectedAssociateStats.tardy}</strong></div>
+                        <button className={metricDetailKey === "punctual" ? "active" : ""} type="button" onClick={() => setMetricDetailKey("punctual")}><span>{t("Puntuales")}</span><strong className="metric-good">{selectedAssociateStats.punctual}</strong></button>
+                        <button className={metricDetailKey === "tardy" ? "active" : ""} type="button" onClick={() => setMetricDetailKey("tardy")}><span>{t("Tardanzas")}</span><strong className="metric-bad">{selectedAssociateStats.tardy}</strong></button>
                         <div><span>{t("Jornadas")}</span><strong>{selectedAssociateStats.completed}</strong></div>
                         <div><span>{t("Activo")}</span><strong>{formatDuration(selectedAssociateStats.workSeconds)}</strong></div>
-                        <div><span>{t("Justificado")}</span><strong>{formatDuration(selectedAssociateStats.justifiedSeconds)}</strong></div>
-                        <div><span>{t("Break")}</span><strong>{formatDuration(selectedAssociateStats.breakSeconds)}</strong></div>
-                        <div><span>{t("Lunch")}</span><strong>{formatDuration(selectedAssociateStats.lunchSeconds)}</strong></div>
+                        <button className={metricDetailKey === "justified" ? "active" : ""} type="button" onClick={() => setMetricDetailKey("justified")}><span>{t("Justificado")}</span><strong>{formatDuration(selectedAssociateStats.justifiedSeconds)}</strong></button>
+                        <button className={metricDetailKey === "break" ? "active" : ""} type="button" onClick={() => setMetricDetailKey("break")}><span>{t("Break")}</span><strong>{formatDuration(selectedAssociateStats.breakSeconds)}</strong></button>
+                        <button className={metricDetailKey === "lunch" ? "active" : ""} type="button" onClick={() => setMetricDetailKey("lunch")}><span>{t("Lunch")}</span><strong>{formatDuration(selectedAssociateStats.lunchSeconds)}</strong></button>
                       </div>
+                      {metricDetail ? (
+                        <div className="metric-detail-card">
+                          <div className="metric-detail-header">
+                            <span>{t(metricDetail.title)}</span>
+                            <button type="button" aria-label={t("Cerrar detalle")} onClick={() => setMetricDetailKey(null)}>x</button>
+                          </div>
+                          {metricDetail.rows.length ? (
+                            <div className="metric-detail-list">
+                              {metricDetail.rows.map((row) => (
+                                <article key={`${row.date}-${row.primary}-${row.secondary}`}>
+                                  <small>{row.date}</small>
+                                  <strong>{row.primary}</strong>
+                                  <span>{row.secondary}</span>
+                                </article>
+                              ))}
+                            </div>
+                          ) : (
+                            <p>{t("No hay eventos en este rango.")}</p>
+                          )}
+                        </div>
+                      ) : null}
                     </section>
                   </aside>
 
@@ -744,6 +872,14 @@ export default function AttendancePage() {
                             <span>12:00</span>
                             <span>18:00</span>
                             <span>24:00</span>
+                          </div>
+                          <div className="break-lunch-comparison">
+                            <span className={selectedDayShift.break_seconds > expectedBreakSeconds ? "over" : "ok"}>
+                              {t("Break")}: {formatDuration(selectedDayShift.break_seconds)} / {formatDuration(expectedBreakSeconds)} ({comparisonText(selectedDayShift.break_seconds, expectedBreakSeconds)})
+                            </span>
+                            <span className={selectedDayShift.lunch_seconds > expectedLunchSeconds ? "over" : "ok"}>
+                              {t("Lunch")}: {formatDuration(selectedDayShift.lunch_seconds)} / {formatDuration(expectedLunchSeconds)} ({comparisonText(selectedDayShift.lunch_seconds, expectedLunchSeconds)})
+                            </span>
                           </div>
                         </article>
                         <form className="shift-edit-form" onSubmit={(event) => {

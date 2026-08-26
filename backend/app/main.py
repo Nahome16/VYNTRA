@@ -218,6 +218,8 @@ class ReclassifyPayload(StrictPayload):
 class SchedulePayload(StrictPayload):
     start_time: str = Field(..., min_length=5, max_length=5)
     end_time: str = Field(..., min_length=5, max_length=5)
+    expected_break_minutes: int = Field(default=15, ge=0, le=240)
+    expected_lunch_minutes: int = Field(default=60, ge=0, le=240)
     effective_from: str | None = Field(default=None, max_length=10)
     timezone: str | None = Field(default=None, max_length=80)
 
@@ -966,6 +968,8 @@ def serialize_employee_for_attendance(
             "id": schedule.id if schedule else None,
             "start_time": schedule.start_time if schedule else "08:00",
             "end_time": schedule.end_time if schedule else "17:00",
+            "expected_break_minutes": schedule.expected_break_minutes if schedule else 15,
+            "expected_lunch_minutes": schedule.expected_lunch_minutes if schedule else 60,
             "effective_from": schedule.effective_from if schedule else "1970-01-01",
             "timezone": schedule.timezone if schedule else "America/Managua",
         },
@@ -2607,12 +2611,36 @@ def ensure_user_schema():
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN {column} {ddl}"))
 
 
+def ensure_employee_schedule_schema():
+    columns = {
+        "expected_break_minutes": "INTEGER NOT NULL DEFAULT 15",
+        "expected_lunch_minutes": "INTEGER NOT NULL DEFAULT 60",
+    }
+    with engine.begin() as conn:
+        existing = {
+            row[0]
+            for row in conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'employee_schedules'
+                    """
+                )
+            )
+        }
+        for column, ddl in columns.items():
+            if column not in existing:
+                conn.execute(text(f"ALTER TABLE employee_schedules ADD COLUMN {column} {ddl}"))
+
+
 @app.on_event("startup")
 def on_startup():
     os.makedirs(settings.storage_dir, exist_ok=True)
     Base.metadata.create_all(bind=engine)
     ensure_employee_credential_schema()
     ensure_user_schema()
+    ensure_employee_schedule_schema()
     bootstrap_data()
 
 
@@ -5802,7 +5830,7 @@ def update_employee_schedule(
     db: Session = Depends(get_db),
 ):
     require_permission(admin, "attendance:manage")
-    payload = payload.model_dump(exclude_unset=True)
+    payload = payload.model_dump()
     employee = db.get(Employee, employee_id)
     if employee is None:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -5812,6 +5840,8 @@ def update_employee_schedule(
 
     start_time = validate_time(payload.get("start_time"), "start_time")
     end_time = validate_time(payload.get("end_time"), "end_time")
+    expected_break_minutes = int(payload.get("expected_break_minutes") or 0)
+    expected_lunch_minutes = int(payload.get("expected_lunch_minutes") or 0)
     effective_from = validate_date(payload.get("effective_from") or "1970-01-01", "effective_from")
     timezone_name = clean_text(payload.get("timezone") or company.timezone or "America/Managua", 80)
 
@@ -5830,6 +5860,8 @@ def update_employee_schedule(
         db.add(schedule)
     schedule.start_time = start_time
     schedule.end_time = end_time
+    schedule.expected_break_minutes = expected_break_minutes
+    schedule.expected_lunch_minutes = expected_lunch_minutes
     schedule.timezone = timezone_name
     schedule.is_active = True
     schedule.updated_at = now_utc()
@@ -5845,6 +5877,8 @@ def update_employee_schedule(
                     "employee_id": employee.id,
                     "start_time": start_time,
                     "end_time": end_time,
+                    "expected_break_minutes": expected_break_minutes,
+                    "expected_lunch_minutes": expected_lunch_minutes,
                     "effective_from": effective_from,
                 }
             ),
@@ -5859,6 +5893,8 @@ def update_employee_schedule(
             "employee_id": schedule.employee_id,
             "start_time": schedule.start_time,
             "end_time": schedule.end_time,
+            "expected_break_minutes": schedule.expected_break_minutes,
+            "expected_lunch_minutes": schedule.expected_lunch_minutes,
             "effective_from": schedule.effective_from,
             "timezone": schedule.timezone,
         },

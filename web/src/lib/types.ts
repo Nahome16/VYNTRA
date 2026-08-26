@@ -299,6 +299,8 @@ export type AttendanceEmployee = Employee & {
     id: string | null;
     start_time: string;
     end_time: string;
+    expected_break_minutes: number;
+    expected_lunch_minutes: number;
     effective_from: string;
     timezone: string;
   };

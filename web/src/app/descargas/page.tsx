@@ -23,6 +23,10 @@ function platformTone(platform: string) {
   return "badge";
 }
 
+function isManualInstaller(item: AgentDownload) {
+  return item.filename.toLowerCase().endsWith(".exe");
+}
+
 export default function DownloadsPage() {
   const { apiGet, token, user } = useAuth();
   const [downloads, setDownloads] = useState<AgentDownload[]>([]);
@@ -32,8 +36,9 @@ export default function DownloadsPage() {
   const [downloading, setDownloading] = useState("");
 
   const canManageDevices = Boolean(user?.permissions?.includes("devices:manage"));
-  const windowsCount = useMemo(() => downloads.filter((item) => item.platform === "Windows").length, [downloads]);
-  const macCount = useMemo(() => downloads.filter((item) => item.platform === "macOS").length, [downloads]);
+  const manualDownloads = useMemo(() => downloads.filter(isManualInstaller), [downloads]);
+  const windowsCount = useMemo(() => manualDownloads.filter((item) => item.platform === "Windows").length, [manualDownloads]);
+  const hiddenUpdatePackages = useMemo(() => downloads.length - manualDownloads.length, [downloads.length, manualDownloads.length]);
 
   const loadDownloads = useCallback(async () => {
     if (!canManageDevices) return;
@@ -43,7 +48,8 @@ export default function DownloadsPage() {
       const response = await apiGet<AgentDownloadsResponse>("/api/downloads/agent");
       setDownloads(response.downloads);
       setDirectoryReady(response.directory_ready);
-      setStatusText(response.count ? `${response.count} instaladores disponibles` : "No hay instaladores publicados");
+      const visibleCount = response.downloads.filter(isManualInstaller).length;
+      setStatusText(visibleCount ? `${visibleCount} instaladores disponibles` : "No hay instaladores manuales publicados");
     } catch {
       setDownloads([]);
       setDirectoryReady(false);
@@ -89,9 +95,9 @@ export default function DownloadsPage() {
     >
       <section className="settings-page downloads-page">
         <div className="stat-grid">
-          <StatCard label="Instaladores" value={`${downloads.length}`} detail="Publicados en servidor" />
+          <StatCard label="Instaladores" value={`${manualDownloads.length}`} detail="Disponibles para usuarios" />
           <StatCard label="Windows" value={`${windowsCount}`} detail="Listo para usuarios PC" tone={windowsCount ? "good" : "warn"} />
-          <StatCard label="macOS" value={`${macCount}`} detail="Builder o paquete Mac" tone={macCount ? "good" : "warn"} />
+          <StatCard label="Actualizaciones" value={`${hiddenUpdatePackages}`} detail="Paquetes internos ocultos" tone={hiddenUpdatePackages ? "plain" : "warn"} />
         </div>
 
         <div className="downloads-layout">
@@ -104,7 +110,7 @@ export default function DownloadsPage() {
             ) : null}
 
             <div className="download-list">
-              {downloads.map((item) => (
+              {manualDownloads.map((item) => (
                 <article className="download-card" key={item.filename}>
                   <div>
                     <span className={platformTone(item.platform)}>{item.platform}</span>
@@ -123,19 +129,19 @@ export default function DownloadsPage() {
               ))}
             </div>
 
-            {!downloads.length ? <EmptyState>No hay instaladores para descargar.</EmptyState> : null}
+            {!manualDownloads.length ? <EmptyState>No hay instaladores para descargar.</EmptyState> : null}
           </Panel>
 
           <Panel title="Uso recomendado">
             <ol className="download-steps">
-              <li>Descarga el instalador de Windows desde esta vista.</li>
-              <li>Envialo al empleado por correo corporativo o canal interno autorizado.</li>
-              <li>El empleado instala, inicia sesion, cambia clave si aplica y acepta consentimiento.</li>
+              <li>Descarga unicamente el instalador .exe de Windows desde esta vista.</li>
+              <li>Instalalo por videollamada o soporte remoto con el usuario autorizado.</li>
+              <li>El usuario inicia sesion, cambia clave si aplica y acepta consentimiento.</li>
               <li>Verifica el equipo en Dispositivos y las capturas en el perfil del empleado.</li>
             </ol>
             <div className="download-note">
-              <strong>macOS requiere prueba en una Mac real.</strong>
-              <p>iOS no permite un agente de monitoreo equivalente al de escritorio; si se hace algo para iPhone/iPad debe ser una app complementaria limitada.</p>
+              <strong>Piloto privado.</strong>
+              <p>Los paquetes ZIP quedan reservados para actualizaciones internas del agente y no se muestran como instaladores manuales.</p>
             </div>
           </Panel>
         </div>

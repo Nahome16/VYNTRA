@@ -1753,6 +1753,41 @@ tbody tr:hover {
   margin-bottom: 18px;
 }
 
+.attendance-board .panel {
+  box-shadow: none;
+}
+
+.attendance-filter-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(145px, 1fr)) auto;
+  gap: 8px;
+  align-items: end;
+  border: 0;
+  padding: 0;
+}
+
+.attendance-filter-row label {
+  min-width: 0;
+}
+
+.attendance-filter-row input,
+.attendance-filter-row select {
+  width: 100%;
+  min-width: 0;
+  border-color: var(--line);
+  border-radius: 8px;
+  background: var(--surface-sunken);
+}
+
+.attendance-filter-row .secondary-button {
+  height: 40px;
+  min-width: 104px;
+}
+
+.attendance-summary-pills button {
+  text-transform: none;
+}
+
 .employee-report-toolbar {
   display: flex;
   align-items: center;
@@ -4222,7 +4257,8 @@ tbody tr:hover {
   }
   .settings-actionbar,
   .settings-rules-bar,
-  .settings-access-bar {grid-template-columns: 1fr;
+  .settings-access-bar,
+  .attendance-filter-row {grid-template-columns: 1fr;
   }
   .audit-filter-grid,
   .device-filter-grid {grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4263,6 +4299,7 @@ tbody tr:hover {
   .settings-actionbar select,
   .dashboard-scope-grid.system,
   .dashboard-period-control,
+  .attendance-filter-row .secondary-button,
   .settings-filter,
   .settings-filter select {min-width: 0;width: 100%;
   }

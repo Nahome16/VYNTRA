@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
-import { EmptyState, Panel, RefreshButton, StatCard, StatusLine } from "@/components/ui";
+import { EmptyState, Panel, RefreshButton, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { AttendanceEmployee, AttendanceOverviewResponse, AttendanceShift } from "@/lib/types";
@@ -434,15 +434,37 @@ export default function AttendancePage() {
         </>
       )}
     >
-      <div className="attendance-toolbar">
-        <div className="tabs">
+      <section className="settings-board attendance-board">
+        <div className="settings-board-header">
+          <div>
+            <h2>{t("Asistencia")}</h2>
+            <p>{user?.company || t("Empresa")} - {t("control de jornada, ausencias, break y lunch")}</p>
+          </div>
+          <div className="settings-board-tabs" role="tablist" aria-label="Secciones de asistencia">
           {(Object.keys(viewLabels) as AttendanceView[]).map((key) => (
-            <button className={view === key ? "active" : ""} key={key} onClick={() => setView(key)}>
+            <button
+              aria-selected={view === key}
+              className={view === key ? "active" : ""}
+              key={key}
+              onClick={() => setView(key)}
+              role="tab"
+              type="button"
+            >
               {t(viewLabels[key])}
             </button>
           ))}
+          </div>
         </div>
-        <div className="filter-row">
+
+        <div className="settings-summary-pills attendance-summary-pills" aria-label="Resumen de asistencia">
+          <button type="button">{stats.activeNow} {t("activos ahora")}</button>
+          <button type="button">{stats.absentToday} {t("ausentes hoy")}</button>
+          <button type="button">{formatDuration(stats.breakSeconds)} {t("break")}</button>
+          <button type="button">{formatDuration(stats.lunchSeconds)} {t("lunch")}</button>
+          <button type="button">{formatDuration(stats.justifiedSeconds)} {t("justificado")}</button>
+        </div>
+
+        <div className="filter-row attendance-filter-row">
           <label>
             {t("Desde")}
             <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
@@ -471,7 +493,6 @@ export default function AttendancePage() {
           </label>
           <button className="secondary-button" onClick={() => void loadAttendance()} disabled={loading}>{t("Aplicar")}</button>
         </div>
-      </div>
 
       {!overview ? (
         <Panel title={t("Estado")}>
@@ -479,14 +500,6 @@ export default function AttendancePage() {
         </Panel>
       ) : (
         <>
-          <section className="stats-grid">
-            <StatCard label={t("Activos ahora")} value={`${stats.activeNow}`} detail={t("Jornada abierta")} tone="good" />
-            <StatCard label={t("Ausentes hoy")} value={`${stats.absentToday}`} detail={t("Sin entrada registrada")} tone={stats.absentToday ? "bad" : "plain"} />
-            <StatCard label={t("Break")} value={formatDuration(stats.breakSeconds)} detail={t("Pausas cortas")} />
-            <StatCard label={t("Lunch")} value={formatDuration(stats.lunchSeconds)} detail={t("Almuerzo registrado")} />
-            <StatCard label={t("Justificado")} value={formatDuration(stats.justifiedSeconds)} detail={t("Incidencias aprobadas")} tone={stats.justifiedSeconds ? "good" : "plain"} />
-          </section>
-
           {view === "live" ? (
             <section className="attendance-grid">
               {employees.map((employee) => {
@@ -770,6 +783,7 @@ export default function AttendancePage() {
           ) : null}
         </>
       )}
+      </section>
     </AppShell>
   );
 }

@@ -198,8 +198,12 @@ export default function AttendancePage() {
     return () => window.clearTimeout(timer);
   }, [loadAttendance, user]);
 
-  const employees = useMemo(() => overview?.employees || [], [overview]);
-  const shifts = useMemo(() => overview?.shifts || [], [overview]);
+  const employees = useMemo(() => (overview?.employees || []).filter((employee) => employee.status === "active"), [overview]);
+  const activeEmployeeIds = useMemo(() => new Set(employees.map((employee) => employee.id)), [employees]);
+  const shifts = useMemo(
+    () => (overview?.shifts || []).filter((shift) => activeEmployeeIds.has(shift.employee_id)),
+    [activeEmployeeIds, overview],
+  );
   const employeeMap = useMemo(
     () => new Map(employees.map((employee) => [employee.id, employee])),
     [employees],

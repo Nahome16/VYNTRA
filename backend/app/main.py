@@ -5864,26 +5864,44 @@ def attendance_overview(
 ):
     require_permission(admin, "attendance:read")
     company = resolve_admin_company(db, admin, company_id)
-    employee_query = select(Employee).where(Employee.company_id == company.id)
+    if company.status == "archived":
+        return {
+            "company": {"id": company.id, "name": company.name},
+            "filters": {
+                "date_from": date_from,
+                "date_to": date_to,
+                "employee_id": employee_id,
+                "department_id": department_id,
+            },
+            "employees": [],
+            "time_adjustments": [],
+            "shifts": [],
+        }
+    employee_query = select(Employee).where(
+        Employee.company_id == company.id,
+        Employee.status == "active",
+    )
     if employee_id:
         employee_query = employee_query.where(Employee.id == employee_id)
     if department_id:
         employee_query = employee_query.where(Employee.department_id == department_id)
     employees = db.execute(employee_query.order_by(Employee.full_name)).scalars().all()
     employee_ids = [employee.id for employee in employees]
+    employee_id_set = set(employee_ids)
 
-    shift_query = select(Shift).where(Shift.company_id == company.id)
+    shifts = []
     if employee_ids:
-        shift_query = shift_query.where(Shift.employee_id.in_(employee_ids))
-    if employee_id and not employee_ids:
-        shift_query = shift_query.where(Shift.employee_id == employee_id)
-    if date_from:
-        shift_query = shift_query.where(Shift.shift_date >= date_from)
-    if date_to:
-        shift_query = shift_query.where(Shift.shift_date <= date_to)
-    shifts = db.execute(
-        shift_query.order_by(Shift.shift_date.desc(), Shift.started_at.desc())
-    ).scalars().all()
+        shift_query = select(Shift).where(
+            Shift.company_id == company.id,
+            Shift.employee_id.in_(employee_ids),
+        )
+        if date_from:
+            shift_query = shift_query.where(Shift.shift_date >= date_from)
+        if date_to:
+            shift_query = shift_query.where(Shift.shift_date <= date_to)
+        shifts = db.execute(
+            shift_query.order_by(Shift.shift_date.desc(), Shift.started_at.desc())
+        ).scalars().all()
     shift_ids = [shift.id for shift in shifts]
 
     events_by_shift: dict[str, list[ShiftEvent]] = {}
@@ -5912,7 +5930,13 @@ def attendance_overview(
         employee.id: latest_employee_schedule(db, employee.id, date_to or date_from)
         for employee in employees
     }
-    adjustments = query_active_time_adjustments(db, company.id, date_from, date_to, employee_id, department_id)
+    adjustments = []
+    if employee_ids:
+        adjustments = [
+            adjustment
+            for adjustment in query_active_time_adjustments(db, company.id, date_from, date_to, employee_id, department_id)
+            if adjustment.employee_id in employee_id_set
+        ]
     shift_by_employee_date = {
         (shift.employee_id, shift.shift_date): shift.id
         for shift in shifts
@@ -6085,6 +6109,9 @@ def update_attendance_shift(
     company = resolve_admin_company(db, admin, shift.company_id)
     if shift.company_id != company.id:
         raise HTTPException(status_code=403, detail="Cannot edit shift from another company")
+    employee = db.get(Employee, shift.employee_id)
+    if employee is None or employee.status != "active":
+        raise HTTPException(status_code=400, detail="Employee must be active")
 
     correction_reason = clean_text(payload.get("correction_reason"), 180)
     if len(correction_reason) < 3:
@@ -6176,6 +6203,8 @@ def create_attendance_shift(
     company = resolve_admin_company(db, admin, employee.company_id)
     if employee.company_id != company.id:
         raise HTTPException(status_code=403, detail="Cannot create shift for another company")
+    if employee.status != "active":
+        raise HTTPException(status_code=400, detail="Employee must be active")
 
     shift_date = validate_date(payload.get("shift_date"), "shift_date")
     correction_reason = clean_text(payload.get("correction_reason"), 180)

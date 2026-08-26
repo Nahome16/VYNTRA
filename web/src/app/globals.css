@@ -2284,6 +2284,11 @@ tbody tr:hover {
   padding: 14px;
 }
 
+.metric-detail-card-side {
+  width: min(100%, 430px);
+  margin-bottom: 16px;
+}
+
 .metric-detail-header {
   display: flex;
   align-items: center;

@@ -788,31 +788,31 @@ export default function AttendancePage() {
                         <button className={metricDetailKey === "break" ? "active" : ""} type="button" onClick={() => setMetricDetailKey("break")}><span>{t("Break")}</span><strong>{formatDuration(selectedAssociateStats.breakSeconds)}</strong></button>
                         <button className={metricDetailKey === "lunch" ? "active" : ""} type="button" onClick={() => setMetricDetailKey("lunch")}><span>{t("Lunch")}</span><strong>{formatDuration(selectedAssociateStats.lunchSeconds)}</strong></button>
                       </div>
-                      {metricDetail ? (
-                        <div className="metric-detail-card">
-                          <div className="metric-detail-header">
-                            <span>{t(metricDetail.title)}</span>
-                            <button type="button" aria-label={t("Cerrar detalle")} onClick={() => setMetricDetailKey(null)}>x</button>
-                          </div>
-                          {metricDetail.rows.length ? (
-                            <div className="metric-detail-list">
-                              {metricDetail.rows.map((row) => (
-                                <article key={`${row.date}-${row.primary}-${row.secondary}`}>
-                                  <small>{row.date}</small>
-                                  <strong>{row.primary}</strong>
-                                  <span>{row.secondary}</span>
-                                </article>
-                              ))}
-                            </div>
-                          ) : (
-                            <p>{t("No hay eventos en este rango.")}</p>
-                          )}
-                        </div>
-                      ) : null}
                     </section>
                   </aside>
 
                   <section className="modal-history">
+                    {metricDetail ? (
+                      <div className="metric-detail-card metric-detail-card-side">
+                        <div className="metric-detail-header">
+                          <span>{t(metricDetail.title)}</span>
+                          <button type="button" aria-label={t("Cerrar detalle")} onClick={() => setMetricDetailKey(null)}>x</button>
+                        </div>
+                        {metricDetail.rows.length ? (
+                          <div className="metric-detail-list">
+                            {metricDetail.rows.map((row) => (
+                              <article key={`${row.date}-${row.primary}-${row.secondary}`}>
+                                <small>{row.date}</small>
+                                <strong>{row.primary}</strong>
+                                <span>{row.secondary}</span>
+                              </article>
+                            ))}
+                          </div>
+                        ) : (
+                          <p>{t("No hay eventos en este rango.")}</p>
+                        )}
+                      </div>
+                    ) : null}
                     <div className="panel-title">
                       <h2>{t("Historico detallado de actividad")}</h2>
                       <span>{detailDate}</span>

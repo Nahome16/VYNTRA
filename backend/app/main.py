@@ -19,6 +19,7 @@ import socket
 import tempfile
 from time import monotonic
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -257,6 +258,7 @@ class SystemCompanyPayload(StrictPayload):
 
 
 class SystemCompanyControlsPayload(StrictPayload):
+    timezone: str | None = Field(default=None, max_length=80)
     employee_limit: int = Field(default=0, ge=0, le=100000)
     subscription_status: Literal["active", "trial", "past_due", "suspended", "cancelled"] = "active"
     subscription_ends_at: str | None = Field(default=None, max_length=10)
@@ -466,6 +468,32 @@ def clean_email(value: object) -> str:
     if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         raise HTTPException(status_code=400, detail="Invalid email")
     return email
+
+
+def validate_timezone(value: object, fallback: str = "America/Managua") -> str:
+    timezone_name = clean_text(value, 80) or fallback
+    try:
+        ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(status_code=400, detail="Invalid timezone") from exc
+    return timezone_name
+
+
+def archived_text(value: str, row_id: str, max_len: int = 180) -> str:
+    suffix = f"__archived_{row_id[:8]}"
+    base = clean_text(value, max_len - len(suffix)) or "archived"
+    return f"{base}{suffix}"[:max_len]
+
+
+def archived_email(value: str, row_id: str) -> str:
+    email = clean_text(value, 180).lower()
+    suffix = f"+archived-{row_id[:8]}"
+    if "@" in email:
+        local, domain = email.split("@", 1)
+        next_email = f"{local[: max(1, 179 - len(domain) - len(suffix) - 1)]}{suffix}@{domain}"
+    else:
+        next_email = f"archived-{row_id[:8]}@archived.local"
+    return next_email[:180]
 
 
 def generate_password(length: int = 14) -> str:
@@ -2670,10 +2698,16 @@ def serialize_admin_user(db: Session, user: User, role_name: str | None = None) 
 
 def serialize_system_company(db: Session, company: Company) -> dict:
     employees_count = db.execute(
-        select(func.count()).select_from(Employee).where(Employee.company_id == company.id)
+        select(func.count()).select_from(Employee).where(
+            Employee.company_id == company.id,
+            Employee.status != "archived",
+        )
     ).scalar_one()
     users_count = db.execute(
-        select(func.count()).select_from(User).where(User.company_id == company.id)
+        select(func.count()).select_from(User).where(
+            User.company_id == company.id,
+            User.status != "archived",
+        )
     ).scalar_one()
     devices_count = db.execute(
         select(func.count()).select_from(Device).where(Device.company_id == company.id)
@@ -2729,12 +2763,17 @@ def archive_monitored_employee_record(
     reason: str,
     action: str = "monitored_employee_archived",
 ) -> dict:
+    original_email = employee.email
+    original_code = employee.employee_code
     employee.status = "archived"
+    employee.email = archived_email(employee.email, employee.id)
+    employee.employee_code = archived_text(employee.employee_code, employee.id, 80)
     credentials = db.execute(
         select(EmployeeCredential).where(EmployeeCredential.employee_id == employee.id)
     ).scalars().all()
     for credential in credentials:
         credential.status = "archived"
+        credential.email = archived_email(credential.email, credential.id)
     devices = db.execute(
         select(Device).where(Device.employee_id == employee.id)
     ).scalars().all()
@@ -2750,6 +2789,8 @@ def archive_monitored_employee_record(
             payload_json=json_text(
                 {
                     "reason": clean_text(reason, 180),
+                    "email": original_email,
+                    "employee_code": original_code,
                     "credentials_archived": len(credentials),
                     "devices_revoked": len(devices),
                 }
@@ -3157,8 +3198,20 @@ def system_overview(
     db: Session = Depends(get_db),
 ):
     require_system_admin(admin)
-    companies = db.execute(select(Company).order_by(Company.created_at.desc())).scalars().all()
-    users = db.execute(select(User).order_by(User.created_at.desc()).limit(300)).scalars().all()
+    companies = db.execute(
+        select(Company)
+        .where(Company.status != "archived")
+        .order_by(Company.created_at.desc())
+    ).scalars().all()
+    users = db.execute(
+        select(User)
+        .where(
+            User.status != "archived",
+            User.company_id.in_(select(Company.id).where(Company.status != "archived")),
+        )
+        .order_by(User.created_at.desc())
+        .limit(300)
+    ).scalars().all()
     return {
         "companies": [serialize_system_company(db, company) for company in companies],
         "users": [serialize_panel_user(db, user) for user in users],
@@ -3175,15 +3228,23 @@ def create_system_company(
     require_system_admin(admin)
     name = clean_text(payload.name, 160)
     legal_name = clean_text(payload.legal_name, 220)
-    timezone_name = clean_text(payload.timezone, 80) or "America/Managua"
+    timezone_name = validate_timezone(payload.timezone)
     admin_full_name = clean_text(payload.admin_full_name, 180)
     admin_email = clean_email(payload.admin_email)
     existing = db.execute(
         select(Company).where(func.lower(Company.name) == name.lower())
     ).scalar_one_or_none()
-    if existing is not None:
+    if existing is not None and existing.status == "archived":
+        existing.name = archived_text(existing.name, existing.id, 160)
+        db.flush()
+    elif existing is not None:
         raise HTTPException(status_code=409, detail="Company already exists")
-    duplicate_user = db.execute(select(User).where(User.email == admin_email)).scalars().first()
+    duplicate_user = db.execute(
+        select(User).where(
+            User.email == admin_email,
+            User.status != "archived",
+        )
+    ).scalars().first()
     if duplicate_user is not None:
         raise HTTPException(status_code=409, detail="Admin email already has panel access")
 
@@ -3278,6 +3339,16 @@ def update_system_company_controls(
     ends_at = clean_text(payload.subscription_ends_at, 10)
     if ends_at:
         validate_date(ends_at, "subscription_ends_at")
+    if payload.timezone is not None:
+        company.timezone = validate_timezone(payload.timezone, company.timezone)
+        schedules = db.execute(
+            select(EmployeeSchedule).where(
+                EmployeeSchedule.company_id == company.id,
+                EmployeeSchedule.is_active.is_(True),
+            )
+        ).scalars().all()
+        for schedule in schedules:
+            schedule.timezone = company.timezone
 
     set_company_setting(
         db,
@@ -3296,7 +3367,7 @@ def update_system_company_controls(
             action="system_company_controls_updated",
             entity_type="company",
             entity_id=company.id,
-            payload_json=json_text(company_controls(db, company.id)),
+            payload_json=json_text({"timezone": company.timezone, **company_controls(db, company.id)}),
         )
     )
     db.commit()
@@ -3317,15 +3388,18 @@ def archive_system_company(
         raise HTTPException(status_code=404, detail="Company not found")
 
     reason = clean_text(payload.reason, 180) or "Empresa archivada desde consola sistema"
+    original_name = company.name
     company.status = "archived"
+    company.name = archived_text(company.name, company.id, 160)
     users = db.execute(select(User).where(User.company_id == company.id)).scalars().all()
     deactivated_users = 0
     for user in users:
         role = db.get(Role, user.role_id) if user.role_id else None
         if role and role.name == "system_admin":
             continue
-        if user.status != "inactive":
-            user.status = "inactive"
+        if user.status != "archived":
+            user.status = "archived"
+            user.email = archived_email(user.email, user.id)
             deactivated_users += 1
         revoke_admin_sessions(db, user.id, actor_id=admin.user_id, reason=reason)
 
@@ -3350,6 +3424,7 @@ def archive_system_company(
             payload_json=json_text(
                 {
                     "reason": reason,
+                    "name": original_name,
                     "users_deactivated": deactivated_users,
                     "employees_archived": len(employees),
                     "credentials_archived": len(credentials),
@@ -3409,7 +3484,12 @@ def create_system_panel_user(
     if role_name != "system_admin" and not payload.company_id:
         raise HTTPException(status_code=400, detail="company_id is required for company users")
 
-    duplicate = db.execute(select(User).where(User.email == email)).scalars().first()
+    duplicate = db.execute(
+        select(User).where(
+            User.email == email,
+            User.status != "archived",
+        )
+    ).scalars().first()
     if duplicate is not None:
         raise HTTPException(status_code=409, detail="Email already has panel access")
 
@@ -3530,6 +3610,51 @@ def update_system_panel_user(
     db.commit()
     db.refresh(user)
     return {"ok": True, "user": serialize_panel_user(db, user)}
+
+
+@app.post("/api/system/users/{user_id}/archive")
+def archive_system_panel_user(
+    user_id: str,
+    payload: ArchivePayload = Body(default_factory=ArchivePayload),
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Panel user not found")
+    if user.id == admin.user_id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own system session")
+
+    reason = clean_text(payload.reason, 180) or "Usuario del panel eliminado desde consola sistema"
+    original_email = user.email
+    user.status = "archived"
+    user.email = archived_email(user.email, user.id)
+    revoked_count = revoke_admin_sessions(
+        db,
+        user.id,
+        actor_id=admin.user_id,
+        reason=reason,
+    )
+    db.add(
+        AuditLog(
+            company_id=user.company_id,
+            user_id=admin.user_id,
+            action="system_panel_user_archived",
+            entity_type="user",
+            entity_id=user.id,
+            payload_json=json_text(
+                {
+                    "reason": reason,
+                    "email": original_email,
+                    "revoked_sessions": revoked_count,
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(user)
+    return {"ok": True, "user": serialize_panel_user(db, user), "revoked_sessions": revoked_count}
 
 
 @app.post("/api/system/users/{user_id}/reset-password")
@@ -4378,7 +4503,10 @@ def productivity_catalogs(
     ).scalars().all()
     employees = db.execute(
         select(Employee)
-        .where(Employee.company_id == company.id)
+        .where(
+            Employee.company_id == company.id,
+            Employee.status != "archived",
+        )
         .order_by(Employee.full_name)
     ).scalars().all()
     return {
@@ -4479,6 +4607,7 @@ def create_monitored_employee(
         select(EmployeeCredential).where(
             EmployeeCredential.company_id == company.id,
             EmployeeCredential.email == email,
+            EmployeeCredential.status != "archived",
         )
     ).scalar_one_or_none()
     if duplicate_credential:
@@ -4624,6 +4753,7 @@ def update_monitored_employee(
                 EmployeeCredential.company_id == company.id,
                 EmployeeCredential.email == email,
                 EmployeeCredential.employee_id != employee.id,
+                EmployeeCredential.status != "archived",
             )
         ).scalar_one_or_none()
         if duplicate_credential:
@@ -4736,6 +4866,7 @@ def reset_monitored_employee_credentials(
             EmployeeCredential.company_id == company.id,
             EmployeeCredential.email == email,
             EmployeeCredential.employee_id != employee.id,
+            EmployeeCredential.status != "archived",
         )
     ).scalar_one_or_none()
     if duplicate_credential:
@@ -5843,7 +5974,7 @@ def update_employee_schedule(
     expected_break_minutes = int(payload.get("expected_break_minutes") or 0)
     expected_lunch_minutes = int(payload.get("expected_lunch_minutes") or 0)
     effective_from = validate_date(payload.get("effective_from") or "1970-01-01", "effective_from")
-    timezone_name = clean_text(payload.get("timezone") or company.timezone or "America/Managua", 80)
+    timezone_name = validate_timezone(payload.get("timezone"), company.timezone or "America/Managua")
 
     schedule = db.execute(
         select(EmployeeSchedule).where(

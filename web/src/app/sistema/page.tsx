@@ -26,6 +26,38 @@ const roleHelp: Record<PanelRole, string> = {
   viewer: "Solo lectura para auditoria operativa.",
 };
 
+const timezoneOptions = [
+  "America/Managua",
+  "America/Costa_Rica",
+  "America/Guatemala",
+  "America/Tegucigalpa",
+  "America/El_Salvador",
+  "America/Panama",
+  "America/Bogota",
+  "America/Lima",
+  "America/Guayaquil",
+  "America/Mexico_City",
+  "America/Cancun",
+  "America/Monterrey",
+  "America/Santo_Domingo",
+  "America/Puerto_Rico",
+  "America/Caracas",
+  "America/La_Paz",
+  "America/Santiago",
+  "America/Argentina/Buenos_Aires",
+  "America/Montevideo",
+  "America/Asuncion",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "America/Phoenix",
+  "America/Anchorage",
+  "Pacific/Honolulu",
+  "UTC",
+  "Europe/Madrid",
+];
+
 function deliveryText(status?: string) {
   if (status === "sent") return "Credencial enviada por correo.";
   if (status === "failed") return "Credencial creada, pero el correo fallo.";
@@ -58,6 +90,7 @@ export default function SystemPage() {
   const [companyAdminEmail, setCompanyAdminEmail] = useState("");
   const [controlsCompanyId, setControlsCompanyId] = useState("");
   const [employeeLimit, setEmployeeLimit] = useState("0");
+  const [controlsTimezone, setControlsTimezone] = useState("America/Managua");
   const [subscriptionStatus, setSubscriptionStatus] = useState<SystemCompany["controls"]["subscription_status"]>("active");
   const [subscriptionEndsAt, setSubscriptionEndsAt] = useState("");
   const [adminNotice, setAdminNotice] = useState("");
@@ -92,6 +125,7 @@ export default function SystemPage() {
   const loadCompanyControls = useCallback((company: SystemCompany | null) => {
     if (!company) return;
     setControlsCompanyId(company.id);
+    setControlsTimezone(company.timezone || "America/Managua");
     setEmployeeLimit(String(company.controls.employee_limit || 0));
     setSubscriptionStatus(company.controls.subscription_status || "active");
     setSubscriptionEndsAt(company.controls.subscription_ends_at || "");
@@ -104,6 +138,14 @@ export default function SystemPage() {
     setEditFullName(panelUser.full_name);
     setEditRole((panelUser.role || "viewer") as PanelRole);
     setEditStatus(panelUser.status === "inactive" ? "inactive" : "active");
+    setResetReason("");
+  }, []);
+
+  const clearPanelUser = useCallback(() => {
+    setSelectedUserId("");
+    setEditFullName("");
+    setEditRole("viewer");
+    setEditStatus("active");
     setResetReason("");
   }, []);
 
@@ -267,6 +309,7 @@ export default function SystemPage() {
     setStatusText("Guardando controles...");
     try {
       const response = await apiPatch<{ company: SystemCompany }>(`/api/system/companies/${controlsCompanyId}/controls`, {
+        timezone: controlsTimezone,
         employee_limit: Number(employeeLimit || 0),
         subscription_status: subscriptionStatus,
         subscription_ends_at: subscriptionEndsAt || null,
@@ -310,6 +353,26 @@ export default function SystemPage() {
       setStatusText("Empresa restaurada");
     } catch {
       setStatusText("No se pudo restaurar la empresa");
+    }
+  }
+
+  async function archivePanelUser(panelUser: PanelUser) {
+    if (!window.confirm(`Eliminar usuario del panel ${panelUser.full_name}? Se cerraran sus sesiones y desaparecera de la consola.`)) {
+      return;
+    }
+    setStatusText("Eliminando usuario del panel...");
+    try {
+      await apiPost<{ user: PanelUser; revoked_sessions: number }>(`/api/system/users/${panelUser.id}/archive`, {
+        reason: "Eliminado desde consola sistema",
+      });
+      setUsers((current) => current.filter((row) => row.id !== panelUser.id));
+      if (selectedUserId === panelUser.id) {
+        clearPanelUser();
+      }
+      await loadSystem();
+      setStatusText("Usuario del panel eliminado");
+    } catch {
+      setStatusText("No se pudo eliminar el usuario del panel");
     }
   }
 
@@ -430,7 +493,13 @@ export default function SystemPage() {
               <form className="settings-form system-form" onSubmit={createCompany}>
                 <label>Nombre comercial<input value={companyName} onChange={(event) => setCompanyName(event.target.value)} placeholder="Empresa cliente" required /></label>
                 <label>Razon social<input value={companyLegalName} onChange={(event) => setCompanyLegalName(event.target.value)} placeholder="Opcional" /></label>
-                <label>Zona horaria<input value={companyTimezone} onChange={(event) => setCompanyTimezone(event.target.value)} placeholder="America/Managua" /></label>
+                <label>Zona horaria
+                  <select value={companyTimezone} onChange={(event) => setCompanyTimezone(event.target.value)}>
+                    {timezoneOptions.map((timezone) => (
+                      <option key={timezone} value={timezone}>{timezone}</option>
+                    ))}
+                  </select>
+                </label>
                 <label>Administrador<input value={companyAdminName} onChange={(event) => setCompanyAdminName(event.target.value)} placeholder="Nombre completo" required /></label>
                 <label>Correo administrador<input type="email" value={companyAdminEmail} onChange={(event) => setCompanyAdminEmail(event.target.value)} placeholder="admin@empresa.com" required /></label>
                 <button type="submit" className="primary-action">Crear empresa</button>
@@ -455,9 +524,18 @@ export default function SystemPage() {
                   </select>
                 </label>
                 <div className="system-form-row">
+                  <label>Zona horaria
+                    <select value={controlsTimezone} onChange={(event) => setControlsTimezone(event.target.value)}>
+                      {timezoneOptions.map((timezone) => (
+                        <option key={timezone} value={timezone}>{timezone}</option>
+                      ))}
+                    </select>
+                  </label>
                   <label>Limite empleados
                     <input type="number" min="0" value={employeeLimit} onChange={(event) => setEmployeeLimit(event.target.value)} />
                   </label>
+                </div>
+                <div className="system-form-row">
                   <label>Estado
                     <select value={subscriptionStatus} onChange={(event) => setSubscriptionStatus(event.target.value as typeof subscriptionStatus)}>
                       <option value="active">Activa</option>
@@ -591,6 +669,9 @@ export default function SystemPage() {
                         </button>
                         <button className="row-action" type="button" onClick={() => void revokePanelSessions(row.id)}>
                           Cerrar
+                        </button>
+                        <button className="row-action danger" type="button" onClick={() => void archivePanelUser(row)} disabled={row.id === user?.id}>
+                          Eliminar
                         </button>
                       </div>
                     </td>

@@ -197,7 +197,7 @@ export default function SettingsPage() {
   }
 
   const departments = useMemo(() => catalogs?.departments || [], [catalogs]);
-  const employees = useMemo(() => catalogs?.employees || [], [catalogs]);
+  const employees = useMemo(() => (catalogs?.employees || []).filter((employee) => employee.status !== "archived"), [catalogs]);
   const departmentMap = useMemo(
     () => new Map(departments.map((department) => [department.id, department.name])),
     [departments],
@@ -568,9 +568,7 @@ export default function SettingsPage() {
         current
           ? {
               ...current,
-              employees: current.employees.map((row) =>
-                row.id === response.employee.id ? response.employee : row,
-              ),
+              employees: current.employees.filter((row) => row.id !== response.employee.id),
             }
           : current,
       );

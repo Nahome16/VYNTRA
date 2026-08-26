@@ -85,17 +85,6 @@ const navItems = [
     ),
   },
   {
-    href: "/incidencias",
-    label: "Incidencias",
-    permission: "incidents:read",
-    icon: (
-      <svg {...iconProps}>
-        <path d="M12 9v4M12 17h.01" />
-        <path d="M10.3 4.3 2.8 17.2A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.8L13.7 4.3a2 2 0 0 0-3.4 0z" />
-      </svg>
-    ),
-  },
-  {
     href: "/auditoria",
     label: "Auditoria",
     permission: "audit:read",

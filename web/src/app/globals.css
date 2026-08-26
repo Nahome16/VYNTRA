@@ -443,6 +443,141 @@ textarea:focus-visible {
 }
 
 /* ==========================================================================
+   Documento publico legal
+   ========================================================================== */
+
+.legal-page {
+  min-height: 100vh;
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+.legal-nav {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  padding: 16px max(24px, calc((100vw - 900px) / 2));
+  backdrop-filter: blur(14px);
+}
+
+.legal-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.legal-brand span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 850;
+}
+
+.legal-brand strong {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.legal-login {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.legal-document {
+  width: min(900px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 42px 0 72px;
+}
+
+.legal-document header {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 26px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 24px;
+}
+
+.legal-document header p,
+.legal-document header span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.legal-document h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(32px, 5vw, 52px);
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.legal-summary,
+.legal-document section:not(.legal-summary) {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.legal-summary {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 18px;
+}
+
+.legal-summary strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.legal-document section:not(.legal-summary) {
+  margin-top: 12px;
+  padding: 18px;
+}
+
+.legal-document h2 {
+  margin: 0 0 10px;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 750;
+}
+
+.legal-document p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.legal-document p + p {
+  margin-top: 9px;
+}
+
+/* ==========================================================================
    Estructura general
    ========================================================================== */
 

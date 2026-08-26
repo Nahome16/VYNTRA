@@ -45,9 +45,9 @@ This creates:
 From the local PC, upload the final release files:
 
 ```powershell
-scp "C:\Users\Yoga\OneDrive\Desktop\VYNTRA\release\VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.2.exe" root@2.25.100.25:/opt/vyntra/downloads/
-scp "C:\Users\Yoga\OneDrive\Desktop\VYNTRA\release\VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.2.zip" root@2.25.100.25:/opt/vyntra/downloads/
-scp "C:\Users\Yoga\OneDrive\Desktop\VYNTRA\release\VYNTRAAgent-InsureMeBetter-macOS-Builder-v1.2.2.zip" root@2.25.100.25:/opt/vyntra/downloads/
+scp "C:\Users\Yoga\OneDrive\Desktop\VYNTRA\release\VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.3.exe" root@2.25.100.25:/opt/vyntra/downloads/
+scp "C:\Users\Yoga\OneDrive\Desktop\VYNTRA\release\VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.3.zip" root@2.25.100.25:/opt/vyntra/downloads/
+scp "C:\Users\Yoga\OneDrive\Desktop\VYNTRA\release\VYNTRAAgent-InsureMeBetter-macOS-Builder-v1.2.3.zip" root@2.25.100.25:/opt/vyntra/downloads/
 ```
 
 Then rebuild the API once so the read-only downloads mount is active:
@@ -79,8 +79,8 @@ For Smart App Control, sign every release binary before upload:
 .\installer\build_windows_exe_installer.ps1 `
   -CompanyName "InsureMeBetter" `
   -ContactEmail "rrhh@insuremebetter.com" `
-  -PackageName "VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.2" `
-  -SetupName "VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.2" `
+  -PackageName "VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.3" `
+  -SetupName "VYNTRAAgent-InsureMeBetter-Windows-Setup-v1.2.3" `
   -BuildAgent `
   -CertificateThumbprint "CERT_THUMBPRINT"
 ```

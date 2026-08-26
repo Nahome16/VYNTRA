@@ -31,7 +31,7 @@ from screenshots import ScreenshotEngine
 from shift import ShiftManager, fmt_hms
 
 
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 
 
 AGENT_I18N = {

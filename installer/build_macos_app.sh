@@ -8,7 +8,7 @@ COMPANY_NAME="${COMPANY_NAME:-InsureMeBetter}"
 CONTACT_EMAIL="${CONTACT_EMAIL:-carlos@insuremebetter.com}"
 API_URL="${API_URL:-https://api.vyntralab.com}"
 LANGUAGE="${LANGUAGE:-es}"
-AGENT_VERSION="${AGENT_VERSION:-1.2.2}"
+AGENT_VERSION="${AGENT_VERSION:-1.2.3}"
 PACKAGE_NAME="${PACKAGE_NAME:-VYNTRAAgent-${COMPANY_NAME// /-}-macOS-v$AGENT_VERSION}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then

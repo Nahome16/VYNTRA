@@ -23,7 +23,7 @@ class Config:
         self.config_path = os.path.join(base, "config.ini")
 
         parser = configparser.ConfigParser()
-        parser.read(self.config_path, encoding="utf-8")
+        parser.read(self.config_path, encoding="utf-8-sig")
 
         self.server_url = parser.get(
             "Server", "Url", fallback="https://localhost:7168"

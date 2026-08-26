@@ -151,7 +151,8 @@ function Install-VyntraAgent {
         } else {
             $configText = $configText.TrimEnd() + "`r`n`r`n[Interface]`r`nLanguage = $language`r`n"
         }
-        Set-Content -LiteralPath $configPath -Value $configText -Encoding UTF8
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($configPath, $configText, $utf8NoBom)
     }
 
     $principalUser = "$env:USERDOMAIN\$env:USERNAME"

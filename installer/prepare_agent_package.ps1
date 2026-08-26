@@ -8,7 +8,7 @@ param(
     [string]$DeviceToken = "",
 
     [string]$ApiUrl = "https://api.vyntralab.com",
-    [string]$AgentVersion = "1.2.2",
+    [string]$AgentVersion = "1.2.3",
     [string]$OutputDir = "release",
     [string]$PackageName = "",
     [string]$CertificateThumbprint = "",
@@ -144,7 +144,9 @@ QueueDatabase =
 [StationAuth]
 AllowLocalFallback = false
 "@
-Set-Content -LiteralPath (Join-Path $packageAgent "config.ini") -Value $configText -Encoding UTF8
+$configPath = Join-Path $packageAgent "config.ini"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($configPath, $configText, $utf8NoBom)
 
 $installPs1 = @'
 $ErrorActionPreference = "Stop"

@@ -7,6 +7,8 @@ type AuthContextValue = {
   token: string;
   user: AdminUser | null;
   ready: boolean;
+  activeCompanyId: string;
+  setActiveCompanyId: (companyId: string) => void;
   login: (email: string, password: string) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   logout: () => void;
@@ -19,6 +21,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 const tokenKey = "vyntra.admin.token";
 const userKey = "vyntra.admin.user";
+const activeCompanyKey = "vyntra.admin.activeCompanyId";
 
 class ApiError extends Error {
   status: number;
@@ -46,14 +49,19 @@ async function requestJson<T>(path: string, token: string, init: RequestInit = {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState("");
   const [user, setUser] = useState<AdminUser | null>(null);
+  const [activeCompanyId, setActiveCompanyIdState] = useState("");
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const storedToken = window.localStorage.getItem(tokenKey) || "";
       const storedUser = window.localStorage.getItem(userKey);
+      const storedActiveCompanyId = window.localStorage.getItem(activeCompanyKey) || "";
+      setActiveCompanyIdState(storedActiveCompanyId);
       if (!storedToken) {
         window.localStorage.removeItem(userKey);
+        window.localStorage.removeItem(activeCompanyKey);
+        setActiveCompanyIdState("");
         setReady(true);
         return;
       }
@@ -63,12 +71,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setToken(storedToken);
           setUser(payload.user);
           window.localStorage.setItem(userKey, JSON.stringify(payload.user));
+          if (payload.user.role !== "system_admin") {
+            window.localStorage.removeItem(activeCompanyKey);
+            setActiveCompanyIdState("");
+          }
         })
         .catch(() => {
           setToken("");
           setUser(null);
+          setActiveCompanyIdState("");
           window.localStorage.removeItem(tokenKey);
           window.localStorage.removeItem(userKey);
+          window.localStorage.removeItem(activeCompanyKey);
         })
         .finally(() => {
           if (storedUser) {
@@ -99,8 +113,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     setToken(payload.access_token);
     setUser(payload.user);
+    setActiveCompanyIdState("");
     window.localStorage.setItem(tokenKey, payload.access_token);
     window.localStorage.setItem(userKey, JSON.stringify(payload.user));
+    window.localStorage.removeItem(activeCompanyKey);
+  }, []);
+
+  const setActiveCompanyId = useCallback((companyId: string) => {
+    const cleanCompanyId = companyId.trim();
+    setActiveCompanyIdState(cleanCompanyId);
+    if (cleanCompanyId) {
+      window.localStorage.setItem(activeCompanyKey, cleanCompanyId);
+    } else {
+      window.localStorage.removeItem(activeCompanyKey);
+    }
   }, []);
 
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
@@ -127,8 +153,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setToken("");
     setUser(null);
+    setActiveCompanyIdState("");
     window.localStorage.removeItem(tokenKey);
     window.localStorage.removeItem(userKey);
+    window.localStorage.removeItem(activeCompanyKey);
   }, [token]);
 
   const requestAuthorized = useCallback(
@@ -150,6 +178,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       token,
       user,
       ready,
+      activeCompanyId,
+      setActiveCompanyId,
       login,
       changePassword,
       logout,
@@ -165,7 +195,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify(body),
         }),
     }),
-    [changePassword, login, logout, ready, requestAuthorized, token, user],
+    [activeCompanyId, changePassword, login, logout, ready, requestAuthorized, setActiveCompanyId, token, user],
   );
 
   return (

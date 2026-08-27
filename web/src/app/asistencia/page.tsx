@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState, Panel, RefreshButton, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
@@ -138,7 +138,7 @@ function comparisonText(actualSeconds: number, expectedSeconds: number) {
 }
 
 export default function AttendancePage() {
-  const { apiGet, apiPost, apiPatch, token, user } = useAuth();
+  const { apiGet, apiPost, apiPatch, token, activeCompanyId, user } = useAuth();
   const { t } = usePreferences();
   const [view, setView] = useState<AttendanceView>("history");
   const [overview, setOverview] = useState<AttendanceOverviewResponse | null>(null);
@@ -163,9 +163,14 @@ export default function AttendancePage() {
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
-  const didInitialLoad = useRef(false);
+  const isSystemAdmin = user?.role === "system_admin";
 
   const loadAttendance = useCallback(async (range?: { dateFrom?: string; dateTo?: string }) => {
+    if (isSystemAdmin && !activeCompanyId) {
+      setOverview(null);
+      setStatusText("Selecciona una empresa en Sistema para ver asistencia");
+      return;
+    }
     setLoading(true);
     setStatusText(t("Actualizando asistencia..."));
     const params = new URLSearchParams();
@@ -173,6 +178,7 @@ export default function AttendancePage() {
     const nextDateTo = range?.dateTo ?? dateTo;
     if (nextDateFrom) params.set("date_from", nextDateFrom);
     if (nextDateTo) params.set("date_to", nextDateTo);
+    if (isSystemAdmin && activeCompanyId) params.set("company_id", activeCompanyId);
     if (selectedDepartment) params.set("department_id", selectedDepartment);
     if (selectedEmployee) params.set("employee_id", selectedEmployee);
 
@@ -187,16 +193,26 @@ export default function AttendancePage() {
     } finally {
       setLoading(false);
     }
-  }, [apiGet, dateFrom, dateTo, selectedDepartment, selectedEmployee, t]);
+  }, [activeCompanyId, apiGet, dateFrom, dateTo, isSystemAdmin, selectedDepartment, selectedEmployee, t]);
 
   useEffect(() => {
-    if (!user || didInitialLoad.current) return;
-    didInitialLoad.current = true;
+    if (!user) return;
     const timer = window.setTimeout(() => {
       void loadAttendance();
     }, 0);
     return () => window.clearTimeout(timer);
   }, [loadAttendance, user]);
+
+  useEffect(() => {
+    if (!isSystemAdmin) return;
+    const timer = window.setTimeout(() => {
+      setSelectedDepartment("");
+      setSelectedEmployee("");
+      setSelectedAssociateId("");
+      setMetricDetailKey(null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeCompanyId, isSystemAdmin]);
 
   const employees = useMemo(() => (overview?.employees || []).filter((employee) => employee.status === "active"), [overview]);
   const activeEmployeeIds = useMemo(() => new Set(employees.map((employee) => employee.id)), [employees]);
@@ -485,6 +501,7 @@ export default function AttendancePage() {
     const params = new URLSearchParams();
     if (dateFrom) params.set("date_from", dateFrom);
     if (dateTo) params.set("date_to", dateTo);
+    if (isSystemAdmin && activeCompanyId) params.set("company_id", activeCompanyId);
     if (selectedDepartment) params.set("department_id", selectedDepartment);
     if (selectedEmployee) params.set("employee_id", selectedEmployee);
     const query = params.toString();
@@ -507,7 +524,7 @@ export default function AttendancePage() {
   return (
     <AppShell
       title={t("Asistencia")}
-      description={`${user?.company || t("Empresa")} - ${t("control de jornada, ausencias, break y lunch.")}`}
+      description={`${overview?.company.name || user?.company || t("Empresa")} - ${t("control de jornada, ausencias, break y lunch.")}`}
       actions={(
         <>
           <button className="secondary-button" onClick={downloadReport} disabled={reportLoading || !overview}>

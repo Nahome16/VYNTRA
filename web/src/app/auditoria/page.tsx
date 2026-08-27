@@ -18,7 +18,7 @@ function payloadText(payload: AuditLogEntry["payload"]) {
 }
 
 export default function AuditPage() {
-  const { apiGet, token, user } = useAuth();
+  const { apiGet, token, activeCompanyId, setActiveCompanyId, user } = useAuth();
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [companies, setCompanies] = useState<SystemCompany[]>([]);
   const [companyId, setCompanyId] = useState("");
@@ -89,6 +89,14 @@ export default function AuditPage() {
     return () => window.clearTimeout(timer);
   }, [loadAudit, loadCompanies]);
 
+  useEffect(() => {
+    if (!activeCompanyId) return;
+    const timer = window.setTimeout(() => {
+      setCompanyId(activeCompanyId);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeCompanyId]);
+
   async function applyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await loadAudit();
@@ -149,7 +157,10 @@ export default function AuditPage() {
           <form className="audit-filter-grid" onSubmit={applyFilters}>
             {isSystemAdmin ? (
               <label>Empresa
-                <select value={companyId} onChange={(event) => setCompanyId(event.target.value)}>
+                <select value={companyId} onChange={(event) => {
+                  setCompanyId(event.target.value);
+                  if (event.target.value) setActiveCompanyId(event.target.value);
+                }}>
                   <option value="">Todas</option>
                   {companies.map((company) => (
                     <option key={company.id} value={company.id}>{company.name}</option>

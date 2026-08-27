@@ -18,11 +18,10 @@ function statusClass(status: string) {
 }
 
 export default function DevicesPage() {
-  const { apiGet, apiPost, apiPatch, user } = useAuth();
+  const { apiGet, apiPost, apiPatch, activeCompanyId, setActiveCompanyId, user } = useAuth();
   const [companies, setCompanies] = useState<SystemCompany[]>([]);
   const [devices, setDevices] = useState<DeviceRecord[]>([]);
   const [catalogs, setCatalogs] = useState<CatalogsResponse | null>(null);
-  const [companyId, setCompanyId] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -46,6 +45,7 @@ export default function DevicesPage() {
   const canRead = Boolean(user?.permissions?.includes("devices:read"));
   const canManage = Boolean(user?.permissions?.includes("devices:manage"));
   const isSystemAdmin = user?.role === "system_admin";
+  const companyId = isSystemAdmin ? activeCompanyId : "";
   const selectedDevice = useMemo(() => devices.find((device) => device.id === selectedDeviceId) || null, [devices, selectedDeviceId]);
   const onlineCount = useMemo(() => devices.filter((device) => device.status === "online").length, [devices]);
   const revokedCount = useMemo(() => devices.filter((device) => device.status === "revoked").length, [devices]);
@@ -122,12 +122,15 @@ export default function DevicesPage() {
     if (!isSystemAdmin) return;
     try {
       const response = await apiGet<SystemOverviewResponse>("/api/system/overview");
-      setCompanies(response.companies);
-      setCompanyId((current) => current || response.companies[0]?.id || "");
+      const activeCompanies = response.companies.filter((company) => company.status === "active");
+      setCompanies(activeCompanies);
+      if (!activeCompanies.some((company) => company.id === activeCompanyId)) {
+        setActiveCompanyId(activeCompanies[0]?.id || "");
+      }
     } catch {
       setCompanies([]);
     }
-  }, [apiGet, isSystemAdmin]);
+  }, [activeCompanyId, apiGet, isSystemAdmin, setActiveCompanyId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -137,6 +140,24 @@ export default function DevicesPage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [loadCatalogs, loadCompanies, loadDevices]);
+
+  useEffect(() => {
+    if (!isSystemAdmin) return;
+    const timer = window.setTimeout(() => {
+      setEmployeeId("");
+      setCatalogs(null);
+      setDevices([]);
+      setSelectedDeviceId("");
+      setEditName("");
+      setEditHostname("");
+      setEditLocation("");
+      setEditEmployeeId("");
+      setEditAgentVersion("");
+      setEditActive(true);
+      setRotateReason("");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeCompanyId, isSystemAdmin]);
 
   async function createDevice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -239,7 +260,7 @@ export default function DevicesPage() {
           <div className="device-filter-grid">
             {isSystemAdmin ? (
               <label>Empresa
-                <select value={companyId} onChange={(event) => setCompanyId(event.target.value)}>
+                <select value={companyId} onChange={(event) => setActiveCompanyId(event.target.value)}>
                   <option value="">Selecciona empresa</option>
                   {companies.map((company) => (
                     <option key={company.id} value={company.id}>{company.name}</option>

@@ -173,7 +173,7 @@ function TimeDonut({ totals }: { totals: DashboardTotals }) {
 }
 
 export default function DashboardPage() {
-  const { apiGet, token, user } = useAuth();
+  const { apiGet, token, activeCompanyId, setActiveCompanyId, user } = useAuth();
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [previousDashboard, setPreviousDashboard] = useState<DashboardResponse | null>(null);
   const [catalogs, setCatalogs] = useState<CatalogsResponse | null>(null);
@@ -181,7 +181,6 @@ export default function DashboardPage() {
   const [period, setPeriod] = useState<PeriodKey>("month");
   const [dateFrom, setDateFrom] = useState(monthStartISO());
   const [dateTo, setDateTo] = useState(todayISO());
-  const [selectedCompany, setSelectedCompany] = useState("");
   const [selectedDepartment, setSelectedDepartment] = useState("");
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -189,7 +188,7 @@ export default function DashboardPage() {
 
   const { t } = usePreferences();
   const isSystemAdmin = user?.role === "system_admin";
-  const effectiveCompanyId = isSystemAdmin ? selectedCompany : "";
+  const effectiveCompanyId = isSystemAdmin ? activeCompanyId : "";
 
   const currentParams = useMemo(
     () => buildParams({ dateFrom, dateTo, companyId: effectiveCompanyId, departmentId: selectedDepartment }),
@@ -200,8 +199,8 @@ export default function DashboardPage() {
 
   const selectedCompanyName = useMemo(() => {
     if (!isSystemAdmin) return user?.company || t("Empresa");
-    return companies.find((company) => company.id === selectedCompany)?.name || user?.company || t("Empresa");
-  }, [companies, isSystemAdmin, selectedCompany, t, user?.company]);
+    return companies.find((company) => company.id === activeCompanyId)?.name || user?.company || t("Empresa");
+  }, [activeCompanyId, companies, isSystemAdmin, t, user?.company]);
 
   const selectedDepartmentName = useMemo(() => {
     if (!selectedDepartment) return "General";
@@ -224,14 +223,19 @@ export default function DashboardPage() {
       const response = await apiGet<SystemOverviewResponse>("/api/system/overview");
       const activeCompanies = response.companies.filter((company) => company.status === "active");
       setCompanies(activeCompanies);
-      setSelectedCompany((current) => current || activeCompanies[0]?.id || user?.company_id || "");
+      if (!activeCompanies.some((company) => company.id === activeCompanyId)) {
+        setActiveCompanyId(activeCompanies[0]?.id || user?.company_id || "");
+      }
     } catch {
       setStatusText("No se pudo cargar el listado de empresas");
     }
-  }, [apiGet, isSystemAdmin, user?.company_id]);
+  }, [activeCompanyId, apiGet, isSystemAdmin, setActiveCompanyId, user]);
 
   const loadDashboard = useCallback(async () => {
-    if (isSystemAdmin && !selectedCompany) return;
+    if (isSystemAdmin && !activeCompanyId) {
+      setStatusText("Selecciona una empresa en Sistema para ver el dashboard");
+      return;
+    }
     setLoading(true);
     setStatusText(t("Actualizando datos..."));
     const previous = previousRange(dateFrom, dateTo);
@@ -258,7 +262,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiGet, currentParams, dateFrom, dateTo, effectiveCompanyId, isSystemAdmin, selectedCompany, selectedDepartment, t]);
+  }, [activeCompanyId, apiGet, currentParams, dateFrom, dateTo, effectiveCompanyId, isSystemAdmin, selectedDepartment, t]);
 
   useEffect(() => {
     if (!user) return;
@@ -275,6 +279,17 @@ export default function DashboardPage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [loadDashboard, user]);
+
+  useEffect(() => {
+    if (!isSystemAdmin) return;
+    const timer = window.setTimeout(() => {
+      setSelectedDepartment("");
+      setCatalogs(null);
+      setDashboard(null);
+      setPreviousDashboard(null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeCompanyId, isSystemAdmin]);
 
   function applyPeriod(nextPeriod: Exclude<PeriodKey, "custom">) {
     const nextRange = rangeForPeriod(nextPeriod);
@@ -321,8 +336,8 @@ export default function DashboardPage() {
             {isSystemAdmin ? (
               <label>
                 <small>Empresa</small>
-                <select value={selectedCompany} onChange={(event) => {
-                  setSelectedCompany(event.target.value);
+                <select value={activeCompanyId} onChange={(event) => {
+                  setActiveCompanyId(event.target.value);
                   setSelectedDepartment("");
                 }}>
                   {companies.map((company) => (

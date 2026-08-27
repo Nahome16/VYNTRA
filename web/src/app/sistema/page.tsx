@@ -76,7 +76,7 @@ function badgeClass(status: string) {
 }
 
 export default function SystemPage() {
-  const { apiGet, apiPost, apiPatch, user } = useAuth();
+  const { apiGet, apiPost, apiPatch, activeCompanyId, setActiveCompanyId, user } = useAuth();
   const [companies, setCompanies] = useState<SystemCompany[]>([]);
   const [users, setUsers] = useState<PanelUser[]>([]);
   const [roles, setRoles] = useState<SystemOverviewResponse["roles"]>([]);
@@ -125,12 +125,14 @@ export default function SystemPage() {
   const loadCompanyControls = useCallback((company: SystemCompany | null) => {
     if (!company) return;
     setControlsCompanyId(company.id);
+    setActiveCompanyId(company.id);
+    setPanelCompanyId(company.id);
     setControlsTimezone(company.timezone || "America/Managua");
     setEmployeeLimit(String(company.controls.employee_limit || 0));
     setSubscriptionStatus(company.controls.subscription_status || "active");
     setSubscriptionEndsAt(company.controls.subscription_ends_at || "");
     setAdminNotice(company.controls.admin_notice || "");
-  }, []);
+  }, [setActiveCompanyId]);
 
   const loadPanelUser = useCallback((panelUser: PanelUser | null) => {
     if (!panelUser) return;
@@ -155,11 +157,17 @@ export default function SystemPage() {
     setStatusText("Actualizando sistema...");
     try {
       const response = await apiGet<SystemOverviewResponse>("/api/system/overview");
+      const preferredCompany =
+        response.companies.find((company) => company.id === activeCompanyId) ||
+        response.companies.find((company) => company.id === controlsCompanyId) ||
+        response.companies.find((company) => company.status === "active") ||
+        response.companies[0] ||
+        null;
       setCompanies(response.companies);
       setUsers(response.users);
       setRoles(response.roles);
-      setPanelCompanyId((current) => current || response.companies[0]?.id || "");
-      loadCompanyControls(response.companies.find((company) => company.id === controlsCompanyId) || response.companies[0] || null);
+      setPanelCompanyId((current) => current || preferredCompany?.id || "");
+      loadCompanyControls(preferredCompany);
       loadPanelUser(response.users.find((row) => row.id === selectedUserId) || response.users[0] || null);
       setStatusText("Sistema actualizado");
     } catch {
@@ -167,7 +175,7 @@ export default function SystemPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiGet, controlsCompanyId, isSystemAdmin, loadCompanyControls, loadPanelUser, selectedUserId]);
+  }, [activeCompanyId, apiGet, controlsCompanyId, isSystemAdmin, loadCompanyControls, loadPanelUser, selectedUserId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {

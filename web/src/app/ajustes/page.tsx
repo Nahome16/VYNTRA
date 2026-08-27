@@ -95,7 +95,7 @@ function deliveryStatusText(status?: string) {
 }
 
 export default function SettingsPage() {
-  const { apiGet, apiPatch, apiPost, changePassword, user } = useAuth();
+  const { apiGet, apiPatch, apiPost, activeCompanyId, changePassword, user } = useAuth();
   const [activeSection, setActiveSection] = useState<SectionKey>("usuarios");
   const [catalogs, setCatalogs] = useState<CatalogsResponse | null>(null);
   const [rules, setRules] = useState<ProductivityRule[]>([]);
@@ -107,6 +107,7 @@ export default function SettingsPage() {
   const [newPanelPassword, setNewPanelPassword] = useState("");
   const [confirmPanelPassword, setConfirmPanelPassword] = useState("");
   const [changingPanelPassword, setChangingPanelPassword] = useState(false);
+  const isSystemAdmin = user?.role === "system_admin";
 
   const [employeeSearch, setEmployeeSearch] = useState("");
   const [employeeDepartmentFilter, setEmployeeDepartmentFilter] = useState("");
@@ -152,14 +153,26 @@ export default function SettingsPage() {
   const [ruleNotes, setRuleNotes] = useState("");
 
   const loadSettings = useCallback(async () => {
+    if (isSystemAdmin && !activeCompanyId) {
+      setCatalogs(null);
+      setRules([]);
+      setUncategorized([]);
+      setAccessCodes([]);
+      setStatusText("Selecciona una empresa en Sistema para administrar ajustes");
+      return;
+    }
     setLoading(true);
     setStatusText("Actualizando ajustes...");
+    const companyQuery = isSystemAdmin && activeCompanyId ? `?company_id=${encodeURIComponent(activeCompanyId)}` : "";
+    const companyLimitQuery = isSystemAdmin && activeCompanyId
+      ? `?company_id=${encodeURIComponent(activeCompanyId)}&limit=30`
+      : "?limit=30";
     try {
       const [nextCatalogs, nextRules, nextUncategorized, nextCodes] = await Promise.all([
-        apiGet<CatalogsResponse>("/api/productivity/catalogs"),
-        apiGet<{ rules: ProductivityRule[] }>("/api/productivity/rules"),
-        apiGet<{ items: UncategorizedItem[] }>("/api/productivity/uncategorized?limit=30"),
-        apiGet<{ codes: AccessCode[] }>("/api/settings/access-codes"),
+        apiGet<CatalogsResponse>(`/api/productivity/catalogs${companyQuery}`),
+        apiGet<{ rules: ProductivityRule[] }>(`/api/productivity/rules${companyQuery}`),
+        apiGet<{ items: UncategorizedItem[] }>(`/api/productivity/uncategorized${companyLimitQuery}`),
+        apiGet<{ codes: AccessCode[] }>(`/api/settings/access-codes${companyQuery}`),
       ]);
       setCatalogs(nextCatalogs);
       setRules(nextRules.rules);
@@ -178,7 +191,7 @@ export default function SettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiGet]);
+  }, [activeCompanyId, apiGet, isSystemAdmin]);
 
   useEffect(() => {
     if (!user) return;
@@ -187,6 +200,18 @@ export default function SettingsPage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [loadSettings, user]);
+
+  useEffect(() => {
+    if (!isSystemAdmin) return;
+    const timer = window.setTimeout(() => {
+      setEmployeeDepartmentFilter("");
+      setRuleDepartmentFilter("");
+      setAccessEmployeeId("");
+      setRuleEmployeeId("");
+      setRuleDepartmentId("");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeCompanyId, isSystemAdmin]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -335,6 +360,7 @@ export default function SettingsPage() {
         employee: Employee;
         credentials: { email: string; password?: string; delivery_status: string; password_change_required?: boolean };
       }>("/api/settings/employees", {
+        company_id: isSystemAdmin ? activeCompanyId || null : null,
         full_name: employeeName,
         email: employeeEmail,
         department_id: employeeDepartmentId || null,
@@ -417,6 +443,7 @@ export default function SettingsPage() {
     setStatusText("Generando codigo...");
     try {
       const response = await apiPost<{ code: AccessCode; delivery_status?: string }>("/api/settings/access-codes", {
+        company_id: isSystemAdmin ? activeCompanyId || null : null,
         type: accessDraftType,
         employee_id: accessEmployeeId,
         valid_minutes: Number(accessValidMinutes),
@@ -475,6 +502,7 @@ export default function SettingsPage() {
     event.preventDefault();
     setStatusText(editingRule ? "Actualizando regla..." : "Creando regla productiva...");
     const payload = {
+      company_id: isSystemAdmin ? activeCompanyId || null : null,
       executable_name: ruleExecutable,
       title_contains: ruleTitle,
       classification: ruleClassification,
@@ -516,6 +544,7 @@ export default function SettingsPage() {
         setRules((current) => current.map((rule) => (rule.id === row.id ? response.rule : rule)));
       } else {
         await apiPost("/api/productivity/rules", {
+          company_id: isSystemAdmin ? activeCompanyId || null : null,
           executable_name: row.item.executable_name,
           title_contains: row.item.title_text,
           classification,

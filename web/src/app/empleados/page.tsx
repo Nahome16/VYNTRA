@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState, Panel, RefreshButton, StatusLine } from "@/components/ui";
@@ -43,7 +43,7 @@ function csvSafe(value: string | number) {
 
 export default function EmployeesPage() {
   const router = useRouter();
-  const { apiGet, user } = useAuth();
+  const { apiGet, activeCompanyId, user } = useAuth();
   const { t } = usePreferences();
   const [catalogs, setCatalogs] = useState<CatalogsResponse | null>(null);
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
@@ -52,19 +52,26 @@ export default function EmployeesPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
-  const didInitialLoad = useRef(false);
 
   const loadEmployees = useCallback(async () => {
+    if (user?.role === "system_admin" && !activeCompanyId) {
+      setCatalogs(null);
+      setDashboard(null);
+      setStatusText("Selecciona una empresa en Sistema para ver empleados");
+      return;
+    }
     setLoading(true);
     setStatusText(t("Actualizando empleados..."));
     const params = new URLSearchParams();
     if (dateFrom) params.set("date_from", dateFrom);
     if (dateTo) params.set("date_to", dateTo);
+    if (user?.role === "system_admin" && activeCompanyId) params.set("company_id", activeCompanyId);
+    const query = params.toString();
 
     try {
       const [nextCatalogs, nextDashboard] = await Promise.all([
-        apiGet<CatalogsResponse>("/api/productivity/catalogs"),
-        apiGet<DashboardResponse>(`/api/productivity/dashboard?${params.toString()}`),
+        apiGet<CatalogsResponse>(`/api/productivity/catalogs${query ? `?${query}` : ""}`),
+        apiGet<DashboardResponse>(`/api/productivity/dashboard${query ? `?${query}` : ""}`),
       ]);
       setCatalogs(nextCatalogs);
       setDashboard(nextDashboard);
@@ -74,11 +81,10 @@ export default function EmployeesPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiGet, dateFrom, dateTo, t]);
+  }, [activeCompanyId, apiGet, dateFrom, dateTo, t, user?.role]);
 
   useEffect(() => {
-    if (!user || didInitialLoad.current) return;
-    didInitialLoad.current = true;
+    if (!user) return;
     const timer = window.setTimeout(() => {
       void loadEmployees();
     }, 0);
@@ -187,7 +193,7 @@ export default function EmployeesPage() {
   return (
     <AppShell
       title={t("Empleados")}
-      description={`${user?.company || t("Empresa")} - ${t("actividad, productividad y detalle por usuario.")}`}
+      description={`${dashboard?.company.name || user?.company || t("Empresa")} - ${t("actividad, productividad y detalle por usuario.")}`}
       actions={<RefreshButton loading={loading} onClick={loadEmployees} />}
     >
       <Panel title={t("Reporte de empleados")} meta={`${employeeRows.length} ${t("visibles")}`}>

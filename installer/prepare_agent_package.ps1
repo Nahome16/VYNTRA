@@ -194,7 +194,7 @@ Backend: $ApiUrl
 Pasos para instalar:
 1. Extrae este ZIP en la PC del usuario monitoreado.
 2. Ejecuta "Instalar VYNTRA.cmd".
-3. Deja marcada la opcion "Iniciar agente al finalizar".
+3. Si quieres probar de inmediato, marca "Iniciar agente al finalizar"; si no, el agente iniciara en el proximo inicio de sesion de Windows.
 4. El empleado inicia sesion con las credenciales enviadas por correo.
 5. El empleado acepta el consentimiento mostrado por VYNTRA.
 6. En el panel web revisa Dispositivos: debe actualizar last_seen_at.

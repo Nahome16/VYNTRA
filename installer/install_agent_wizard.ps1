@@ -318,7 +318,7 @@ $card.Controls.Add($taskText)
 
 $startCheck = New-Object System.Windows.Forms.CheckBox
 $startCheck.Text = T "Start"
-$startCheck.Checked = $true
+$startCheck.Checked = $false
 $startCheck.ForeColor = $colors.Ink
 $startCheck.BackColor = $colors.Surface
 $startCheck.Location = New-Object System.Drawing.Point(342, 196)

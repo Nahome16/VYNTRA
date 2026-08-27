@@ -391,6 +391,136 @@ function Apply-Language {
     $footer.Text = T "Footer"
 }
 
+function Resolve-LegalFolder {
+    try {
+        $source = (Resolve-Path -LiteralPath $sourceText.Text).Path
+        $packageRoot = Split-Path -Parent $source
+        $legalFolder = Join-Path $packageRoot "legal"
+        if (Test-Path -LiteralPath $legalFolder) {
+            return $legalFolder
+        }
+    } catch {
+    }
+
+    $repoRoot = Split-Path -Parent $PSScriptRoot
+    $fallback = Join-Path $repoRoot "docs\legal"
+    if (Test-Path -LiteralPath $fallback) {
+        return $fallback
+    }
+    return ""
+}
+
+function Show-LegalDocuments {
+    param([string]$LegalFolder)
+
+    $files = @(Get-ChildItem -LiteralPath $LegalFolder -File -Filter "*.md" -ErrorAction SilentlyContinue | Sort-Object Name)
+    if (-not $files.Count) {
+        [System.Windows.Forms.MessageBox]::Show(
+            (T "HelpMissing"),
+            "VYNTRA",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Information
+        ) | Out-Null
+        return
+    }
+
+    $viewer = New-Object System.Windows.Forms.Form
+    $viewer.Text = if ($script:Language -eq "en") { "VYNTRA - Legal center" } else { "VYNTRA - Centro legal" }
+    $viewer.StartPosition = "CenterParent"
+    $viewer.Size = New-Object System.Drawing.Size(860, 620)
+    $viewer.MinimumSize = New-Object System.Drawing.Size(760, 520)
+    $viewer.BackColor = $colors.Bg
+    $viewer.Font = New-Font 9
+
+    $headerLegal = New-Object System.Windows.Forms.Label
+    $headerLegal.Text = if ($script:Language -eq "en") { "Documents and consent" } else { "Documentos y consentimiento" }
+    $headerLegal.Font = New-Font 16 ([System.Drawing.FontStyle]::Bold)
+    $headerLegal.ForeColor = $colors.Ink
+    $headerLegal.Location = New-Object System.Drawing.Point(22, 18)
+    $headerLegal.Size = New-Object System.Drawing.Size(420, 30)
+    $viewer.Controls.Add($headerLegal)
+
+    $hintLegal = New-Object System.Windows.Forms.Label
+    $hintLegal.Text = "Selecciona un documento para leerlo antes de instalar o iniciar VYNTRA."
+    if ($script:Language -eq "en") {
+        $hintLegal.Text = "Select a document to read it before installing or starting VYNTRA."
+    }
+    $hintLegal.ForeColor = $colors.Muted
+    $hintLegal.Location = New-Object System.Drawing.Point(24, 52)
+    $hintLegal.Size = New-Object System.Drawing.Size(720, 22)
+    $viewer.Controls.Add($hintLegal)
+
+    $list = New-Object System.Windows.Forms.ListBox
+    $list.Location = New-Object System.Drawing.Point(24, 88)
+    $list.Size = New-Object System.Drawing.Size(250, 420)
+    $list.Anchor = "Top,Bottom,Left"
+    $list.DisplayMember = "Name"
+    foreach ($file in $files) {
+        [void]$list.Items.Add($file)
+    }
+    $viewer.Controls.Add($list)
+
+    $content = New-Object System.Windows.Forms.TextBox
+    $content.Location = New-Object System.Drawing.Point(292, 88)
+    $content.Size = New-Object System.Drawing.Size(526, 420)
+    $content.Anchor = "Top,Bottom,Left,Right"
+    $content.Multiline = $true
+    $content.ReadOnly = $true
+    $content.ScrollBars = "Vertical"
+    $content.WordWrap = $true
+    $content.Font = New-Object System.Drawing.Font("Consolas", 9)
+    $content.BackColor = $colors.Surface
+    $content.ForeColor = $colors.Ink
+    $viewer.Controls.Add($content)
+
+    $copyButton = New-Object System.Windows.Forms.Button
+    $copyButton.Text = if ($script:Language -eq "en") { "Copy text" } else { "Copiar texto" }
+    $copyButton.Location = New-Object System.Drawing.Point(574, 528)
+    $copyButton.Size = New-Object System.Drawing.Size(116, 32)
+    $copyButton.Anchor = "Bottom,Right"
+    $viewer.Controls.Add($copyButton)
+
+    $closeLegalButton = New-Object System.Windows.Forms.Button
+    $closeLegalButton.Text = T "Close"
+    $closeLegalButton.Location = New-Object System.Drawing.Point(702, 528)
+    $closeLegalButton.Size = New-Object System.Drawing.Size(116, 32)
+    $closeLegalButton.Anchor = "Bottom,Right"
+    $viewer.Controls.Add($closeLegalButton)
+
+    $list.Add_SelectedIndexChanged({
+        try {
+            $selected = $list.SelectedItem
+            if ($selected) {
+                $content.Text = Get-Content -LiteralPath $selected.FullName -Raw -Encoding UTF8
+                $content.SelectionStart = 0
+                $content.ScrollToCaret()
+            }
+        } catch {
+            $content.Text = $_.Exception.Message
+        }
+    })
+
+    $copyButton.Add_Click({
+        if ($content.Text) {
+            [System.Windows.Forms.Clipboard]::SetText($content.Text)
+        }
+    })
+
+    $closeLegalButton.Add_Click({
+        $viewer.Close()
+    })
+
+    $preferred = if ($script:Language -eq "en") { "employee-monitoring-notice-en.md" } else { "aviso-consentimiento-empleado-es.md" }
+    $match = $files | Where-Object { $_.Name -eq $preferred } | Select-Object -First 1
+    if ($match) {
+        $list.SelectedItem = $match
+    } else {
+        $list.SelectedIndex = 0
+    }
+
+    $viewer.ShowDialog($form) | Out-Null
+}
+
 $languageSelect.Add_SelectedIndexChanged({
     $script:Language = if ($languageSelect.SelectedItem -eq "EN") { "en" } else { "es" }
     Apply-Language
@@ -398,13 +528,7 @@ $languageSelect.Add_SelectedIndexChanged({
 
 $helpButton.Add_Click({
     try {
-        $source = (Resolve-Path -LiteralPath $sourceText.Text).Path
-        $packageRoot = Split-Path -Parent $source
-        $legalFolder = Join-Path $packageRoot "legal"
-        if (-not (Test-Path -LiteralPath $legalFolder)) {
-            $repoRoot = Split-Path -Parent $PSScriptRoot
-            $legalFolder = Join-Path $repoRoot "docs\legal"
-        }
+        $legalFolder = Resolve-LegalFolder
         if (-not (Test-Path -LiteralPath $legalFolder)) {
             [System.Windows.Forms.MessageBox]::Show(
                 (T "HelpMissing"),
@@ -414,7 +538,7 @@ $helpButton.Add_Click({
             ) | Out-Null
             return
         }
-        Invoke-Item -LiteralPath $legalFolder
+        Show-LegalDocuments -LegalFolder $legalFolder
     } catch {
         [System.Windows.Forms.MessageBox]::Show(
             $_.Exception.Message,

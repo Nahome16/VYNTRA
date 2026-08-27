@@ -455,6 +455,37 @@ def json_text(value: dict | list | str | None) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def send_plain_email_audit_task(
+    to_email: str,
+    subject: str,
+    body: str,
+    company_id: str,
+    actor_user_id: str | None,
+    action: str,
+    entity_type: str,
+    entity_id: str,
+    payload: dict,
+) -> None:
+    delivery_status = send_plain_email(to_email, subject, body)
+    db = SessionLocal()
+    try:
+        db.add(
+            AuditLog(
+                company_id=company_id,
+                user_id=actor_user_id,
+                action=action,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                payload_json=json_text({**payload, "delivery_status": delivery_status}),
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def title_hash(title: str) -> str:
     return hashlib.sha256(title.encode("utf-8")).hexdigest()
 
@@ -3268,6 +3299,7 @@ def system_overview(
 @app.post("/api/system/companies")
 def create_system_company(
     payload: SystemCompanyPayload,
+    background_tasks: BackgroundTasks,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -3339,25 +3371,21 @@ def create_system_company(
     db.refresh(company)
     db.refresh(company_owner)
 
-    delivery_status = send_plain_email(
+    background_tasks.add_task(
+        send_plain_email_audit_task,
         admin_email,
         "Acceso al panel VYNTRA",
         panel_user_email_body(company, admin_full_name, admin_email, password, "owner"),
+        company.id,
+        admin.user_id,
+        "system_company_owner_delivery_attempted",
+        "user",
+        company_owner.id,
+        {"email": admin_email, "role": "owner"},
     )
-    db.add(
-        AuditLog(
-            company_id=company.id,
-            user_id=admin.user_id,
-            action="system_company_owner_delivery_attempted",
-            entity_type="user",
-            entity_id=company_owner.id,
-            payload_json=json_text({"email": admin_email, "role": "owner", "delivery_status": delivery_status}),
-        )
-    )
-    db.commit()
     credentials = {
         "email": admin_email,
-        "delivery_status": delivery_status,
+        "delivery_status": "queued",
         "password_change_required": True,
     }
     if allow_local_testing_secrets():
@@ -3518,6 +3546,7 @@ def restore_system_company(
 @app.post("/api/system/users")
 def create_system_panel_user(
     payload: SystemUserPayload,
+    background_tasks: BackgroundTasks,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -3571,26 +3600,22 @@ def create_system_panel_user(
     db.commit()
     db.refresh(user)
 
-    delivery_status = send_plain_email(
+    background_tasks.add_task(
+        send_plain_email_audit_task,
         email,
         "Acceso al panel VYNTRA",
         panel_user_email_body(company, full_name, email, password, role_name),
+        company.id,
+        admin.user_id,
+        "system_panel_user_delivery_attempted",
+        "user",
+        user.id,
+        {"email": email, "role": role_name},
     )
-    db.add(
-        AuditLog(
-            company_id=company.id,
-            user_id=admin.user_id,
-            action="system_panel_user_delivery_attempted",
-            entity_type="user",
-            entity_id=user.id,
-            payload_json=json_text({"email": email, "role": role_name, "delivery_status": delivery_status}),
-        )
-    )
-    db.commit()
 
     credentials = {
         "email": email,
-        "delivery_status": delivery_status,
+        "delivery_status": "queued",
         "password_change_required": True,
     }
     if allow_local_testing_secrets():
@@ -3707,6 +3732,7 @@ def archive_system_panel_user(
 @app.post("/api/system/users/{user_id}/reset-password")
 def reset_system_panel_user_password(
     user_id: str,
+    background_tasks: BackgroundTasks,
     payload: SystemUserPasswordResetPayload = Body(default_factory=SystemUserPasswordResetPayload),
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -3750,26 +3776,22 @@ def reset_system_panel_user_password(
     db.commit()
     db.refresh(user)
 
-    delivery_status = send_plain_email(
+    background_tasks.add_task(
+        send_plain_email_audit_task,
         user.email,
         "Nuevo acceso temporal al panel VYNTRA",
         panel_user_email_body(company, user.full_name, user.email, password, role_name),
+        user.company_id,
+        admin.user_id,
+        "system_panel_user_password_delivery_attempted",
+        "user",
+        user.id,
+        {"email": user.email},
     )
-    db.add(
-        AuditLog(
-            company_id=user.company_id,
-            user_id=admin.user_id,
-            action="system_panel_user_password_delivery_attempted",
-            entity_type="user",
-            entity_id=user.id,
-            payload_json=json_text({"email": user.email, "delivery_status": delivery_status}),
-        )
-    )
-    db.commit()
 
     credentials = {
         "email": user.email,
-        "delivery_status": delivery_status,
+        "delivery_status": "queued",
         "password_change_required": True,
     }
     if allow_local_testing_secrets():

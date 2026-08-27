@@ -60,6 +60,7 @@ const timezoneOptions = [
 
 function deliveryText(status?: string) {
   if (status === "sent") return "Credencial enviada por correo.";
+  if (status === "queued") return "Credencial creada. El correo se enviara en segundo plano.";
   if (status === "failed") return "Credencial creada, pero el correo fallo.";
   return "Credencial creada. Entrega pendiente de configuracion SMTP.";
 }

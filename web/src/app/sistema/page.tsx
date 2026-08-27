@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState, Panel, RefreshButton, StatCard, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
@@ -111,6 +111,9 @@ export default function SystemPage() {
   const [editRole, setEditRole] = useState<PanelRole>("viewer");
   const [editStatus, setEditStatus] = useState<"active" | "inactive">("active");
   const [resetReason, setResetReason] = useState("");
+  const controlsCompanyIdRef = useRef(controlsCompanyId);
+  const selectedUserIdRef = useRef(selectedUserId);
+  const activeCompanyIdRef = useRef(activeCompanyId);
 
   const isSystemAdmin = user?.role === "system_admin";
   const activeCompanies = useMemo(() => companies.filter((company) => company.status === "active"), [companies]);
@@ -124,6 +127,8 @@ export default function SystemPage() {
 
   const loadCompanyControls = useCallback((company: SystemCompany | null) => {
     if (!company) return;
+    controlsCompanyIdRef.current = company.id;
+    activeCompanyIdRef.current = company.id;
     setControlsCompanyId(company.id);
     setActiveCompanyId(company.id);
     setPanelCompanyId(company.id);
@@ -136,6 +141,7 @@ export default function SystemPage() {
 
   const loadPanelUser = useCallback((panelUser: PanelUser | null) => {
     if (!panelUser) return;
+    selectedUserIdRef.current = panelUser.id;
     setSelectedUserId(panelUser.id);
     setEditFullName(panelUser.full_name);
     setEditRole((panelUser.role || "viewer") as PanelRole);
@@ -144,12 +150,25 @@ export default function SystemPage() {
   }, []);
 
   const clearPanelUser = useCallback(() => {
+    selectedUserIdRef.current = "";
     setSelectedUserId("");
     setEditFullName("");
     setEditRole("viewer");
     setEditStatus("active");
     setResetReason("");
   }, []);
+
+  useEffect(() => {
+    controlsCompanyIdRef.current = controlsCompanyId;
+  }, [controlsCompanyId]);
+
+  useEffect(() => {
+    selectedUserIdRef.current = selectedUserId;
+  }, [selectedUserId]);
+
+  useEffect(() => {
+    activeCompanyIdRef.current = activeCompanyId;
+  }, [activeCompanyId]);
 
   const loadSystem = useCallback(async () => {
     if (!isSystemAdmin) return;
@@ -158,8 +177,8 @@ export default function SystemPage() {
     try {
       const response = await apiGet<SystemOverviewResponse>("/api/system/overview");
       const preferredCompany =
-        response.companies.find((company) => company.id === activeCompanyId) ||
-        response.companies.find((company) => company.id === controlsCompanyId) ||
+        response.companies.find((company) => company.id === activeCompanyIdRef.current) ||
+        response.companies.find((company) => company.id === controlsCompanyIdRef.current) ||
         response.companies.find((company) => company.status === "active") ||
         response.companies[0] ||
         null;
@@ -168,14 +187,14 @@ export default function SystemPage() {
       setRoles(response.roles);
       setPanelCompanyId((current) => current || preferredCompany?.id || "");
       loadCompanyControls(preferredCompany);
-      loadPanelUser(response.users.find((row) => row.id === selectedUserId) || response.users[0] || null);
+      loadPanelUser(response.users.find((row) => row.id === selectedUserIdRef.current) || response.users[0] || null);
       setStatusText("Sistema actualizado");
     } catch {
       setStatusText("No se pudo cargar la consola del sistema");
     } finally {
       setLoading(false);
     }
-  }, [activeCompanyId, apiGet, controlsCompanyId, isSystemAdmin, loadCompanyControls, loadPanelUser, selectedUserId]);
+  }, [apiGet, isSystemAdmin, loadCompanyControls, loadPanelUser]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {

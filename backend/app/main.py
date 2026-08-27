@@ -859,6 +859,40 @@ def latest_agent_update(platform: str = "windows") -> dict | None:
     return serialize_download(candidates[0][2])
 
 
+def latest_agent_downloads() -> list[dict]:
+    root = downloads_root()
+    if not os.path.isdir(root):
+        return []
+
+    latest_by_kind: dict[tuple[str, str], tuple[tuple[int, ...], float, str]] = {}
+    for filename in os.listdir(root):
+        try:
+            full_path = safe_download_path(filename)
+        except HTTPException:
+            continue
+        if not os.path.isfile(full_path):
+            continue
+
+        serialized = serialize_download(full_path)
+        extension = os.path.splitext(filename)[1].lower()
+        key = (serialized["platform"], extension)
+        candidate = (
+            parse_version_tuple(serialized["version"]),
+            os.stat(full_path).st_mtime,
+            full_path,
+        )
+        current = latest_by_kind.get(key)
+        if current is None or (candidate[0], candidate[1]) > (current[0], current[1]):
+            latest_by_kind[key] = candidate
+
+    newest = sorted(
+        latest_by_kind.values(),
+        key=lambda item: (item[0], item[1], os.path.basename(item[2]).lower()),
+        reverse=True,
+    )
+    return [serialize_download(path) for _, _, path in newest]
+
+
 def require_system_admin(admin: AdminPrincipal):
     if admin.role != "system_admin":
         raise HTTPException(status_code=403, detail="System administrator role required")
@@ -5811,15 +5845,7 @@ def view_evidence_content(
 def list_agent_downloads(admin: AdminPrincipal = Depends(require_admin)):
     require_permission(admin, "devices:manage")
     root = downloads_root()
-    downloads: list[dict] = []
-    if os.path.isdir(root):
-        for filename in sorted(os.listdir(root)):
-            try:
-                full_path = safe_download_path(filename)
-            except HTTPException:
-                continue
-            if os.path.isfile(full_path):
-                downloads.append(serialize_download(full_path))
+    downloads = latest_agent_downloads()
 
     return {
         "count": len(downloads),

@@ -12,6 +12,7 @@ const sectionLabels = {
   accesos: "Accesos",
   incidencias: "Incidencias",
   reglas: "Reglas",
+  cuenta: "Cuenta",
 } as const;
 
 const classifications = ["productive", "neutral", "non_productive", "uncategorized"] as const;
@@ -94,7 +95,7 @@ function deliveryStatusText(status?: string) {
 }
 
 export default function SettingsPage() {
-  const { apiGet, apiPatch, apiPost, user } = useAuth();
+  const { apiGet, apiPatch, apiPost, changePassword, user } = useAuth();
   const [activeSection, setActiveSection] = useState<SectionKey>("usuarios");
   const [catalogs, setCatalogs] = useState<CatalogsResponse | null>(null);
   const [rules, setRules] = useState<ProductivityRule[]>([]);
@@ -102,6 +103,10 @@ export default function SettingsPage() {
   const [accessCodes, setAccessCodes] = useState<AccessCode[]>([]);
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [currentPanelPassword, setCurrentPanelPassword] = useState("");
+  const [newPanelPassword, setNewPanelPassword] = useState("");
+  const [confirmPanelPassword, setConfirmPanelPassword] = useState("");
+  const [changingPanelPassword, setChangingPanelPassword] = useState(false);
 
   const [employeeSearch, setEmployeeSearch] = useState("");
   const [employeeDepartmentFilter, setEmployeeDepartmentFilter] = useState("");
@@ -600,6 +605,35 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleChangePanelPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (newPanelPassword.length < 8) {
+      setStatusText("La nueva contrasena debe tener al menos 8 caracteres");
+      return;
+    }
+    if (newPanelPassword !== confirmPanelPassword) {
+      setStatusText("La confirmacion no coincide con la nueva contrasena");
+      return;
+    }
+    if (currentPanelPassword === newPanelPassword) {
+      setStatusText("La nueva contrasena debe ser diferente a la actual");
+      return;
+    }
+    setChangingPanelPassword(true);
+    setStatusText("Actualizando contrasena del panel...");
+    try {
+      await changePassword(currentPanelPassword, newPanelPassword);
+      setCurrentPanelPassword("");
+      setNewPanelPassword("");
+      setConfirmPanelPassword("");
+      setStatusText("Contrasena del panel actualizada");
+    } catch {
+      setStatusText("No se pudo cambiar la contrasena. Revisa tu contrasena actual.");
+    } finally {
+      setChangingPanelPassword(false);
+    }
+  }
+
   return (
     <AppShell
       title="Ajustes"
@@ -960,6 +994,64 @@ export default function SettingsPage() {
 
         {activeSection === "incidencias" ? (
           <IncidentsPanel active={activeSection === "incidencias"} />
+        ) : null}
+
+        {activeSection === "cuenta" ? (
+          <section className="settings-account-grid">
+            <div className="settings-account-card">
+              <div>
+                <span>Cuenta del panel</span>
+                <h3>{user?.full_name || "Usuario del panel"}</h3>
+                <p>{user?.email || "Sin correo"} · {user?.role || "rol"}</p>
+              </div>
+              <dl>
+                <div>
+                  <dt>Empresa</dt>
+                  <dd>{user?.company || "Sistema"}</dd>
+                </div>
+                <div>
+                  <dt>Ultimo cambio</dt>
+                  <dd>{user?.password_changed_at ? new Date(user.password_changed_at).toLocaleString("es-NI") : "Pendiente"}</dd>
+                </div>
+              </dl>
+            </div>
+
+            <form className="settings-form settings-password-form" onSubmit={handleChangePanelPassword}>
+              <label>Contrasena actual
+                <input
+                  type="password"
+                  value={currentPanelPassword}
+                  onChange={(event) => setCurrentPanelPassword(event.target.value)}
+                  autoComplete="current-password"
+                  required
+                />
+              </label>
+              <label>Nueva contrasena
+                <input
+                  type="password"
+                  value={newPanelPassword}
+                  onChange={(event) => setNewPanelPassword(event.target.value)}
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
+                />
+              </label>
+              <label>Confirmar nueva contrasena
+                <input
+                  type="password"
+                  value={confirmPanelPassword}
+                  onChange={(event) => setConfirmPanelPassword(event.target.value)}
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
+                />
+              </label>
+              <button className="settings-primary-action" type="submit" disabled={changingPanelPassword}>
+                {changingPanelPassword ? "Actualizando..." : "Cambiar contrasena"}
+              </button>
+              <p className="settings-note">Usa una contrasena distinta a la temporal o anterior. El cambio aplica solo para tu acceso al panel web.</p>
+            </form>
+          </section>
         ) : null}
 
         {activeSection !== "incidencias" ? <StatusLine>{statusText}</StatusLine> : null}

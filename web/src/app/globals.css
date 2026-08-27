@@ -3857,6 +3857,40 @@ tbody tr:hover {
 .settings-form button:hover {background: linear-gradient(135deg, var(--cyan), var(--cyan));
 }
 
+.settings-account-grid {display: grid;grid-template-columns: minmax(260px, 0.85fr) minmax(320px, 1.15fr);gap: 18px;
+}
+
+.settings-account-card,
+.settings-password-form {border: 1px solid var(--line);border-radius: 8px;background: var(--surface-sunken);padding: 18px;
+}
+
+.settings-account-card {display: grid;align-content: start;gap: 18px;
+}
+
+.settings-account-card span {color: var(--muted);font-size: 11px;font-weight: 800;letter-spacing: 0.1em;text-transform: uppercase;
+}
+
+.settings-account-card h3 {margin: 6px 0 4px;color: var(--ink);font-size: 20px;line-height: 1.2;
+}
+
+.settings-account-card p {margin: 0;color: var(--muted);font-size: 13px;
+}
+
+.settings-account-card dl {display: grid;gap: 10px;margin: 0;
+}
+
+.settings-account-card dl div {display: grid;gap: 4px;border: 1px solid var(--line);border-radius: 8px;background: var(--surface);padding: 11px;
+}
+
+.settings-account-card dt {color: var(--muted);font-size: 11px;font-weight: 800;letter-spacing: 0.08em;text-transform: uppercase;
+}
+
+.settings-account-card dd {margin: 0;color: var(--ink);font-size: 13px;font-weight: 750;
+}
+
+.settings-password-form {align-content: start;
+}
+
 .settings-info-panel {display: grid;gap: 8px;border: 1px solid var(--cyan-line);border-radius: 8px;background: var(--cyan-soft);padding: 16px;
 }
 
@@ -4371,6 +4405,7 @@ tbody tr:hover {
   .downloads-layout,
   .employee-metric-grid,
   .dashboard-control-panel,
+  .settings-account-grid,
   .settings-overview {grid-template-columns: 1fr;
   }
   .settings-sectionbar {align-items: stretch;flex-direction: column;

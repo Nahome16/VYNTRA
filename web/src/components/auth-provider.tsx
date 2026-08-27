@@ -23,6 +23,29 @@ const tokenKey = "vyntra.admin.token";
 const userKey = "vyntra.admin.user";
 const activeCompanyKey = "vyntra.admin.activeCompanyId";
 
+const companyScopedReadPrefixes = [
+  "/api/productivity/catalogs",
+  "/api/productivity/rules",
+  "/api/productivity/uncategorized",
+  "/api/productivity/dashboard",
+  "/api/settings/access-codes",
+  "/api/settings/restore-codes",
+  "/api/devices",
+  "/api/attendance/overview",
+  "/api/reports/operations.pdf",
+];
+
+const companyScopedWritePaths = new Set([
+  "/api/settings/employees",
+  "/api/settings/departments",
+  "/api/settings/access-codes",
+  "/api/settings/restore-codes",
+  "/api/productivity/rules",
+  "/api/productivity/reclassify",
+  "/api/devices",
+  "/api/attendance/shifts",
+]);
+
 class ApiError extends Error {
   status: number;
 
@@ -44,6 +67,36 @@ async function requestJson<T>(path: string, token: string, init: RequestInit = {
   });
   if (!response.ok) throw new ApiError(response.status);
   return response.json();
+}
+
+function hasCompanyId(path: string) {
+  return /(?:\?|&)company_id=/.test(path);
+}
+
+function shouldScopeRead(path: string) {
+  return companyScopedReadPrefixes.some((prefix) => path.startsWith(prefix));
+}
+
+function shouldScopeWrite(path: string) {
+  return companyScopedWritePaths.has(path);
+}
+
+function appendCompanyId(path: string, companyId: string) {
+  if (!companyId || hasCompanyId(path)) return path;
+  const [base, hash = ""] = path.split("#");
+  const separator = base.includes("?") ? "&" : "?";
+  return `${base}${separator}company_id=${encodeURIComponent(companyId)}${hash ? `#${hash}` : ""}`;
+}
+
+function scopedReadPath(path: string, user: AdminUser | null, activeCompanyId: string) {
+  if (user?.role !== "system_admin" || !activeCompanyId || !shouldScopeRead(path)) return path;
+  return appendCompanyId(path, activeCompanyId);
+}
+
+function scopedWriteBody(path: string, body: unknown, user: AdminUser | null, activeCompanyId: string) {
+  if (user?.role !== "system_admin" || !activeCompanyId || !shouldScopeWrite(path)) return body;
+  if (!body || Array.isArray(body) || typeof body !== "object") return body;
+  return { ...(body as Record<string, unknown>), company_id: (body as Record<string, unknown>).company_id || activeCompanyId };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -162,7 +215,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const requestAuthorized = useCallback(
     async <T,>(path: string, init: RequestInit = {}) => {
       try {
-        return await requestJson<T>(path, token, init);
+        return await requestJson<T>(scopedReadPath(path, user, activeCompanyId), token, init);
       } catch (error) {
         if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
           logout();
@@ -170,7 +223,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw error;
       }
     },
-    [logout, token],
+    [activeCompanyId, logout, token, user],
   );
 
   const value = useMemo<AuthContextValue>(
@@ -187,7 +240,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       apiPost: <T,>(path: string, body: unknown) =>
         requestAuthorized<T>(path, {
           method: "POST",
-          body: JSON.stringify(body),
+          body: JSON.stringify(scopedWriteBody(path, body, user, activeCompanyId)),
         }),
       apiPatch: <T,>(path: string, body: unknown) =>
         requestAuthorized<T>(path, {

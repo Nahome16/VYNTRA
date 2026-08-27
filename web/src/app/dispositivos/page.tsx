@@ -50,6 +50,10 @@ export default function DevicesPage() {
   const onlineCount = useMemo(() => devices.filter((device) => device.status === "online").length, [devices]);
   const revokedCount = useMemo(() => devices.filter((device) => device.status === "revoked").length, [devices]);
   const assignedCount = useMemo(() => devices.filter((device) => device.employee_id).length, [devices]);
+  const activeCompanyName = useMemo(
+    () => companies.find((company) => company.id === companyId)?.name || devices[0]?.company || user?.company || "Sistema",
+    [companies, companyId, devices, user?.company],
+  );
 
   function loadDeviceForEdit(device: DeviceRecord | null) {
     if (!device) {
@@ -245,7 +249,7 @@ export default function DevicesPage() {
   return (
     <AppShell
       title="Dispositivos"
-      description={`${user?.company || "Sistema"} · agentes instalados y tokens`}
+      description={`${activeCompanyName} · agentes instalados y tokens`}
       actions={<RefreshButton loading={loading} onClick={() => void loadDevices()} />}
     >
       <section className="settings-page devices-page">

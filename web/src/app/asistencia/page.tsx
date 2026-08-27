@@ -542,7 +542,7 @@ export default function AttendancePage() {
         <div className="settings-board-header">
           <div>
             <h2>{t("Asistencia")}</h2>
-            <p>{user?.company || t("Empresa")} - {t("control de jornada, ausencias, break y lunch")}</p>
+            <p>{overview?.company.name || user?.company || t("Empresa")} - {t("control de jornada, ausencias, break y lunch")}</p>
           </div>
           <div className="settings-board-tabs" role="tablist" aria-label="Secciones de asistencia">
           {(Object.keys(viewLabels) as AttendanceView[]).map((key) => (

@@ -227,6 +227,7 @@ export default function SettingsPage() {
   }
 
   const departments = useMemo(() => catalogs?.departments || [], [catalogs]);
+  const activeCompanyName = catalogs?.company.name || user?.company || "Empresa";
   const employees = useMemo(() => (catalogs?.employees || []).filter((employee) => employee.status !== "archived"), [catalogs]);
   const departmentMap = useMemo(
     () => new Map(departments.map((department) => [department.id, department.name])),
@@ -666,14 +667,14 @@ export default function SettingsPage() {
   return (
     <AppShell
       title="Ajustes"
-      description={`${user?.company || "Empresa"} - usuarios, accesos, incidencias y reglas por empresa.`}
+      description={`${activeCompanyName} - usuarios, accesos, incidencias y reglas por empresa.`}
       actions={<RefreshButton loading={loading} onClick={loadSettings} />}
     >
       <section className="settings-board">
         <div className="settings-board-header">
           <div>
             <h2>Ajustes</h2>
-            <p>{user?.company || "Empresa"} - usuarios, accesos, incidencias y reglas</p>
+            <p>{activeCompanyName} - usuarios, accesos, incidencias y reglas</p>
           </div>
           <div className="settings-board-tabs" role="tablist" aria-label="Secciones de ajustes">
             {(Object.keys(sectionLabels) as SectionKey[]).map((key) => (
@@ -1035,8 +1036,8 @@ export default function SettingsPage() {
               </div>
               <dl>
                 <div>
-                  <dt>Empresa</dt>
-                  <dd>{user?.company || "Sistema"}</dd>
+                  <dt>Empresa activa</dt>
+                  <dd>{activeCompanyName}</dd>
                 </div>
                 <div>
                   <dt>Ultimo cambio</dt>

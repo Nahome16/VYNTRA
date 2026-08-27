@@ -63,7 +63,6 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "rules:manage",
         "access_codes:read",
         "access_codes:manage",
-        "audit:read",
     },
     "admin": {
         "dashboard:read",
@@ -80,7 +79,6 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "rules:manage",
         "access_codes:read",
         "access_codes:manage",
-        "audit:read",
     },
     "rrhh": {
         "dashboard:read",

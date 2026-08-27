@@ -33,8 +33,8 @@ export default function AuditPage() {
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
-  const canReadAudit = Boolean(user?.permissions?.includes("audit:read"));
   const isSystemAdmin = user?.role === "system_admin";
+  const canReadAudit = isSystemAdmin && Boolean(user?.permissions?.includes("audit:read"));
   const actorsCount = useMemo(() => new Set(logs.map((log) => log.actor_email || log.actor).filter(Boolean)).size, [logs]);
   const actionsCount = useMemo(() => new Set(logs.map((log) => log.action).filter(Boolean)).size, [logs]);
   const companiesCount = useMemo(() => new Set(logs.map((log) => log.company || log.company_id).filter(Boolean)).size, [logs]);
@@ -121,11 +121,11 @@ export default function AuditPage() {
     }
   }
 
-  if (!canReadAudit) {
+  if (!isSystemAdmin) {
     return (
       <AppShell title="Auditoria" description="Trazabilidad de acciones sensibles">
         <Panel title="Acceso restringido">
-          <EmptyState>Tu rol no tiene permiso para consultar auditoria.</EmptyState>
+          <EmptyState>Esta vista solo esta disponible para el administrador del sistema.</EmptyState>
         </Panel>
       </AppShell>
     );

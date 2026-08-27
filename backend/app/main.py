@@ -3102,11 +3102,9 @@ def list_audit_logs(
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    require_permission(admin, "audit:read")
+    require_system_admin(admin)
     scoped_company_id = clean_text(company_id, 36) or None
-    if admin.role != "system_admin":
-        scoped_company_id = admin.company_id
-    elif scoped_company_id:
+    if scoped_company_id:
         resolve_company(db, scoped_company_id)
 
     query = select(AuditLog)

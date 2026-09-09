@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>VYNTRA Browser</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="mark">V</div>
+        <div>
+          <strong>VYNTRA Browser</strong>
+          <span id="tracking">En espera</span>
+        </div>
+      </header>
+
+      <section class="status">
+        <div>
+          <span>Estado</span>
+          <strong id="state">Sin estacion</strong>
+        </div>
+        <div>
+          <span>Ultima sincronizacion</span>
+          <strong id="lastSync">--</strong>
+        </div>
+      </section>
+
+      <button id="sampleNow" type="button">Sincronizar ahora</button>
+      <button id="capture" type="button">Capturar pestana activa</button>
+      <p id="message"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

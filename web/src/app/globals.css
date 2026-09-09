@@ -5059,8 +5059,17 @@ tbody tr:hover {
   padding: 24px;
 }
 
+.station-public-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 520px) minmax(320px, 430px);
+  gap: 18px;
+  width: min(100%, 980px);
+  align-items: start;
+}
+
 .station-login-panel,
-.station-consent-panel {
+.station-consent-panel,
+.station-extension-card {
   width: min(100%, 520px);
   border: 1px solid #e2e8f3;
   border-radius: 12px;
@@ -5071,6 +5080,54 @@ tbody tr:hover {
 
 .station-consent-panel {
   width: min(100%, 760px);
+}
+
+.station-extension-card {
+  display: grid;
+  gap: 12px;
+}
+
+.station-extension-card.compact {
+  width: 100%;
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.07);
+}
+
+.station-extension-card p,
+.station-extension-card ol,
+.station-extension-card small {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.station-extension-card ol {
+  display: grid;
+  gap: 7px;
+  padding-left: 20px;
+}
+
+.station-extension-card li::marker {
+  color: #2563eb;
+  font-weight: 900;
+}
+
+.station-download-button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #ffffff;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.station-download-button:hover {
+  background: #1d4ed8;
 }
 
 .station-login-brand {
@@ -5386,6 +5443,7 @@ tbody tr:hover {
 .station-logo-card,
 .station-status-card,
 .station-support-card,
+.station-side-panel .station-extension-card,
 .station-incident-drawer,
 .station-floating-status {
   border: 1px solid #e2e8f3;
@@ -5762,6 +5820,10 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 
+  .station-public-layout {
+    grid-template-columns: 1fr;
+  }
+
   .station-topbar {
     align-items: flex-start;
     flex-direction: column;
@@ -5783,7 +5845,8 @@ tbody tr:hover {
   }
 
   .station-login-panel,
-  .station-consent-panel {
+  .station-consent-panel,
+  .station-extension-card {
     align-self: center;
     padding: 18px;
   }

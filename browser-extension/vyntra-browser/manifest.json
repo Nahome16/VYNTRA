@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "VYNTRA Browser",
+  "description": "Extension opcional para agregar actividad del navegador a la estacion de marcaje web VYNTRA.",
+  "version": "0.1.0",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "VYNTRA Browser"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://vyntralab.tech/estacion*",
+        "https://www.vyntralab.tech/estacion*",
+        "http://localhost:3000/estacion*",
+        "http://localhost:3001/estacion*"
+      ],
+      "js": ["content-script.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "host_permissions": [
+    "https://vyntralab.tech/*",
+    "https://www.vyntralab.tech/*",
+    "http://localhost:3000/*",
+    "http://localhost:3001/*"
+  ],
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "idle",
+    "storage",
+    "tabs"
+  ]
+}

@@ -7,6 +7,7 @@ const sessionKey = "vyntra.station.session";
 const stateKey = "vyntra.station.state";
 const consentPrefix = "vyntra.station.consent.";
 const queueKey = "vyntra.station.queue";
+const extensionDownloadHref = "/extensions/vyntra-browser-extension.zip";
 
 type StationStatus = "FUERA" | "TRABAJANDO" | "BREAK" | "LUNCH" | "TERMINADO";
 type OvertimeStatus = "SIN_HORAS_EXTRA" | "ACTIVA" | "FINALIZADA";
@@ -54,6 +55,13 @@ type QueuedEvent = {
   tipo: string;
   created_at: string;
   payload: Record<string, unknown>;
+};
+
+type ExtensionStatus = {
+  available: boolean;
+  tracking: boolean;
+  lastSync: string | null;
+  lastError: string | null;
 };
 
 const emptyState: StationState = {
@@ -167,6 +175,29 @@ async function flushQueue(token: string) {
   saveJson(queueKey, []);
 }
 
+function ExtensionDownloadCard({ compact = false }: { compact?: boolean }) {
+  return (
+    <section className={compact ? "station-extension-card compact" : "station-extension-card"}>
+      <div className="station-card-title">
+        <h2>Extension VYNTRA Browser</h2>
+        <span>Opcional</span>
+      </div>
+      <p>Agrega actividad del navegador a tu jornada: pestana activa, dominio, titulo, foco, inactividad y captura manual de pestana.</p>
+      <a className="station-download-button" href={extensionDownloadHref} download>
+        Descargar extension
+      </a>
+      <ol>
+        <li>Descarga y descomprime el archivo.</li>
+        <li>Abre Chrome o Edge y entra a la pagina de extensiones.</li>
+        <li>Activa el modo de desarrollador.</li>
+        <li>Elige cargar extension sin empaquetar y selecciona la carpeta descargada.</li>
+        <li>Vuelve a esta estacion e inicia sesion.</li>
+      </ol>
+      <small>La extension solo se conecta cuando esta estacion tiene sesion activa y consentimiento aceptado.</small>
+    </section>
+  );
+}
+
 export default function StationPage() {
   const [session, setSession] = useState<StationSession | null>(null);
   const [stationState, setStationState] = useState<StationState>(emptyState);
@@ -185,6 +216,12 @@ export default function StationPage() {
   const [accessCode, setAccessCode] = useState("");
   const [overtimeRequest, setOvertimeRequest] = useState({ exitTime: "", reason: "" });
   const [isOnline, setIsOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
+  const [extensionStatus, setExtensionStatus] = useState<ExtensionStatus>({
+    available: false,
+    tracking: false,
+    lastSync: null,
+    lastError: null,
+  });
   const [, setTicks] = useState(0);
   const activityRef = useRef({ clicks: 0, focusChanges: 0, lastInteraction: Date.now() });
 
@@ -248,15 +285,39 @@ export default function StationPage() {
   }, []);
 
   useEffect(() => {
+    const onExtensionMessage = (event: MessageEvent) => {
+      if (event.source !== window || event.origin !== window.location.origin) return;
+      const data = event.data as Partial<ExtensionStatus> & { type?: string };
+      if (data?.type !== "VYNTRA_EXTENSION_STATUS") return;
+      setExtensionStatus({
+        available: true,
+        tracking: Boolean(data.tracking),
+        lastSync: typeof data.lastSync === "string" ? data.lastSync : null,
+        lastError: typeof data.lastError === "string" ? data.lastError : null,
+      });
+    };
+    window.addEventListener("message", onExtensionMessage);
+    window.postMessage({ type: "VYNTRA_STATION_PING" }, window.location.origin);
+    return () => window.removeEventListener("message", onExtensionMessage);
+  }, []);
+
+  useEffect(() => {
     if (!session?.token) return;
     const timer = window.setInterval(() => {
       if (shiftActive) void sendEvent("activity_snapshot", stationState, false);
       void flushQueue(session.token).catch(() => undefined);
+      syncBrowserExtension();
     }, 30000);
     return () => window.clearInterval(timer);
     // The timer intentionally samples the current station state every time this effect is renewed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.token, shiftActive, stationState]);
+
+  useEffect(() => {
+    syncBrowserExtension();
+    // The extension receives a fresh snapshot every time the session, consent or station state changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.token, consentAccepted, stationState, needsPasswordChange]);
 
   function webTelemetry() {
     const idle = Math.floor((Date.now() - activityRef.current.lastInteraction) / 1000);
@@ -304,6 +365,31 @@ export default function StationPage() {
       web_station: true,
       timestamp: nowIso(),
     };
+  }
+
+  function syncBrowserExtension() {
+    if (!ready) return;
+    if (!session || needsPasswordChange || !consentAccepted) {
+      window.postMessage({ type: "VYNTRA_STATION_CLEAR" }, window.location.origin);
+      return;
+    }
+    window.postMessage({
+      type: "VYNTRA_STATION_SYNC",
+      apiBase: window.location.origin,
+      version: STATION_VERSION,
+      session: {
+        email: session.email,
+        token: session.token,
+        companyId: session.companyId,
+        employee: session.employee,
+        device: session.device,
+      },
+      state: stationState,
+      snapshot: snapshot(stationState),
+      shiftActive,
+      consentAccepted,
+      syncedAt: nowIso(),
+    }, window.location.origin);
   }
 
   async function sendEvent(type: string, nextState: StationState, showStatus = true, extra: Record<string, unknown> = {}) {
@@ -568,6 +654,7 @@ export default function StationPage() {
 
   function logout() {
     window.localStorage.removeItem(sessionKey);
+    window.postMessage({ type: "VYNTRA_STATION_CLEAR" }, window.location.origin);
     setSession(null);
     setStatusText("Sesion cerrada");
   }
@@ -579,43 +666,46 @@ export default function StationPage() {
   if (!session) {
     return (
       <main className="station-public-shell">
-        <section className="station-login-panel" aria-labelledby="station-login-title">
-          <div className="station-login-brand">
-            <div className="station-brand-mark">V</div>
-            <div>
-              <span>VYNTRA</span>
-              <h1 id="station-login-title">Estacion de marcaje</h1>
+        <div className="station-public-layout">
+          <section className="station-login-panel" aria-labelledby="station-login-title">
+            <div className="station-login-brand">
+              <div className="station-brand-mark">V</div>
+              <div>
+                <span>VYNTRA</span>
+                <h1 id="station-login-title">Estacion de marcaje</h1>
+              </div>
             </div>
-          </div>
-          <form className="station-form" onSubmit={login}>
-            <label>Correo laboral
-              <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} autoComplete="email" required />
-            </label>
-            <label>Contrasena
-              <input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} autoComplete="current-password" required />
-            </label>
-            <button type="submit" className="station-primary" disabled={busy}>{busy ? "Verificando..." : "Entrar"}</button>
-          </form>
-          <button type="button" className="station-link-button" onClick={() => { setResetOpen(true); setResetForm((form) => ({ ...form, email: loginEmail })); }}>
-            Recuperar contrasena
-          </button>
-          {resetOpen ? (
-            <form className="station-reset-box" onSubmit={confirmReset}>
-              <label>Correo
-                <input type="email" value={resetForm.email} onChange={(event) => setResetForm({ ...resetForm, email: event.target.value })} required />
+            <form className="station-form" onSubmit={login}>
+              <label>Correo laboral
+                <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} autoComplete="email" required />
               </label>
-              <button type="button" className="station-secondary" onClick={requestReset} disabled={busy}>Enviar codigo</button>
-              <label>Codigo
-                <input value={resetForm.code} onChange={(event) => setResetForm({ ...resetForm, code: event.target.value })} required />
+              <label>Contrasena
+                <input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} autoComplete="current-password" required />
               </label>
-              <label>Nueva contrasena
-                <input type="password" value={resetForm.password} onChange={(event) => setResetForm({ ...resetForm, password: event.target.value })} required />
-              </label>
-              <button type="submit" className="station-primary" disabled={busy}>Restablecer</button>
+              <button type="submit" className="station-primary" disabled={busy}>{busy ? "Verificando..." : "Entrar"}</button>
             </form>
-          ) : null}
-          {statusText ? <p className="station-status-line">{statusText}</p> : null}
-        </section>
+            <button type="button" className="station-link-button" onClick={() => { setResetOpen(true); setResetForm((form) => ({ ...form, email: loginEmail })); }}>
+              Recuperar contrasena
+            </button>
+            {resetOpen ? (
+              <form className="station-reset-box" onSubmit={confirmReset}>
+                <label>Correo
+                  <input type="email" value={resetForm.email} onChange={(event) => setResetForm({ ...resetForm, email: event.target.value })} required />
+                </label>
+                <button type="button" className="station-secondary" onClick={requestReset} disabled={busy}>Enviar codigo</button>
+                <label>Codigo
+                  <input value={resetForm.code} onChange={(event) => setResetForm({ ...resetForm, code: event.target.value })} required />
+                </label>
+                <label>Nueva contrasena
+                  <input type="password" value={resetForm.password} onChange={(event) => setResetForm({ ...resetForm, password: event.target.value })} required />
+                </label>
+                <button type="submit" className="station-primary" disabled={busy}>Restablecer</button>
+              </form>
+            ) : null}
+            {statusText ? <p className="station-status-line">{statusText}</p> : null}
+          </section>
+          <ExtensionDownloadCard />
+        </div>
       </main>
     );
   }
@@ -883,6 +973,13 @@ export default function StationPage() {
                   <small>{activityRef.current.clicks} clics</small>
                 </div>
               </article>
+              <article>
+                <span>B</span>
+                <div>
+                  <strong>{extensionStatus.available ? "Extension conectada" : "Sin extension"}</strong>
+                  <small>{extensionStatus.available ? (extensionStatus.tracking ? "Navegador activo" : "En espera") : "Web solamente"}</small>
+                </div>
+              </article>
             </div>
             <button type="button" className="station-primary wide" onClick={() => setIncidentOpen((value) => !value)}>Abrir incidencias</button>
 
@@ -909,6 +1006,7 @@ export default function StationPage() {
               <button type="submit" className="station-secondary wide" disabled={!shiftActive || !overtimeRequest.reason.trim()}>Solicitar horas extra</button>
             </form>
           </section>
+          <ExtensionDownloadCard compact />
         </aside>
       </section>
 

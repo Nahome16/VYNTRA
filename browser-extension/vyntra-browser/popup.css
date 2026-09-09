@@ -1,0 +1,104 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 320px;
+  margin: 0;
+  background: #f4f7fc;
+  color: #0f172a;
+  font-family: "Segoe UI", Arial, sans-serif;
+}
+
+main {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 10px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 20px;
+  font-weight: 900;
+}
+
+header strong,
+header span {
+  display: block;
+}
+
+header strong {
+  font-size: 16px;
+}
+
+header span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.status {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e2e8f3;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.status div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.status span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.status strong {
+  color: #0f172a;
+  font-size: 12px;
+  text-align: right;
+}
+
+button {
+  min-height: 42px;
+  border: 1px solid #2563eb;
+  border-radius: 8px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+button + button {
+  background: #ffffff;
+  color: #2563eb;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+#message {
+  min-height: 18px;
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+}

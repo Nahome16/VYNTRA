@@ -7,7 +7,22 @@ const sessionKey = "vyntra.station.session";
 const stateKey = "vyntra.station.state";
 const consentPrefix = "vyntra.station.consent.";
 const queueKey = "vyntra.station.queue";
+const timeZoneKey = "vyntra.station.timezone";
 const extensionDownloadHref = "/extensions/vyntra-browser-extension.zip";
+
+const stationTimeZones = [
+  "America/Managua",
+  "America/Costa_Rica",
+  "America/El_Salvador",
+  "America/Guatemala",
+  "America/Tegucigalpa",
+  "America/Panama",
+  "America/Bogota",
+  "America/Mexico_City",
+  "America/New_York",
+  "America/Los_Angeles",
+  "UTC",
+];
 
 type StationStatus = "FUERA" | "TRABAJANDO" | "BREAK" | "LUNCH" | "TERMINADO";
 type OvertimeStatus = "SIN_HORAS_EXTRA" | "ACTIVA" | "FINALIZADA";
@@ -35,6 +50,8 @@ type StationSession = {
 
 type StationState = {
   status: StationStatus;
+  workDate: string | null;
+  timeZone: string;
   startedAt: string | null;
   endedAt: string | null;
   phaseStartedAt: number | null;
@@ -64,8 +81,12 @@ type ExtensionStatus = {
   lastError: string | null;
 };
 
+class StationEventRejected extends Error {}
+
 const emptyState: StationState = {
   status: "FUERA",
+  workDate: null,
+  timeZone: "America/Managua",
   startedAt: null,
   endedAt: null,
   phaseStartedAt: null,
@@ -104,8 +125,56 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+function defaultTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "America/Managua";
+  } catch {
+    return "America/Managua";
+  }
+}
+
+function zonedDateIso(timeZone: string, value: Date | string | number = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+    const year = parts.find((part) => part.type === "year")?.value || "0000";
+    const month = parts.find((part) => part.type === "month")?.value || "01";
+    const day = parts.find((part) => part.type === "day")?.value || "01";
+    return `${year}-${month}-${day}`;
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+function formatZonedTime(value: string | number | Date, timeZone: string, withSeconds = false) {
+  try {
+    return new Intl.DateTimeFormat("es-NI", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: withSeconds ? "2-digit" : undefined,
+      hour12: true,
+    }).format(new Date(value));
+  } catch {
+    return new Date(value).toLocaleTimeString("es-NI");
+  }
+}
+
+function normalizeState(state: Partial<StationState> | null, timeZone: string): StationState {
+  if (!state) return { ...emptyState, timeZone };
+  const startedAt = state.startedAt || null;
+  const endedAt = state.endedAt || null;
+  return {
+    ...emptyState,
+    ...state,
+    timeZone: state.timeZone || timeZone,
+    workDate: state.workDate || (startedAt ? zonedDateIso(timeZone, startedAt) : endedAt ? zonedDateIso(timeZone, endedAt) : null),
+  };
 }
 
 function secondsSince(ts: number | null) {
@@ -171,7 +240,8 @@ function queueEvents(events: QueuedEvent[]) {
 async function flushQueue(token: string) {
   const events = loadJson<QueuedEvent[]>(queueKey) || [];
   if (!events.length) return;
-  await postStation(token, "/api/agent/events", { events });
+  const response = await postStation<{ ok?: boolean; rejected?: { error?: string }[] }>(token, "/api/agent/events", { events });
+  if (response.ok === false) throw new Error(response.rejected?.[0]?.error || "Evento rechazado");
   saveJson(queueKey, []);
 }
 
@@ -180,9 +250,9 @@ function ExtensionDownloadCard({ compact = false }: { compact?: boolean }) {
     <section className={compact ? "station-extension-card compact" : "station-extension-card"}>
       <div className="station-card-title">
         <h2>Extension VYNTRA Browser</h2>
-        <span>Opcional</span>
+        <span>Obligatoria</span>
       </div>
-      <p>Agrega actividad del navegador a tu jornada: pestana activa, dominio, titulo, foco, inactividad y captura manual de pestana.</p>
+      <p>Es requerida para marcar jornada. Agrega actividad del navegador: pestana activa, dominio, titulo, foco, inactividad y captura manual de pestana.</p>
       <a className="station-download-button" href={extensionDownloadHref} download>
         Descargar extension
       </a>
@@ -193,8 +263,29 @@ function ExtensionDownloadCard({ compact = false }: { compact?: boolean }) {
         <li>Elige cargar extension sin empaquetar y selecciona la carpeta descargada.</li>
         <li>Vuelve a esta estacion e inicia sesion.</li>
       </ol>
-      <small>La extension solo se conecta cuando esta estacion tiene sesion activa y consentimiento aceptado.</small>
+      <small>La estacion no permite iniciar, pausar, reabrir ni finalizar jornada si la extension no esta conectada.</small>
     </section>
+  );
+}
+
+function TimeZoneSelect({
+  value,
+  onChange,
+  compact = false,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  compact?: boolean;
+}) {
+  const options = stationTimeZones.includes(value) ? stationTimeZones : [value, ...stationTimeZones];
+  return (
+    <label className={compact ? "station-timezone compact" : "station-timezone"}>Zona horaria
+      <select value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((timeZone) => (
+          <option value={timeZone} key={timeZone}>{timeZone}</option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -215,6 +306,7 @@ export default function StationPage() {
   const [incident, setIncident] = useState({ type: "correccion_marcaje", description: "" });
   const [accessCode, setAccessCode] = useState("");
   const [overtimeRequest, setOvertimeRequest] = useState({ exitTime: "", reason: "" });
+  const [stationTimeZone, setStationTimeZone] = useState("America/Managua");
   const [isOnline, setIsOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
   const [extensionStatus, setExtensionStatus] = useState<ExtensionStatus>({
     available: false,
@@ -226,6 +318,10 @@ export default function StationPage() {
   const activityRef = useRef({ clicks: 0, focusChanges: 0, lastInteraction: Date.now() });
 
   const currentTotals = totals(stationState);
+  const currentWorkDate = zonedDateIso(stationTimeZone);
+  const closedWorkDate = stationState.workDate || (stationState.endedAt ? zonedDateIso(stationTimeZone, stationState.endedAt) : null);
+  const closedToday = stationState.status === "TERMINADO" && closedWorkDate === currentWorkDate;
+  const extensionConnected = extensionStatus.available;
   const canAcceptConsent = consentChecks.every(Boolean);
   const needsPasswordChange = Boolean(session?.credential.password_change_required);
   const consentKey = session ? `${consentPrefix}${session.email}` : "";
@@ -233,14 +329,16 @@ export default function StationPage() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
+      const savedTimeZone = window.localStorage.getItem(timeZoneKey) || defaultTimeZone();
       const savedSession = loadJson<StationSession>(sessionKey);
-      const savedState = loadJson<StationState>(stateKey);
+      const savedState = normalizeState(loadJson<Partial<StationState>>(stateKey), savedTimeZone);
+      setStationTimeZone(savedTimeZone);
       if (savedSession) {
         setSession(savedSession);
         setLoginEmail(savedSession.email);
         setConsentAccepted(window.localStorage.getItem(`${consentPrefix}${savedSession.email}`) === "accepted");
       }
-      if (savedState) setStationState(savedState);
+      setStationState(savedState);
       setReady(true);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -248,8 +346,8 @@ export default function StationPage() {
 
   useEffect(() => {
     if (!ready) return;
-    saveJson(stateKey, stationState);
-  }, [ready, stationState]);
+    saveJson(stateKey, { ...stationState, timeZone: stationTimeZone });
+  }, [ready, stationState, stationTimeZone]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setTicks((value) => value + 1), 1000);
@@ -348,7 +446,8 @@ export default function StationPage() {
       estado: state.status,
       empleado: session?.employee.full_name || "",
       equipo: session?.device.name || "Estacion web",
-      fecha: todayIso(),
+      fecha: state.workDate || currentWorkDate,
+      zona_horaria: stationTimeZone,
       inicio_jornada: state.startedAt,
       fin_jornada: state.endedAt,
       seg_trabajado: current.work,
@@ -392,6 +491,18 @@ export default function StationPage() {
     }, window.location.origin);
   }
 
+  function updateTimeZone(nextTimeZone: string) {
+    setStationTimeZone(nextTimeZone);
+    window.localStorage.setItem(timeZoneKey, nextTimeZone);
+    setStationState((current) => ({ ...current, timeZone: nextTimeZone }));
+  }
+
+  function requireExtension() {
+    if (extensionConnected) return true;
+    setStatusText("Instala y conecta la extension VYNTRA Browser para marcar jornada.");
+    return false;
+  }
+
   async function sendEvent(type: string, nextState: StationState, showStatus = true, extra: Record<string, unknown> = {}) {
     if (!session?.token) return;
     const event: QueuedEvent = {
@@ -401,12 +512,13 @@ export default function StationPage() {
       payload: { ...snapshot(nextState), ...extra },
     };
     try {
-      await postStation(session.token, "/api/agent/events", { events: [event] });
+      const response = await postStation<{ ok?: boolean; rejected?: { error?: string }[] }>(session.token, "/api/agent/events", { events: [event] });
+      if (response.ok === false) throw new StationEventRejected(response.rejected?.[0]?.error || "Evento rechazado");
       await flushQueue(session.token);
       if (showStatus) setStatusText("Sincronizado");
-    } catch {
-      queueEvents([event]);
-      if (showStatus) setStatusText("Sin conexion. El evento quedo pendiente.");
+    } catch (error) {
+      if (!(error instanceof StationEventRejected)) queueEvents([event]);
+      if (showStatus) setStatusText(error instanceof Error ? error.message : "Sin conexion. El evento quedo pendiente.");
     }
   }
 
@@ -532,15 +644,23 @@ export default function StationPage() {
   }
 
   async function transition(type: string, makeState: (state: StationState) => StationState) {
+    if (!requireExtension()) return;
     const next = makeState(stationState);
     setStationState(next);
     await sendEvent(type, next);
   }
 
   async function startShift() {
+    if (!requireExtension()) return;
+    if (closedToday) {
+      setStatusText("Ya activaste y cerraste la jornada de hoy. Ingresa codigo de reactivacion para reabrirla.");
+      return;
+    }
     await transition("shift_started", () => ({
       ...emptyState,
       status: "TRABAJANDO",
+      workDate: currentWorkDate,
+      timeZone: stationTimeZone,
       startedAt: nowIso(),
       phaseStartedAt: Date.now(),
     }));
@@ -552,6 +672,8 @@ export default function StationPage() {
       return {
         ...closed,
         status: "TERMINADO",
+        workDate: closed.workDate || currentWorkDate,
+        timeZone: stationTimeZone,
         endedAt: nowIso(),
         overtimeStatus: closed.overtimeStatus === "ACTIVA" ? "FINALIZADA" : closed.overtimeStatus,
         overtimeStartedAt: null,
@@ -577,6 +699,7 @@ export default function StationPage() {
 
   async function activateOvertime() {
     if (!session || !accessCode.trim()) return;
+    if (!requireExtension()) return;
     setBusy(true);
     try {
       const response = await postStation<{
@@ -603,6 +726,7 @@ export default function StationPage() {
 
   async function restoreShift() {
     if (!session || !accessCode.trim() || stationState.status !== "TERMINADO") return;
+    if (!requireExtension()) return;
     setBusy(true);
     try {
       await postStation(session.token, "/api/station/access-codes/consume", {
@@ -612,6 +736,8 @@ export default function StationPage() {
       const next = {
         ...stationState,
         status: "TRABAJANDO" as StationStatus,
+        workDate: stationState.workDate || currentWorkDate,
+        timeZone: stationTimeZone,
         endedAt: null,
         phaseStartedAt: Date.now(),
       };
@@ -629,7 +755,8 @@ export default function StationPage() {
     event.preventDefault();
     if (!overtimeRequest.reason.trim()) return;
     await sendEvent("overtime_requested", stationState, true, {
-      dia: todayIso(),
+      dia: stationState.workDate || currentWorkDate,
+      zona_horaria: stationTimeZone,
       hora_salida: overtimeRequest.exitTime,
       motivo: overtimeRequest.reason.trim(),
       estado: "pendiente_autorizacion",
@@ -676,6 +803,7 @@ export default function StationPage() {
               </div>
             </div>
             <form className="station-form" onSubmit={login}>
+              <TimeZoneSelect value={stationTimeZone} onChange={updateTimeZone} />
               <label>Correo laboral
                 <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} autoComplete="email" required />
               </label>
@@ -753,14 +881,14 @@ export default function StationPage() {
           </div>
           <div className="station-consent-copy">
             <p>Esta estacion registra tu jornada laboral, pausas, almuerzo, horas extra, incidencias y actividad dentro de esta pagina mientras tu jornada este activa.</p>
-            <p>La version web no captura aplicaciones externas, otros monitores, teclas, camara, microfono ni archivos personales. Si cierras el navegador, el marcaje se detiene hasta que vuelvas a entrar.</p>
+            <p>La extension VYNTRA Browser es requerida para marcar. Registra actividad autorizada del navegador, no aplicaciones externas, teclas globales, camara, microfono ni archivos personales.</p>
           </div>
           <div className="station-check-list">
             {[
               "Lei y comprendi el aviso de monitoreo web.",
               "Entiendo que esta estacion registra marcajes y eventos de asistencia.",
-              "Entiendo que la actividad registrada se limita a esta pagina web.",
-              "Autorizo el uso de la estacion web durante mi jornada laboral.",
+              "Entiendo que debo mantener conectada la extension VYNTRA Browser para marcar.",
+              "Autorizo el uso de la estacion web y la extension durante mi jornada laboral.",
             ].map((label, index) => (
               <label key={label}>
                 <input
@@ -783,11 +911,13 @@ export default function StationPage() {
   }
 
   const dailyProgress = Math.min(100, Math.max(0, (currentTotals.work / (8 * 60 * 60)) * 100));
+  const canMark = extensionConnected && !busy;
+  const canStartNewShift = stationState.status === "FUERA" || (stationState.status === "TERMINADO" && !closedToday);
   const statusCopy: Record<StationStatus, { label: string; capture: string; detail: string }> = {
     FUERA: {
       label: "Fuera de jornada",
-      capture: "Registro detenido",
-      detail: "Selecciona iniciar jornada para comenzar el registro web.",
+      capture: extensionConnected ? "Registro detenido" : "Extension requerida",
+      detail: extensionConnected ? "Selecciona iniciar jornada para comenzar el registro web." : "Instala y conecta VYNTRA Browser para habilitar el marcaje.",
     },
     TRABAJANDO: {
       label: "Jornada activa",
@@ -807,14 +937,14 @@ export default function StationPage() {
     TERMINADO: {
       label: "Jornada finalizada",
       capture: "Registro detenido",
-      detail: "La jornada quedo cerrada.",
+      detail: closedToday ? "La jornada de hoy ya fue cerrada. Solo puede reabrirse con codigo." : "Puedes iniciar una nueva jornada laboral.",
     },
   };
   const stateItems = [
     {
       number: "1",
       label: "Inicio de jornada",
-      detail: stationState.startedAt ? new Date(stationState.startedAt).toLocaleTimeString("es-NI", { hour: "2-digit", minute: "2-digit" }) : "--:--",
+      detail: stationState.startedAt ? formatZonedTime(stationState.startedAt, stationTimeZone) : "--:--",
       active: Boolean(stationState.startedAt),
     },
     {
@@ -838,27 +968,28 @@ export default function StationPage() {
     {
       number: "5",
       label: "Fin de jornada",
-      detail: stationState.endedAt ? new Date(stationState.endedAt).toLocaleTimeString("es-NI", { hour: "2-digit", minute: "2-digit" }) : "--:--",
+      detail: stationState.endedAt ? formatZonedTime(stationState.endedAt, stationTimeZone) : "--:--",
       active: stationState.status === "TERMINADO",
     },
   ];
   const visibleActions = [
-    stationState.status === "FUERA" || stationState.status === "TERMINADO" ? (
-      <button type="button" className="station-command primary" onClick={() => void startShift()} key="start">Iniciar jornada</button>
-    ) : (
-      <button type="button" className="station-command primary" onClick={() => void finishShift()} key="finish">Finalizar jornada</button>
-    ),
+    canStartNewShift ? (
+      <button type="button" className="station-command primary" onClick={() => void startShift()} disabled={!canMark} key="start">Iniciar jornada</button>
+    ) : null,
+    shiftActive ? (
+      <button type="button" className="station-command primary" onClick={() => void finishShift()} disabled={!canMark} key="finish">Finalizar jornada</button>
+    ) : null,
     stationState.status === "TRABAJANDO" && !stationState.breakUsed ? (
-      <button type="button" className="station-command" onClick={() => void startBreak()} key="break">Break</button>
+      <button type="button" className="station-command" onClick={() => void startBreak()} disabled={!canMark} key="break">Break</button>
     ) : null,
     stationState.status === "BREAK" ? (
-      <button type="button" className="station-command primary" onClick={() => void endBreak()} key="end-break">Finalizar break</button>
+      <button type="button" className="station-command primary" onClick={() => void endBreak()} disabled={!canMark} key="end-break">Finalizar break</button>
     ) : null,
     stationState.status === "TRABAJANDO" && !stationState.lunchUsed ? (
-      <button type="button" className="station-command" onClick={() => void startLunch()} key="lunch">Lunch</button>
+      <button type="button" className="station-command" onClick={() => void startLunch()} disabled={!canMark} key="lunch">Lunch</button>
     ) : null,
     stationState.status === "LUNCH" ? (
-      <button type="button" className="station-command primary" onClick={() => void endLunch()} key="end-lunch">Finalizar almuerzo</button>
+      <button type="button" className="station-command primary" onClick={() => void endLunch()} disabled={!canMark} key="end-lunch">Finalizar almuerzo</button>
     ) : null,
   ].filter(Boolean);
 
@@ -904,13 +1035,18 @@ export default function StationPage() {
 
           <div className="station-action-row">
             {visibleActions}
-            {stationState.status === "TERMINADO" ? <p className="station-ended-copy">Jornada finalizada. El registro web se detuvo.</p> : null}
+            {!extensionConnected ? <p className="station-ended-copy">Marcaje bloqueado hasta conectar la extension.</p> : null}
+            {closedToday ? <p className="station-ended-copy">Jornada finalizada. Ingresa codigo de reactivacion en ajustes.</p> : null}
           </div>
 
           <div className="station-metric-grid">
             <article>
               <span>HORA ACTUAL</span>
-              <strong>{new Date().toLocaleTimeString("es-NI")}</strong>
+              <strong>{formatZonedTime(Date.now(), stationTimeZone, true)}</strong>
+            </article>
+            <article>
+              <span>DIA LABORAL</span>
+              <strong>{currentWorkDate}</strong>
             </article>
             <article>
               <span>BREAK USADO</span>
@@ -976,11 +1112,12 @@ export default function StationPage() {
               <article>
                 <span>B</span>
                 <div>
-                  <strong>{extensionStatus.available ? "Extension conectada" : "Sin extension"}</strong>
-                  <small>{extensionStatus.available ? (extensionStatus.tracking ? "Navegador activo" : "En espera") : "Web solamente"}</small>
+                  <strong>{extensionStatus.available ? "Extension conectada" : "Marcaje bloqueado"}</strong>
+                  <small>{extensionStatus.available ? (extensionStatus.tracking ? "Navegador activo" : "Lista para marcar") : "Instala VYNTRA Browser"}</small>
                 </div>
               </article>
             </div>
+            <TimeZoneSelect value={stationTimeZone} onChange={updateTimeZone} compact />
             <button type="button" className="station-primary wide" onClick={() => setIncidentOpen((value) => !value)}>Abrir incidencias</button>
 
             <div className="station-code-box">
@@ -989,9 +1126,9 @@ export default function StationPage() {
               <div className="station-inline-form">
                 <input value={accessCode} onChange={(event) => setAccessCode(event.target.value)} placeholder="Codigo" disabled={(stationState.status !== "TERMINADO" && !shiftActive) || busy} />
                 {stationState.status === "TERMINADO" ? (
-                  <button type="button" className="station-primary" onClick={() => void restoreShift()} disabled={busy || !accessCode.trim()}>Reabrir</button>
+                  <button type="button" className="station-primary" onClick={() => void restoreShift()} disabled={!canMark || !accessCode.trim()}>Reabrir</button>
                 ) : (
-                  <button type="button" className="station-primary" onClick={() => void activateOvertime()} disabled={!shiftActive || busy || stationState.overtimeStatus === "ACTIVA"}>Activar</button>
+                  <button type="button" className="station-primary" onClick={() => void activateOvertime()} disabled={!shiftActive || !canMark || stationState.overtimeStatus === "ACTIVA"}>Activar</button>
                 )}
               </div>
             </div>

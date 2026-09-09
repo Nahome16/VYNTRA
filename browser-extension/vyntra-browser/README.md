@@ -1,6 +1,6 @@
 # VYNTRA Browser
 
-Extension opcional para Chrome o Edge que complementa la estacion web de marcaje.
+Extension requerida para Chrome o Edge que complementa la estacion web de marcaje.
 
 ## Que agrega
 
@@ -9,6 +9,7 @@ Extension opcional para Chrome o Edge que complementa la estacion web de marcaje
 - Envia muestras al endpoint existente `/api/agent/events` usando el token de la estacion web.
 - Mantiene una cola local si no hay conexion.
 - Permite capturar manualmente la pestana activa desde el popup y subirla como evidencia.
+- La estacion web exige que esta extension este conectada antes de iniciar, pausar, reabrir o finalizar jornada.
 
 ## Limites
 

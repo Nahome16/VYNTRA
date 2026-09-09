@@ -2451,6 +2451,29 @@ def samples_from_agent_event(event_type: str, payload: dict) -> list[dict]:
     return samples if isinstance(samples, list) else []
 
 
+def ensure_web_station_shift_can_start(db: Session, device: Device, payload: dict):
+    if not payload.get("web_station") or not device.employee_id:
+        return
+
+    shift_date = (
+        payload.get("fecha")
+        or (payload.get("inicio_jornada") or payload.get("timestamp") or "")[:10]
+        or datetime.now(timezone.utc).date().isoformat()
+    )
+    existing = db.execute(
+        select(Shift)
+        .where(
+            Shift.company_id == device.company_id,
+            Shift.employee_id == device.employee_id,
+            Shift.device_id == device.id,
+            Shift.shift_date == shift_date,
+        )
+        .order_by(Shift.created_at.desc())
+    ).scalar_one_or_none()
+    if existing and existing.started_at:
+        raise ValueError("La jornada de este dia ya fue activada. Ingresa codigo de reactivacion para reabrirla.")
+
+
 def process_agent_event(db: Session, device: Device, event: dict, client_ip: str) -> dict:
     event_id = str(event.get("id") or "")[:36]
     event_type = str(event.get("tipo") or "unknown")[:60]
@@ -2464,6 +2487,9 @@ def process_agent_event(db: Session, device: Device, event: dict, client_ip: str
         store_consent_record(db, device, event, payload)
     elif event_type in {"incident_submitted", "incidence_created"}:
         store_incident_event(db, device, event, payload)
+
+    if event_type == "shift_started":
+        ensure_web_station_shift_can_start(db, device, payload)
 
     shift_event_types = {
         "shift_started",

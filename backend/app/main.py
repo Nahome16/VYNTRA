@@ -663,12 +663,33 @@ def public_app_line() -> str:
     return f"\nPanel VYNTRA: {app_url}\n"
 
 
+def station_public_url() -> str:
+    explicit_url = settings.station_public_url.strip().rstrip("/")
+    if explicit_url:
+        return explicit_url
+    station_domain = settings.station_domain.strip()
+    if not station_domain:
+        return ""
+    return f"https://{station_domain}/estacion"
+
+
+def public_station_line() -> str:
+    station_url = station_public_url()
+    if not station_url:
+        return ""
+    return (
+        f"\nEstacion de marcaje web: {station_url}\n"
+        "Extension requerida: descarga VYNTRA Browser desde la estacion de marcaje.\n"
+    )
+
+
 def temporary_password_email_body(company: Company, employee: Employee, login_email: str, password: str) -> str:
     return (
         f"Hola {employee.full_name},\n\n"
         f"Se creo tu acceso a VYNTRA para {company.name}.\n\n"
         f"Correo: {login_email}\n"
         f"Contrasena temporal: {password}\n\n"
+        f"{public_station_line()}"
         "Por seguridad, la estacion te pedira cambiar esta contrasena en el primer ingreso."
         f"{public_app_line()}"
         "\nSi no esperabas este acceso, contacta a RR. HH."
@@ -2474,6 +2495,37 @@ def ensure_web_station_shift_can_start(db: Session, device: Device, payload: dic
         raise ValueError("La jornada de este dia ya fue activada. Ingresa codigo de reactivacion para reabrirla.")
 
 
+WEB_STATION_EXTENSION_REQUIRED_EVENTS = {
+    "shift_started",
+    "shift_finished",
+    "shift_restored_by_admin",
+    "break_started",
+    "break_finished",
+    "lunch_started",
+    "lunch_finished",
+    "overtime_requested",
+    "overtime_started",
+    "overtime_finished",
+}
+
+
+def ensure_web_station_extension_connected(event_type: str, payload: dict):
+    if not payload.get("web_station") or event_type not in WEB_STATION_EXTENSION_REQUIRED_EVENTS:
+        return
+    if not payload.get("extension_connected"):
+        raise ValueError("La extension VYNTRA Browser debe estar conectada para marcar jornada.")
+    last_seen_ms = payload.get("extension_last_seen_ms_ago")
+    if last_seen_ms is None:
+        return
+    try:
+        if int(last_seen_ms) > 20000:
+            raise ValueError("La extension VYNTRA Browser no respondio recientemente.")
+    except (TypeError, ValueError) as exc:
+        if isinstance(exc, ValueError) and str(exc).startswith("La extension"):
+            raise
+        raise ValueError("Estado de extension invalido.") from exc
+
+
 def process_agent_event(db: Session, device: Device, event: dict, client_ip: str) -> dict:
     event_id = str(event.get("id") or "")[:36]
     event_type = str(event.get("tipo") or "unknown")[:60]
@@ -2487,6 +2539,8 @@ def process_agent_event(db: Session, device: Device, event: dict, client_ip: str
         store_consent_record(db, device, event, payload)
     elif event_type in {"incident_submitted", "incidence_created"}:
         store_incident_event(db, device, event, payload)
+
+    ensure_web_station_extension_connected(event_type, payload)
 
     if event_type == "shift_started":
         ensure_web_station_shift_can_start(db, device, payload)

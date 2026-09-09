@@ -79,6 +79,7 @@ type ExtensionStatus = {
   tracking: boolean;
   lastSync: string | null;
   lastError: string | null;
+  lastSeenAt: number | null;
 };
 
 class StationEventRejected extends Error {}
@@ -190,11 +191,11 @@ function formatHms(total: number) {
   return `${h}:${m}:${s}`;
 }
 
-function totals(state: StationState) {
-  const work = state.workBase + (state.status === "TRABAJANDO" ? secondsSince(state.phaseStartedAt) : 0);
-  const breakSeconds = state.breakBase + (state.status === "BREAK" ? secondsSince(state.phaseStartedAt) : 0);
-  const lunch = state.lunchBase + (state.status === "LUNCH" ? secondsSince(state.phaseStartedAt) : 0);
-  const overtime = state.overtimeBase + (state.overtimeStatus === "ACTIVA" ? secondsSince(state.overtimeStartedAt) : 0);
+function totals(state: StationState, canAccrueTime = true) {
+  const work = state.workBase + (canAccrueTime && state.status === "TRABAJANDO" ? secondsSince(state.phaseStartedAt) : 0);
+  const breakSeconds = state.breakBase + (canAccrueTime && state.status === "BREAK" ? secondsSince(state.phaseStartedAt) : 0);
+  const lunch = state.lunchBase + (canAccrueTime && state.status === "LUNCH" ? secondsSince(state.phaseStartedAt) : 0);
+  const overtime = state.overtimeBase + (canAccrueTime && state.overtimeStatus === "ACTIVA" ? secondsSince(state.overtimeStartedAt) : 0);
   return { work, breakSeconds, lunch, overtime };
 }
 
@@ -208,6 +209,19 @@ function closeCurrentPhase(state: StationState): StationState {
     overtimeBase: current.overtime,
     phaseStartedAt: null,
     overtimeStartedAt: state.overtimeStatus === "ACTIVA" ? Date.now() : state.overtimeStartedAt,
+  };
+}
+
+function freezeAccruingState(state: StationState): StationState {
+  const current = totals(state, true);
+  return {
+    ...state,
+    workBase: current.work,
+    breakBase: current.breakSeconds,
+    lunchBase: current.lunch,
+    overtimeBase: current.overtime,
+    phaseStartedAt: null,
+    overtimeStartedAt: state.overtimeStatus === "ACTIVA" ? null : state.overtimeStartedAt,
   };
 }
 
@@ -313,15 +327,19 @@ export default function StationPage() {
     tracking: false,
     lastSync: null,
     lastError: null,
+    lastSeenAt: null,
   });
   const [, setTicks] = useState(0);
   const activityRef = useRef({ clicks: 0, focusChanges: 0, lastInteraction: Date.now() });
+  const extensionProbeStartedAtRef = useRef(Date.now());
+  const extensionWasBlockedRef = useRef(false);
 
-  const currentTotals = totals(stationState);
   const currentWorkDate = zonedDateIso(stationTimeZone);
   const closedWorkDate = stationState.workDate || (stationState.endedAt ? zonedDateIso(stationTimeZone, stationState.endedAt) : null);
   const closedToday = stationState.status === "TERMINADO" && closedWorkDate === currentWorkDate;
-  const extensionConnected = extensionStatus.available;
+  const extensionConnected = Boolean(extensionStatus.available && extensionStatus.lastSeenAt && Date.now() - extensionStatus.lastSeenAt < 15000);
+  const extensionGraceActive = !extensionStatus.lastSeenAt && Date.now() - extensionProbeStartedAtRef.current < 3000;
+  const currentTotals = totals(stationState, extensionConnected || extensionGraceActive);
   const canAcceptConsent = consentChecks.every(Boolean);
   const needsPasswordChange = Boolean(session?.credential.password_change_required);
   const consentKey = session ? `${consentPrefix}${session.email}` : "";
@@ -392,6 +410,7 @@ export default function StationPage() {
         tracking: Boolean(data.tracking),
         lastSync: typeof data.lastSync === "string" ? data.lastSync : null,
         lastError: typeof data.lastError === "string" ? data.lastError : null,
+        lastSeenAt: Date.now(),
       });
     };
     window.addEventListener("message", onExtensionMessage);
@@ -400,9 +419,46 @@ export default function StationPage() {
   }, []);
 
   useEffect(() => {
+    const timer = window.setInterval(() => {
+      window.postMessage({ type: "VYNTRA_STATION_PING" }, window.location.origin);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!ready || !shiftActive) {
+      extensionWasBlockedRef.current = false;
+      return;
+    }
+
+    if (!extensionConnected && !extensionGraceActive) {
+      extensionWasBlockedRef.current = true;
+      const freezeTimer = window.setTimeout(() => setStationState((current) => {
+        if (!["TRABAJANDO", "BREAK", "LUNCH"].includes(current.status)) return current;
+        if (current.phaseStartedAt === null && (current.overtimeStatus !== "ACTIVA" || current.overtimeStartedAt === null)) return current;
+        return freezeAccruingState(current);
+      }), 0);
+      return () => window.clearTimeout(freezeTimer);
+    }
+
+    if (extensionConnected && extensionWasBlockedRef.current) {
+      extensionWasBlockedRef.current = false;
+      const resumeTimer = window.setTimeout(() => setStationState((current) => {
+        if (!["TRABAJANDO", "BREAK", "LUNCH"].includes(current.status)) return current;
+        return {
+          ...current,
+          phaseStartedAt: current.phaseStartedAt ?? Date.now(),
+          overtimeStartedAt: current.overtimeStatus === "ACTIVA" ? Date.now() : current.overtimeStartedAt,
+        };
+      }), 0);
+      return () => window.clearTimeout(resumeTimer);
+    }
+  }, [ready, shiftActive, extensionConnected, extensionGraceActive]);
+
+  useEffect(() => {
     if (!session?.token) return;
     const timer = window.setInterval(() => {
-      if (shiftActive) void sendEvent("activity_snapshot", stationState, false);
+      if (shiftActive && extensionConnected) void sendEvent("activity_snapshot", stationState, false);
       void flushQueue(session.token).catch(() => undefined);
       syncBrowserExtension();
     }, 30000);
@@ -462,6 +518,9 @@ export default function StationPage() {
       lunch_consumido: state.lunchUsed,
       telemetria: webTelemetry(),
       web_station: true,
+      extension_connected: extensionConnected,
+      extension_last_seen_ms_ago: extensionStatus.lastSeenAt ? Date.now() - extensionStatus.lastSeenAt : null,
+      extension_tracking: extensionStatus.tracking,
       timestamp: nowIso(),
     };
   }
@@ -1112,8 +1171,8 @@ export default function StationPage() {
               <article>
                 <span>B</span>
                 <div>
-                  <strong>{extensionStatus.available ? "Extension conectada" : "Marcaje bloqueado"}</strong>
-                  <small>{extensionStatus.available ? (extensionStatus.tracking ? "Navegador activo" : "Lista para marcar") : "Instala VYNTRA Browser"}</small>
+                  <strong>{extensionConnected ? "Extension conectada" : "Marcaje bloqueado"}</strong>
+                  <small>{extensionConnected ? (extensionStatus.tracking ? "Navegador activo" : "Lista para marcar") : "Instala VYNTRA Browser"}</small>
                 </div>
               </article>
             </div>

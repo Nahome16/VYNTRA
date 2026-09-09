@@ -55,6 +55,8 @@ class Settings:
     smtp_use_ssl: bool = _bool_env("SMTP_USE_SSL", False)
     smtp_timeout_seconds: int = int(os.environ.get("SMTP_TIMEOUT_SECONDS", "10"))
     app_public_url: str = os.environ.get("APP_PUBLIC_URL", "")
+    station_domain: str = os.environ.get("STATION_DOMAIN", "")
+    station_public_url: str = os.environ.get("STATION_PUBLIC_URL", "")
     bootstrap_company_name: str = os.environ.get("BOOTSTRAP_COMPANY_NAME", "VYNTRA Demo")
     bootstrap_employee_limit: int = int(os.environ.get("BOOTSTRAP_EMPLOYEE_LIMIT", "0"))
     bootstrap_admin_email: str = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "admin@vyntra.local")

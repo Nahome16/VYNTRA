@@ -35,6 +35,9 @@ require_equals() {
 
 require_value ENVIRONMENT
 require_value DATABASE_URL
+require_value APP_DOMAIN
+require_value API_DOMAIN
+require_value STATION_DOMAIN
 require_value POSTGRES_DB
 require_value POSTGRES_USER
 require_value POSTGRES_PASSWORD

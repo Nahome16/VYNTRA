@@ -42,6 +42,7 @@ services:
       ACME_EMAIL: ${ACME_EMAIL}
       API_DOMAIN: ${API_DOMAIN}
       APP_DOMAIN: ${APP_DOMAIN}
+      STATION_DOMAIN: ${STATION_DOMAIN}
     ports:
       - "80:80"
       - "443:443"

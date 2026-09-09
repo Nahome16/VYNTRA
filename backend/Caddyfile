@@ -12,6 +12,20 @@
 	reverse_proxy web:3000
 }
 
+{$STATION_DOMAIN}, www.{$STATION_DOMAIN} {
+	encode gzip zstd
+
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+
+	handle / {
+		redir /estacion 302
+	}
+
+	reverse_proxy web:3000
+}
+
 {$API_DOMAIN} {
 	encode gzip zstd
 

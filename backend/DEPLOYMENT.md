@@ -18,11 +18,12 @@ Esta guia despliega VYNTRA Control en una VM Ubuntu 24.04 LTS con Docker:
 
 ## 2. DNS
 
-Crear dos registros `A` apuntando a la IP publica de la VM:
+Crear registros `A` apuntando a la IP publica de la VM:
 
 ```text
 app.tudominio.com -> IP_PUBLICA_DE_LA_VM
 api.tudominio.com -> IP_PUBLICA_DE_LA_VM
+marcaje.tudominio.com -> IP_PUBLICA_DE_LA_VM
 ```
 
 Al inicio usar `DNS only` si el DNS esta en Cloudflare. Cuando HTTPS ya este
@@ -88,6 +89,7 @@ Valores obligatorios:
 ```text
 APP_DOMAIN=app.tudominio.com
 API_DOMAIN=api.tudominio.com
+STATION_DOMAIN=marcaje.tudominio.com
 ACME_EMAIL=admin@tudominio.com
 POSTGRES_PASSWORD=...
 DATABASE_URL=postgresql+psycopg://vyntra:POSTGRES_PASSWORD@db:5432/vyntra

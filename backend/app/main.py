@@ -319,6 +319,8 @@ RATE_LIMITS = {
     ("POST", "/api/station/password/change"): (8, 300),
     ("POST", "/api/station/password-reset/request"): (5, 300),
     ("POST", "/api/station/password-reset/confirm"): (8, 300),
+    ("POST", "/api/station-web/password-reset/request"): (5, 300),
+    ("POST", "/api/station-web/password-reset/confirm"): (8, 300),
     ("POST", "/api/evidence/upload"): (60, 60),
     ("POST", "/api/agent/events"): (120, 60),
 }
@@ -2193,6 +2195,34 @@ def authenticate_employee_credential(
         and verify_password_hash(password, credential.password_hash)
     )
     return credential, employee, success
+
+
+def find_unique_web_station_credential(
+    db: Session,
+    email: str,
+) -> tuple[EmployeeCredential | None, Employee | None, Company | None]:
+    clean_email_value = (email or "").strip().lower()
+    if not clean_email_value:
+        return None, None, None
+
+    rows = db.execute(
+        select(EmployeeCredential).where(EmployeeCredential.email == clean_email_value)
+    ).scalars().all()
+    matches = []
+    for credential in rows:
+        employee = db.get(Employee, credential.employee_id)
+        company = db.get(Company, credential.company_id)
+        if (
+            credential.status == "active"
+            and employee is not None
+            and employee.status == "active"
+            and company is not None
+            and company.status == "active"
+        ):
+            matches.append((credential, employee, company))
+    if len(matches) != 1:
+        return None, None, None
+    return matches[0]
 
 
 def store_station_login_event(
@@ -4354,6 +4384,110 @@ def station_change_password(
             action="station_password_changed",
             entity_type="employee_credential",
             entity_id=credential.id,
+            payload_json=json_text({"email": email, "employee_id": employee.id}),
+        )
+    )
+    db.commit()
+    return {"ok": True, "password_change_required": False}
+
+
+@app.post("/api/station-web/password-reset/request")
+def station_web_password_reset_request(
+    request: Request,
+    payload: StationPasswordResetRequestPayload,
+    db: Session = Depends(get_db),
+):
+    email = clean_email(payload.email)
+    credential, employee, company = find_unique_web_station_credential(db, email)
+    reset_code = ""
+    delivery_status = "not_configured"
+    if credential and employee and company:
+        reset_code = generate_reset_code()
+        credential.reset_code_hash = hash_token(reset_code)
+        credential.reset_code_expires_at = now_utc() + timedelta(minutes=10)
+        credential.reset_requested_at = now_utc()
+        credential.reset_verified_at = None
+        credential.reset_attempts = 0
+        db.commit()
+        delivery_status = send_plain_email(
+            credential.email,
+            "Codigo de recuperacion VYNTRA",
+            reset_code_email_body(company, reset_code),
+        )
+        db.add(
+            AuditLog(
+                company_id=company.id,
+                action="station_web_password_reset_requested",
+                entity_type="employee_credential",
+                entity_id=credential.id,
+                ip_address=client_ip(request)[:80],
+                payload_json=json_text({"email": email, "delivery_status": delivery_status}),
+            )
+        )
+    else:
+        db.add(
+            AuditLog(
+                company_id=None,
+                action="station_web_password_reset_requested_unknown",
+                entity_type="employee_credential",
+                entity_id="",
+                ip_address=client_ip(request)[:80],
+                payload_json=json_text({"email": email}),
+            )
+        )
+    db.commit()
+    response = {
+        "ok": True,
+        "delivery_status": delivery_status,
+        "message": "If the account exists, a verification code was sent.",
+    }
+    if reset_code and allow_local_testing_secrets():
+        response["reset_code"] = reset_code
+        response["note"] = "SMTP is not configured; reset code is returned for local testing."
+    return response
+
+
+@app.post("/api/station-web/password-reset/confirm")
+def station_web_password_reset_confirm(
+    request: Request,
+    payload: StationPasswordResetConfirmPayload,
+    db: Session = Depends(get_db),
+):
+    email = clean_email(payload.email)
+    credential, employee, company = find_unique_web_station_credential(db, email)
+    if credential is None or employee is None or company is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+
+    expires_at = credential.reset_code_expires_at
+    if (
+        not credential.reset_code_hash
+        or expires_at is None
+        or now_utc() > _as_aware_utc(expires_at)
+        or credential.reset_attempts >= 5
+    ):
+        raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+
+    if not secrets.compare_digest(credential.reset_code_hash, hash_token(payload.reset_code.strip())):
+        credential.reset_attempts += 1
+        db.commit()
+        raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+
+    validate_password_policy(payload.new_password)
+    verified_at = now_utc()
+    credential.password_hash = hash_password(payload.new_password)
+    credential.password_change_required = False
+    credential.password_changed_at = verified_at
+    credential.reset_code_hash = ""
+    credential.reset_code_expires_at = None
+    credential.reset_verified_at = verified_at
+    credential.reset_attempts = 0
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            action="station_web_password_reset_confirmed",
+            entity_type="employee_credential",
+            entity_id=credential.id,
+            ip_address=client_ip(request)[:80],
             payload_json=json_text({"email": email, "employee_id": employee.id}),
         )
     )

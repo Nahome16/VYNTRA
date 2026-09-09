@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState, type CSSProperties } from "react";
 
 const STATION_VERSION = "web-station-1.0.0";
 const sessionKey = "vyntra.station.session";
@@ -692,87 +692,224 @@ export default function StationPage() {
     );
   }
 
+  const dailyProgress = Math.min(100, Math.max(0, (currentTotals.work / (8 * 60 * 60)) * 100));
+  const statusCopy: Record<StationStatus, { label: string; capture: string; detail: string }> = {
+    FUERA: {
+      label: "Fuera de jornada",
+      capture: "Registro detenido",
+      detail: "Selecciona iniciar jornada para comenzar el registro web.",
+    },
+    TRABAJANDO: {
+      label: "Jornada activa",
+      capture: "Registro web activo",
+      detail: "Tu jornada esta activa en esta estacion web.",
+    },
+    BREAK: {
+      label: "En break",
+      capture: "Registro pausado",
+      detail: "Break activo. Finalizalo para volver a jornada.",
+    },
+    LUNCH: {
+      label: "En almuerzo",
+      capture: "Registro pausado",
+      detail: "Almuerzo activo. Finalizalo para volver a jornada.",
+    },
+    TERMINADO: {
+      label: "Jornada finalizada",
+      capture: "Registro detenido",
+      detail: "La jornada quedo cerrada.",
+    },
+  };
+  const stateItems = [
+    {
+      number: "1",
+      label: "Inicio de jornada",
+      detail: stationState.startedAt ? new Date(stationState.startedAt).toLocaleTimeString("es-NI", { hour: "2-digit", minute: "2-digit" }) : "--:--",
+      active: Boolean(stationState.startedAt),
+    },
+    {
+      number: "2",
+      label: "Trabajando",
+      detail: stationState.status === "TRABAJANDO" ? "Ahora" : stationState.status === "BREAK" || stationState.status === "LUNCH" ? "Pausado" : stationState.status === "TERMINADO" ? "Cerrada" : "--",
+      active: stationState.status === "TRABAJANDO",
+    },
+    {
+      number: "3",
+      label: "Break",
+      detail: stationState.status === "BREAK" ? "Ahora" : stationState.breakUsed ? "Usado" : "Libre",
+      active: stationState.status === "BREAK",
+    },
+    {
+      number: "4",
+      label: "Lunch",
+      detail: stationState.status === "LUNCH" ? "Ahora" : stationState.lunchUsed ? "Usado" : "Libre",
+      active: stationState.status === "LUNCH",
+    },
+    {
+      number: "5",
+      label: "Fin de jornada",
+      detail: stationState.endedAt ? new Date(stationState.endedAt).toLocaleTimeString("es-NI", { hour: "2-digit", minute: "2-digit" }) : "--:--",
+      active: stationState.status === "TERMINADO",
+    },
+  ];
+  const visibleActions = [
+    stationState.status === "FUERA" || stationState.status === "TERMINADO" ? (
+      <button type="button" className="station-command primary" onClick={() => void startShift()} key="start">Iniciar jornada</button>
+    ) : (
+      <button type="button" className="station-command primary" onClick={() => void finishShift()} key="finish">Finalizar jornada</button>
+    ),
+    stationState.status === "TRABAJANDO" && !stationState.breakUsed ? (
+      <button type="button" className="station-command" onClick={() => void startBreak()} key="break">Break</button>
+    ) : null,
+    stationState.status === "BREAK" ? (
+      <button type="button" className="station-command primary" onClick={() => void endBreak()} key="end-break">Finalizar break</button>
+    ) : null,
+    stationState.status === "TRABAJANDO" && !stationState.lunchUsed ? (
+      <button type="button" className="station-command" onClick={() => void startLunch()} key="lunch">Lunch</button>
+    ) : null,
+    stationState.status === "LUNCH" ? (
+      <button type="button" className="station-command primary" onClick={() => void endLunch()} key="end-lunch">Finalizar almuerzo</button>
+    ) : null,
+  ].filter(Boolean);
+
   return (
     <main className="station-workspace">
       <header className="station-topbar">
-        <div className="station-login-brand">
+        <div className="station-title-lockup">
           <div className="station-brand-mark">V</div>
           <div>
-            <span>Estacion web</span>
-            <h1>{session.employee.full_name}</h1>
+            <strong>VYNTRA</strong>
+            <span>Estacion de marcaje</span>
           </div>
         </div>
         <div className="station-topbar-actions">
-          <span className={`station-pill station-pill-${stationState.status.toLowerCase()}`}>{stationState.status}</span>
+          <span className={`station-pill station-pill-${stationState.status.toLowerCase()}`}>{statusCopy[stationState.status].label}</span>
+          <span className="station-user-chip">{session.employee.full_name}</span>
+          <button type="button" className="station-help-button" aria-label="Abrir informacion legal">?</button>
           <button type="button" className="station-secondary" onClick={logout}>Salir</button>
         </div>
       </header>
 
-      <section className="station-clock-band">
-        <div>
-          <span>Tiempo trabajado</span>
-          <strong>{formatHms(currentTotals.work)}</strong>
-          <p>{stationState.startedAt ? `Inicio ${new Date(stationState.startedAt).toLocaleTimeString("es-NI")}` : "Jornada sin iniciar"}</p>
-        </div>
-        <div className="station-clock-grid">
-          <article><span>Break</span><strong>{formatHms(currentTotals.breakSeconds)}</strong></article>
-          <article><span>Lunch</span><strong>{formatHms(currentTotals.lunch)}</strong></article>
-          <article><span>Horas extra</span><strong>{formatHms(currentTotals.overtime)}</strong></article>
-        </div>
-      </section>
-
-      <section className="station-action-grid">
-        {stationState.status === "FUERA" || stationState.status === "TERMINADO" ? (
-          <button type="button" className="station-command start" onClick={() => void startShift()}>Iniciar jornada</button>
-        ) : (
-          <button type="button" className="station-command danger" onClick={() => void finishShift()}>Finalizar jornada</button>
-        )}
-        {stationState.status === "TRABAJANDO" && !stationState.breakUsed ? (
-          <button type="button" className="station-command" onClick={() => void startBreak()}>Iniciar break</button>
-        ) : null}
-        {stationState.status === "BREAK" ? (
-          <button type="button" className="station-command start" onClick={() => void endBreak()}>Finalizar break</button>
-        ) : null}
-        {stationState.status === "TRABAJANDO" && !stationState.lunchUsed ? (
-          <button type="button" className="station-command" onClick={() => void startLunch()}>Iniciar lunch</button>
-        ) : null}
-        {stationState.status === "LUNCH" ? (
-          <button type="button" className="station-command start" onClick={() => void endLunch()}>Finalizar lunch</button>
-        ) : null}
-        <button type="button" className="station-command" onClick={() => setIncidentOpen((value) => !value)}>Reportar incidencia</button>
-      </section>
-
-      <section className="station-lower-grid">
-        <div className="station-panel">
-          <h2>Codigos de acceso</h2>
-          <p>{stationState.status === "TERMINADO" ? "Ingresa un codigo para reabrir esta jornada." : "Ingresa el codigo autorizado por tu supervisor."}</p>
-          <div className="station-inline-form">
-            <input value={accessCode} onChange={(event) => setAccessCode(event.target.value)} placeholder="Codigo" disabled={(stationState.status !== "TERMINADO" && !shiftActive) || busy} />
-            {stationState.status === "TERMINADO" ? (
-              <button type="button" className="station-primary" onClick={() => void restoreShift()} disabled={busy || !accessCode.trim()}>Reabrir</button>
-            ) : (
-              <button type="button" className="station-primary" onClick={() => void activateOvertime()} disabled={!shiftActive || busy || stationState.overtimeStatus === "ACTIVA"}>Activar</button>
-            )}
+      <section className="station-shell">
+        <div className="station-main-panel">
+          <div className="station-panel-head">
+            <div>
+              <span>TURNO ACTUAL</span>
+              <h1>Operacion BPO - Managua</h1>
+            </div>
+            <strong className={`station-capture station-capture-${stationState.status.toLowerCase()}`}>
+              {statusCopy[stationState.status].capture}
+            </strong>
           </div>
-          <form className="station-overtime-form" onSubmit={requestOvertime}>
-            <label>Hora estimada de salida
-              <input type="time" value={overtimeRequest.exitTime} onChange={(event) => setOvertimeRequest({ ...overtimeRequest, exitTime: event.target.value })} disabled={!shiftActive} />
-            </label>
-            <label>Motivo
-              <textarea value={overtimeRequest.reason} onChange={(event) => setOvertimeRequest({ ...overtimeRequest, reason: event.target.value })} rows={3} disabled={!shiftActive} />
-            </label>
-            <button type="submit" className="station-secondary" disabled={!shiftActive || !overtimeRequest.reason.trim()}>Solicitar horas extra</button>
-          </form>
+
+          <div className="station-clock-face" style={{ "--station-progress": `${dailyProgress}%` } as CSSProperties}>
+            <div>
+              <strong>{formatHms(currentTotals.work)}</strong>
+              <span>Tiempo trabajado hoy</span>
+              <small>Meta diaria: 8h</small>
+            </div>
+          </div>
+
+          <p className="station-action-hint">{statusCopy[stationState.status].detail}</p>
+
+          <div className="station-action-row">
+            {visibleActions}
+            {stationState.status === "TERMINADO" ? <p className="station-ended-copy">Jornada finalizada. El registro web se detuvo.</p> : null}
+          </div>
+
+          <div className="station-metric-grid">
+            <article>
+              <span>HORA ACTUAL</span>
+              <strong>{new Date().toLocaleTimeString("es-NI")}</strong>
+            </article>
+            <article>
+              <span>BREAK USADO</span>
+              <strong>{formatHms(currentTotals.breakSeconds)}</strong>
+            </article>
+            <article>
+              <span>ALMUERZO USADO</span>
+              <strong>{formatHms(currentTotals.lunch)}</strong>
+            </article>
+            <article>
+              <span>HORAS EXTRA</span>
+              <strong>{formatHms(currentTotals.overtime)}</strong>
+            </article>
+          </div>
         </div>
 
-        <div className="station-panel">
-          <h2>Actividad web</h2>
-          <dl className="station-signal-list">
-            <div><dt>Clics en estacion</dt><dd>{activityRef.current.clicks}</dd></div>
-            <div><dt>Cambios de foco</dt><dd>{activityRef.current.focusChanges}</dd></div>
-            <div><dt>Estado</dt><dd>{isOnline ? "En linea" : "Sin conexion"}</dd></div>
-          </dl>
-        </div>
+        <aside className="station-side-panel">
+          <section className="station-logo-card">
+            <div className="station-logo-tile">V</div>
+            <div>
+              <h2>VYNTRA</h2>
+              <strong>Agente empresarial</strong>
+              <p>Estacion de marcaje laboral abierta en navegador.</p>
+            </div>
+          </section>
+
+          <section className="station-status-card">
+            <div className="station-card-title">
+              <h2>Estado de jornada</h2>
+              <span>Registro visible</span>
+            </div>
+            <div className="station-step-list">
+              {stateItems.map((item) => (
+                <div className={item.active ? "active" : ""} key={item.label}>
+                  <span>{item.number}</span>
+                  <strong>{item.label}</strong>
+                  <small>{item.detail}</small>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="station-support-card">
+            <div className="station-card-title">
+              <h2>Incidencias y ajustes</h2>
+              <span>Solicitudes</span>
+            </div>
+            <div className="station-support-grid">
+              <article>
+                <span>S</span>
+                <div>
+                  <strong>{isOnline ? "Sincronizado" : "Pendiente"}</strong>
+                  <small>{isOnline ? "En linea" : "Sin conexion"}</small>
+                </div>
+              </article>
+              <article>
+                <span>W</span>
+                <div>
+                  <strong>Actividad web</strong>
+                  <small>{activityRef.current.clicks} clics</small>
+                </div>
+              </article>
+            </div>
+            <button type="button" className="station-primary wide" onClick={() => setIncidentOpen((value) => !value)}>Abrir incidencias</button>
+
+            <div className="station-code-box">
+              <h3>Codigos de acceso</h3>
+              <p>{stationState.status === "TERMINADO" ? "Ingresa un codigo para reabrir esta jornada." : "Ingresa el codigo autorizado por tu supervisor."}</p>
+              <div className="station-inline-form">
+                <input value={accessCode} onChange={(event) => setAccessCode(event.target.value)} placeholder="Codigo" disabled={(stationState.status !== "TERMINADO" && !shiftActive) || busy} />
+                {stationState.status === "TERMINADO" ? (
+                  <button type="button" className="station-primary" onClick={() => void restoreShift()} disabled={busy || !accessCode.trim()}>Reabrir</button>
+                ) : (
+                  <button type="button" className="station-primary" onClick={() => void activateOvertime()} disabled={!shiftActive || busy || stationState.overtimeStatus === "ACTIVA"}>Activar</button>
+                )}
+              </div>
+            </div>
+
+            <form className="station-overtime-form" onSubmit={requestOvertime}>
+              <label>Hora estimada de salida
+                <input type="time" value={overtimeRequest.exitTime} onChange={(event) => setOvertimeRequest({ ...overtimeRequest, exitTime: event.target.value })} disabled={!shiftActive} />
+              </label>
+              <label>Motivo
+                <textarea value={overtimeRequest.reason} onChange={(event) => setOvertimeRequest({ ...overtimeRequest, reason: event.target.value })} rows={3} disabled={!shiftActive} />
+              </label>
+              <button type="submit" className="station-secondary wide" disabled={!shiftActive || !overtimeRequest.reason.trim()}>Solicitar horas extra</button>
+            </form>
+          </section>
+        </aside>
       </section>
 
       {incidentOpen ? (

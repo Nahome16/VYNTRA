@@ -5059,6 +5059,10 @@ tbody tr:hover {
   padding: 24px;
 }
 
+.station-login-shell {
+  background: #171717;
+}
+
 .station-public-layout {
   display: grid;
   grid-template-columns: minmax(320px, 520px) minmax(320px, 430px);
@@ -5071,6 +5075,107 @@ tbody tr:hover {
   grid-template-columns: minmax(320px, 520px);
   justify-content: center;
   width: min(100%, 560px);
+}
+
+.station-login-layout {
+  width: min(100%, 1120px);
+  min-height: min(86svh, 640px);
+  grid-template-columns: minmax(260px, 1fr) minmax(280px, 430px);
+  align-items: center;
+  border-radius: 14px;
+  background: #071433;
+  padding: clamp(28px, 6vw, 64px);
+}
+
+.station-login-hero {
+  display: grid;
+  gap: 22px;
+  align-content: center;
+  color: #ffffff;
+}
+
+.station-login-brand-hero {
+  margin: 0;
+}
+
+.station-login-brand-hero .station-brand-mark {
+  width: 48px;
+  height: 48px;
+  border-radius: 9px;
+  background: #3b82f6;
+  box-shadow: none;
+  font-size: 20px;
+}
+
+.station-login-brand-hero span,
+.station-login-brand-hero strong {
+  display: block;
+  line-height: 1.1;
+}
+
+.station-login-brand-hero span {
+  color: #ffffff;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.station-login-brand-hero strong {
+  color: #dbeafe;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.station-login-hero h2 {
+  max-width: 430px;
+  margin: 0;
+  color: #ffffff;
+  font-size: 28px;
+  line-height: 1.24;
+}
+
+.station-login-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+}
+
+.station-hero-button,
+.station-hero-link {
+  min-height: 40px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.station-hero-button {
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  background: transparent;
+  color: #ffffff;
+  padding: 9px 16px;
+}
+
+.station-hero-link {
+  display: inline-flex;
+  align-items: center;
+  color: #dbeafe;
+  text-decoration: none;
+}
+
+.station-login-layout .station-login-panel {
+  width: 100%;
+  border-color: rgba(148, 163, 184, 0.28);
+  background: #17223c;
+  box-shadow: none;
+  color: #ffffff;
+  padding: clamp(24px, 4vw, 36px);
+}
+
+.station-login-layout .station-login-panel h1 {
+  margin: 0 0 24px;
+  color: #ffffff;
+  font-size: 24px;
+  line-height: 1.1;
 }
 
 .station-login-panel,
@@ -5103,6 +5208,17 @@ tbody tr:hover {
 
 .station-timezone.compact {
   margin-top: 10px;
+}
+
+.station-login-layout .station-timezone {
+  color: #cbd5e1;
+  font-size: 12px;
+}
+
+.station-login-layout .station-timezone select {
+  border-color: #33415f;
+  background: #22304d;
+  color: #e5edff;
 }
 
 .station-extension-card.compact {
@@ -5229,6 +5345,82 @@ tbody tr:hover {
   outline: none;
 }
 
+.station-login-layout .station-form {
+  gap: 16px;
+}
+
+.station-login-layout .station-form label {
+  color: #dbeafe;
+  font-size: 12px;
+}
+
+.station-input-wrap {
+  position: relative;
+  display: block;
+}
+
+.station-input-wrap input {
+  padding-right: 42px;
+}
+
+.station-input-wrap span {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  color: #94a3b8;
+  font-size: 14px;
+  font-weight: 900;
+  transform: translateY(-50%);
+}
+
+.station-login-layout .station-input-wrap input {
+  min-height: 46px;
+  border-color: #3a4968;
+  background: #22304d;
+  color: #ffffff;
+}
+
+.station-login-layout .station-input-wrap input::placeholder {
+  color: #9ca9c4;
+}
+
+.station-login-layout .station-input-wrap input:focus,
+.station-login-layout .station-timezone select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.station-login-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.station-login-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.station-login-options input {
+  width: 14px;
+  height: 14px;
+  accent-color: #3b82f6;
+}
+
+.station-login-options button {
+  border: 0;
+  background: transparent;
+  color: #dbeafe;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .station-form input:focus,
 .station-timezone select:focus,
 .station-reset-box input:focus,
@@ -5255,6 +5447,15 @@ tbody tr:hover {
 .station-primary {
   background: #2563eb;
   color: white;
+}
+
+.station-login-layout .station-primary {
+  min-height: 52px;
+  background: #3b82f6;
+}
+
+.station-login-layout .station-primary:hover {
+  background: #2563eb;
 }
 
 .station-primary:hover {
@@ -5285,6 +5486,20 @@ tbody tr:hover {
   padding-top: 14px;
 }
 
+.station-login-layout .station-reset-box {
+  border-top-color: #33415f;
+}
+
+.station-login-layout .station-reset-box label {
+  color: #dbeafe;
+}
+
+.station-login-layout .station-reset-box input {
+  border-color: #3a4968;
+  background: #22304d;
+  color: #ffffff;
+}
+
 .station-status-line,
 .station-floating-status {
   margin: 14px 0 0;
@@ -5294,6 +5509,20 @@ tbody tr:hover {
   color: #1d4ed8;
   padding: 10px 12px;
   font-weight: 800;
+}
+
+.station-login-layout .station-status-line {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.12);
+  color: #bfdbfe;
+}
+
+.station-extension-ok {
+  margin: 18px 0 0;
+  color: #34d399;
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
 }
 
 .station-consent-copy {
@@ -5851,6 +6080,12 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 
+  .station-login-layout {
+    grid-template-columns: minmax(240px, 1fr) minmax(280px, 400px);
+    min-height: auto;
+    padding: 32px;
+  }
+
   .station-topbar {
     align-items: flex-start;
     flex-direction: column;
@@ -5865,10 +6100,26 @@ tbody tr:hover {
   }
 }
 
+@media (max-width: 760px) {
+  .station-login-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 560px) {
   .station-public-shell {
     align-items: stretch;
     padding: 12px;
+  }
+
+  .station-login-layout {
+    gap: 28px;
+    border-radius: 12px;
+    padding: 22px;
+  }
+
+  .station-login-hero h2 {
+    font-size: 27px;
   }
 
   .station-login-panel,

@@ -876,29 +876,60 @@ export default function StationPage() {
 
   if (!session) {
     return (
-      <main className="station-public-shell">
-        <div className={extensionConnected ? "station-public-layout single" : "station-public-layout"}>
-          <section className="station-login-panel" aria-labelledby="station-login-title">
-            <div className="station-login-brand">
+      <main className="station-public-shell station-login-shell">
+        <div className="station-public-layout station-login-layout">
+          <section className="station-login-hero" aria-label="VYNTRA Estacion">
+            <div className="station-login-brand station-login-brand-hero">
               <div className="station-brand-mark">V</div>
               <div>
                 <span>VYNTRA</span>
-                <h1 id="station-login-title">Estacion de marcaje</h1>
+                <strong>Estacion de marcaje</strong>
               </div>
             </div>
+            <h2>Marca tu jornada de forma simple y segura.</h2>
+            <div className="station-login-hero-actions">
+              <button type="button" className="station-hero-button">Como funciona</button>
+              {!extensionConnected ? (
+                <a className="station-hero-link" href={extensionDownloadHref} download>
+                  Instalar extension
+                </a>
+              ) : null}
+            </div>
+          </section>
+          <section className="station-login-panel" aria-labelledby="station-login-title">
+            <h1 id="station-login-title">Iniciar sesion</h1>
             <form className="station-form" onSubmit={login}>
-              <TimeZoneSelect value={stationTimeZone} onChange={updateTimeZone} />
               <label>Correo laboral
-                <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} autoComplete="email" required />
+                <span className="station-input-wrap">
+                  <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} autoComplete="email" placeholder="nombre@empresa.com" required />
+                  <span aria-hidden="true">@</span>
+                </span>
               </label>
               <label>Contrasena
-                <input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} autoComplete="current-password" required />
+                <span className="station-input-wrap">
+                  <input
+                    type="password"
+                    value={loginPassword}
+                    onChange={(event) => setLoginPassword(event.target.value)}
+                    autoComplete="current-password"
+                    placeholder="Tu contrasena"
+                    required
+                  />
+                  <span aria-hidden="true">o</span>
+                </span>
               </label>
+              <div className="station-login-options">
+                <label>
+                  <input type="checkbox" />
+                  Recordarme
+                </label>
+                <button type="button" onClick={() => { setResetOpen(true); setResetForm((form) => ({ ...form, email: loginEmail })); }}>
+                  Olvidaste tu contrasena?
+                </button>
+              </div>
               <button type="submit" className="station-primary" disabled={busy}>{busy ? "Verificando..." : "Entrar"}</button>
             </form>
-            <button type="button" className="station-link-button" onClick={() => { setResetOpen(true); setResetForm((form) => ({ ...form, email: loginEmail })); }}>
-              Recuperar contrasena
-            </button>
+            {extensionConnected ? <p className="station-extension-ok">Extension conectada · v{requiredExtensionVersion}</p> : null}
             {resetOpen ? (
               <form className="station-reset-box" onSubmit={confirmReset}>
                 <label>Correo
@@ -916,7 +947,6 @@ export default function StationPage() {
             ) : null}
             {statusText ? <p className="station-status-line">{statusText}</p> : null}
           </section>
-          {!extensionConnected ? <ExtensionDownloadCard /> : null}
         </div>
       </main>
     );

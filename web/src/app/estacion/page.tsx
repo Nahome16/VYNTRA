@@ -8,7 +8,8 @@ const stateKey = "vyntra.station.state";
 const consentPrefix = "vyntra.station.consent.";
 const queueKey = "vyntra.station.queue";
 const timeZoneKey = "vyntra.station.timezone";
-const extensionDownloadHref = "/extensions/vyntra-browser-extension.zip";
+const requiredExtensionVersion = "0.2.0";
+const extensionDownloadHref = `/extensions/vyntra-browser-extension.zip?v=${requiredExtensionVersion}`;
 
 const stationTimeZones = [
   "America/Managua",
@@ -77,6 +78,7 @@ type QueuedEvent = {
 type ExtensionStatus = {
   available: boolean;
   tracking: boolean;
+  extensionVersion: string | null;
   lastSync: string | null;
   lastError: string | null;
   lastSeenAt: number | null;
@@ -191,6 +193,20 @@ function formatHms(total: number) {
   return `${h}:${m}:${s}`;
 }
 
+function versionAtLeast(current: string | null | undefined, required: string) {
+  if (!current) return false;
+  const currentParts = current.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const requiredParts = required.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const maxLength = Math.max(currentParts.length, requiredParts.length);
+  for (let index = 0; index < maxLength; index += 1) {
+    const currentPart = currentParts[index] || 0;
+    const requiredPart = requiredParts[index] || 0;
+    if (currentPart > requiredPart) return true;
+    if (currentPart < requiredPart) return false;
+  }
+  return true;
+}
+
 function totals(state: StationState, canAccrueTime = true) {
   const work = state.workBase + (canAccrueTime && state.status === "TRABAJANDO" ? secondsSince(state.phaseStartedAt) : 0);
   const breakSeconds = state.breakBase + (canAccrueTime && state.status === "BREAK" ? secondsSince(state.phaseStartedAt) : 0);
@@ -264,11 +280,11 @@ function ExtensionDownloadCard({ compact = false }: { compact?: boolean }) {
     <section className={compact ? "station-extension-card compact" : "station-extension-card"}>
       <div className="station-card-title">
         <h2>Extension VYNTRA Browser</h2>
-        <span>Obligatoria</span>
+        <span>Version {requiredExtensionVersion}</span>
       </div>
-      <p>Es requerida para marcar jornada. Agrega actividad del navegador: pestana activa, dominio, titulo, foco, inactividad y captura manual de pestana.</p>
+      <p>Es requerida para marcar jornada. Esta version agrega capturas automaticas autorizadas cada 5 minutos mientras la jornada esta activa.</p>
       <a className="station-download-button" href={extensionDownloadHref} download>
-        Descargar extension
+        Descargar actualizacion
       </a>
       <ol>
         <li>Descarga y descomprime el archivo.</li>
@@ -277,7 +293,7 @@ function ExtensionDownloadCard({ compact = false }: { compact?: boolean }) {
         <li>Elige cargar extension sin empaquetar y selecciona la carpeta descargada.</li>
         <li>Vuelve a esta estacion e inicia sesion.</li>
       </ol>
-      <small>La estacion no permite iniciar, pausar, reabrir ni finalizar jornada si la extension no esta conectada.</small>
+      <small>La estacion no permite iniciar, pausar, reabrir ni finalizar jornada si la extension no esta conectada o esta desactualizada.</small>
     </section>
   );
 }
@@ -325,6 +341,7 @@ export default function StationPage() {
   const [extensionStatus, setExtensionStatus] = useState<ExtensionStatus>({
     available: false,
     tracking: false,
+    extensionVersion: null,
     lastSync: null,
     lastError: null,
     lastSeenAt: null,
@@ -337,7 +354,10 @@ export default function StationPage() {
   const currentWorkDate = zonedDateIso(stationTimeZone);
   const closedWorkDate = stationState.workDate || (stationState.endedAt ? zonedDateIso(stationTimeZone, stationState.endedAt) : null);
   const closedToday = stationState.status === "TERMINADO" && closedWorkDate === currentWorkDate;
-  const extensionConnected = Boolean(extensionStatus.available && extensionStatus.lastSeenAt && Date.now() - extensionStatus.lastSeenAt < 15000);
+  const extensionReachable = Boolean(extensionStatus.available && extensionStatus.lastSeenAt && Date.now() - extensionStatus.lastSeenAt < 15000);
+  const extensionUpToDate = versionAtLeast(extensionStatus.extensionVersion, requiredExtensionVersion);
+  const extensionNeedsUpdate = extensionReachable && !extensionUpToDate;
+  const extensionConnected = extensionReachable && extensionUpToDate;
   const extensionGraceActive = !extensionStatus.lastSeenAt && Date.now() - extensionProbeStartedAtRef.current < 3000;
   const currentTotals = totals(stationState, extensionConnected || extensionGraceActive);
   const canAcceptConsent = consentChecks.every(Boolean);
@@ -408,6 +428,7 @@ export default function StationPage() {
       setExtensionStatus({
         available: true,
         tracking: Boolean(data.tracking),
+        extensionVersion: typeof data.extensionVersion === "string" ? data.extensionVersion : null,
         lastSync: typeof data.lastSync === "string" ? data.lastSync : null,
         lastError: typeof data.lastError === "string" ? data.lastError : null,
         lastSeenAt: Date.now(),
@@ -558,6 +579,10 @@ export default function StationPage() {
 
   function requireExtension() {
     if (extensionConnected) return true;
+    if (extensionNeedsUpdate) {
+      setStatusText(`Hay una nueva actualizacion de VYNTRA Browser. Descarga e instala la version ${requiredExtensionVersion} para marcar jornada.`);
+      return false;
+    }
     setStatusText("Instala y conecta la extension VYNTRA Browser para marcar jornada.");
     return false;
   }
@@ -852,7 +877,7 @@ export default function StationPage() {
   if (!session) {
     return (
       <main className="station-public-shell">
-        <div className="station-public-layout">
+        <div className={extensionConnected ? "station-public-layout single" : "station-public-layout"}>
           <section className="station-login-panel" aria-labelledby="station-login-title">
             <div className="station-login-brand">
               <div className="station-brand-mark">V</div>
@@ -891,7 +916,7 @@ export default function StationPage() {
             ) : null}
             {statusText ? <p className="station-status-line">{statusText}</p> : null}
           </section>
-          <ExtensionDownloadCard />
+          {!extensionConnected ? <ExtensionDownloadCard /> : null}
         </div>
       </main>
     );
@@ -972,11 +997,21 @@ export default function StationPage() {
   const dailyProgress = Math.min(100, Math.max(0, (currentTotals.work / (8 * 60 * 60)) * 100));
   const canMark = extensionConnected && !busy;
   const canStartNewShift = stationState.status === "FUERA" || (stationState.status === "TERMINADO" && !closedToday);
+  const extensionBlockText = extensionNeedsUpdate
+    ? `Hay una nueva actualizacion. Instala VYNTRA Browser ${requiredExtensionVersion}.`
+    : "Marcaje bloqueado hasta conectar la extension.";
+  const extensionStatusText = extensionNeedsUpdate
+    ? `Actualizar a ${requiredExtensionVersion}`
+    : "Instala VYNTRA Browser";
   const statusCopy: Record<StationStatus, { label: string; capture: string; detail: string }> = {
     FUERA: {
       label: "Fuera de jornada",
-      capture: extensionConnected ? "Registro detenido" : "Extension requerida",
-      detail: extensionConnected ? "Selecciona iniciar jornada para comenzar el registro web." : "Instala y conecta VYNTRA Browser para habilitar el marcaje.",
+      capture: extensionConnected ? "Registro detenido" : extensionNeedsUpdate ? "Actualizacion requerida" : "Extension requerida",
+      detail: extensionConnected
+        ? "Selecciona iniciar jornada para comenzar el registro web."
+        : extensionNeedsUpdate
+        ? `Instala VYNTRA Browser ${requiredExtensionVersion} para habilitar el marcaje.`
+        : "Instala y conecta VYNTRA Browser para habilitar el marcaje.",
     },
     TRABAJANDO: {
       label: "Jornada activa",
@@ -1094,7 +1129,7 @@ export default function StationPage() {
 
           <div className="station-action-row">
             {visibleActions}
-            {!extensionConnected ? <p className="station-ended-copy">Marcaje bloqueado hasta conectar la extension.</p> : null}
+            {!extensionConnected ? <p className="station-ended-copy">{extensionBlockText}</p> : null}
             {closedToday ? <p className="station-ended-copy">Jornada finalizada. Ingresa codigo de reactivacion en ajustes.</p> : null}
           </div>
 
@@ -1172,7 +1207,7 @@ export default function StationPage() {
                 <span>B</span>
                 <div>
                   <strong>{extensionConnected ? "Extension conectada" : "Marcaje bloqueado"}</strong>
-                  <small>{extensionConnected ? (extensionStatus.tracking ? "Navegador activo" : "Lista para marcar") : "Instala VYNTRA Browser"}</small>
+                  <small>{extensionConnected ? (extensionStatus.tracking ? "Navegador activo" : "Lista para marcar") : extensionStatusText}</small>
                 </div>
               </article>
             </div>
@@ -1202,7 +1237,7 @@ export default function StationPage() {
               <button type="submit" className="station-secondary wide" disabled={!shiftActive || !overtimeRequest.reason.trim()}>Solicitar horas extra</button>
             </form>
           </section>
-          <ExtensionDownloadCard compact />
+          {!extensionConnected ? <ExtensionDownloadCard compact /> : null}
         </aside>
       </section>
 

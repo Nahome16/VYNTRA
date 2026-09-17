@@ -10,6 +10,7 @@ function postStatus(status) {
     type: "VYNTRA_EXTENSION_STATUS",
     available: true,
     tracking: Boolean(status?.tracking),
+    extensionVersion: status?.extensionVersion || null,
     lastSync: status?.lastSync || null,
     lastError: status?.lastError || null,
   }, window.location.origin);

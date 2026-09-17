@@ -5,9 +5,12 @@ const STORAGE_KEYS = {
 };
 
 const SAMPLE_ALARM = "vyntra-browser-sample";
+const AUTO_CAPTURE_ALARM = "vyntra-browser-auto-capture";
 const SAMPLE_SECONDS = 60;
+const AUTO_CAPTURE_MINUTES = 5;
 const STALE_STATION_MS = 10 * 60 * 1000;
-const VERSION = "browser-extension-0.1.0";
+const WORKING_STATUS = "TRABAJANDO";
+const VERSION = "browser-extension-0.2.0";
 
 function eventId() {
   if (crypto?.randomUUID) return crypto.randomUUID();
@@ -50,9 +53,13 @@ function queryIdleState() {
 
 function getStatus(station, override = {}) {
   const tracking = Boolean(station?.session?.token && station?.shiftActive && station?.consentAccepted && !isStationStale(station));
+  const autoCaptureEnabled = tracking && station?.state?.status === WORKING_STATUS;
   return {
     available: true,
     tracking,
+    extensionVersion: VERSION,
+    autoCaptureEnabled,
+    autoCaptureMinutes: AUTO_CAPTURE_MINUTES,
     lastSync: station?.syncedAt || null,
     lastError: null,
     ...override,
@@ -65,9 +72,12 @@ function isStationStale(station) {
 }
 
 async function saveStatus(status) {
-  await storageSet({ [STORAGE_KEYS.status]: status });
-  notifyStationTabs(status);
-  return status;
+  const values = await storageGet(STORAGE_KEYS.status);
+  const previous = values[STORAGE_KEYS.status] || {};
+  const nextStatus = { ...previous, ...status };
+  await storageSet({ [STORAGE_KEYS.status]: nextStatus });
+  notifyStationTabs(nextStatus);
+  return nextStatus;
 }
 
 async function currentStatus() {
@@ -202,20 +212,32 @@ async function sha256Hex(blob) {
   return [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function uploadVisibleTabCapture() {
-  const values = await storageGet(STORAGE_KEYS.station);
-  const station = values[STORAGE_KEYS.station];
+function canAutoCapture(station) {
+  return Boolean(
+    station?.session?.token
+    && station.shiftActive
+    && station.consentAccepted
+    && station.state?.status === WORKING_STATUS
+    && !isStationStale(station),
+  );
+}
+
+async function uploadVisibleTabCapture(options = {}) {
+  const values = options.station ? {} : await storageGet(STORAGE_KEYS.station);
+  const station = options.station || values[STORAGE_KEYS.station];
   if (!station?.session?.token) throw new Error("Abre la estacion web e inicia sesion primero.");
 
   const tab = await queryActiveTab();
   const dataUrl = await chrome.tabs.captureVisibleTab(tab?.windowId, { format: "png" });
   const blob = dataUrlToBlob(dataUrl);
   const sha = await sha256Hex(blob);
+  const capturedAt = nowIso();
+  const mode = options.mode || "manual";
   const form = new FormData();
-  form.set("file", blob, `vyntra-browser-${Date.now()}.png`);
+  form.set("file", blob, `vyntra-browser-${mode}-${Date.now()}.png`);
   form.set("employee", station.session.employee?.full_name || station.session.email || "unknown");
   form.set("equipment", station.session.device?.name || "VYNTRA Browser");
-  form.set("captured_at", nowIso());
+  form.set("captured_at", capturedAt);
   form.set("sha256", sha);
   form.set("file_size", String(blob.size));
   form.set("agent_version", VERSION);
@@ -228,7 +250,39 @@ async function uploadVisibleTabCapture() {
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   await sampleBrowserActivity();
-  return response.json();
+  return { capturedAt, result: await response.json() };
+}
+
+async function autoCaptureVisibleTab() {
+  const values = await storageGet([STORAGE_KEYS.station, STORAGE_KEYS.status]);
+  const station = values[STORAGE_KEYS.station];
+  if (!canAutoCapture(station)) {
+    await saveStatus(getStatus(station));
+    return;
+  }
+
+  const status = values[STORAGE_KEYS.status] || {};
+  const lastCaptureAt = Date.parse(status.lastCapture || "");
+  const captureIntervalMs = AUTO_CAPTURE_MINUTES * 60 * 1000;
+  if (lastCaptureAt && Date.now() - lastCaptureAt < captureIntervalMs - 5000) return;
+
+  try {
+    const capture = await uploadVisibleTabCapture({ station, mode: "auto" });
+    await saveStatus(getStatus(station, {
+      lastCapture: capture.capturedAt,
+      lastCaptureMode: "auto",
+      lastError: null,
+    }));
+  } catch (error) {
+    await saveStatus(getStatus(station, {
+      lastError: `Captura automatica: ${error?.message || "no se pudo subir"}`,
+    }));
+  }
+}
+
+function ensureAlarms() {
+  chrome.alarms.create(SAMPLE_ALARM, { periodInMinutes: 1 });
+  chrome.alarms.create(AUTO_CAPTURE_ALARM, { periodInMinutes: AUTO_CAPTURE_MINUTES });
 }
 
 async function handleMessage(message) {
@@ -244,7 +298,7 @@ async function handleMessage(message) {
 
   if (message?.type === "station_clear") {
     await storageRemove(STORAGE_KEYS.station);
-    const status = await saveStatus({ available: true, tracking: false, lastSync: null, lastError: null });
+    const status = await saveStatus(getStatus(null, { lastSync: null, lastError: null }));
     return { ok: true, status };
   }
 
@@ -253,8 +307,14 @@ async function handleMessage(message) {
   }
 
   if (message?.type === "capture_visible_tab") {
-    const result = await uploadVisibleTabCapture();
-    return { ok: true, result, status: await currentStatus() };
+    const capture = await uploadVisibleTabCapture({ mode: "manual" });
+    const values = await storageGet(STORAGE_KEYS.station);
+    const status = await saveStatus(getStatus(values[STORAGE_KEYS.station], {
+      lastCapture: capture.capturedAt,
+      lastCaptureMode: "manual",
+      lastError: null,
+    }));
+    return { ok: true, result: capture.result, status };
   }
 
   if (message?.type === "sample_now") {
@@ -273,15 +333,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create(SAMPLE_ALARM, { periodInMinutes: 1 });
+  ensureAlarms();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  chrome.alarms.create(SAMPLE_ALARM, { periodInMinutes: 1 });
+  ensureAlarms();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === SAMPLE_ALARM) {
     sampleBrowserActivity().catch(() => undefined);
   }
+  if (alarm.name === AUTO_CAPTURE_ALARM) {
+    autoCaptureVisibleTab().catch(() => undefined);
+  }
 });
+
+ensureAlarms();

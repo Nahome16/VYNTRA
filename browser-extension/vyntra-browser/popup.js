@@ -1,6 +1,9 @@
 const trackingEl = document.getElementById("tracking");
 const stateEl = document.getElementById("state");
+const versionEl = document.getElementById("version");
 const lastSyncEl = document.getElementById("lastSync");
+const autoCaptureEl = document.getElementById("autoCapture");
+const lastCaptureEl = document.getElementById("lastCapture");
 const messageEl = document.getElementById("message");
 const sampleButton = document.getElementById("sampleNow");
 const captureButton = document.getElementById("capture");
@@ -20,9 +23,13 @@ function fmtDate(value) {
 
 function render(status) {
   const tracking = Boolean(status?.tracking);
+  const autoCapture = Boolean(status?.autoCaptureEnabled);
   trackingEl.textContent = tracking ? "Navegador activo" : "En espera";
   stateEl.textContent = tracking ? "Conectada a estacion" : "Abre la estacion web";
+  versionEl.textContent = status?.extensionVersion || "--";
   lastSyncEl.textContent = fmtDate(status?.lastSync);
+  autoCaptureEl.textContent = autoCapture ? `Cada ${status.autoCaptureMinutes || 5} min` : "Pausada";
+  lastCaptureEl.textContent = fmtDate(status?.lastCapture);
   messageEl.textContent = status?.lastError || "";
 }
 

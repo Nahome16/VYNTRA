@@ -5070,10 +5070,10 @@ tbody tr:hover {
 .station-language-toggle {
   position: absolute;
   z-index: 5;
-  top: 18px;
-  right: 18px;
-  min-width: 42px;
-  min-height: 32px;
+  top: clamp(28px, 4vw, 46px);
+  right: max(28px, calc((100vw - 1500px) / 2 + 56px));
+  min-width: 48px;
+  min-height: 36px;
   border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: 999px;
   background: rgba(23, 34, 60, 0.72);
@@ -5106,10 +5106,13 @@ tbody tr:hover {
 }
 
 .station-login-layout {
-  width: 100%;
+  width: min(100%, 1500px);
   min-height: 100svh;
-  grid-template-columns: minmax(360px, 1fr) minmax(360px, 540px);
+  grid-template-columns: minmax(420px, 560px) minmax(420px, 590px);
   align-items: center;
+  justify-content: center;
+  justify-self: center;
+  gap: clamp(64px, 8vw, 140px);
   border-radius: 0;
   background: #071433;
   padding: clamp(34px, 6vw, 80px);
@@ -5197,7 +5200,7 @@ tbody tr:hover {
 }
 
 .station-login-layout .station-login-panel {
-  width: 100%;
+  width: min(100%, 590px);
   border-color: rgba(148, 163, 184, 0.28);
   background: #17223c;
   box-shadow: none;
@@ -6224,6 +6227,7 @@ tbody tr:hover {
 
   .station-login-layout {
     grid-template-columns: minmax(240px, 1fr) minmax(280px, 380px);
+    gap: 32px;
     min-height: 100svh;
     padding: 32px;
   }

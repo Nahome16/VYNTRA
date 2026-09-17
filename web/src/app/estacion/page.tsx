@@ -26,6 +26,20 @@ const stationTimeZones = [
   "UTC",
 ];
 
+const stationTimeZoneLabels: Record<string, string> = {
+  "America/Managua": "Managua",
+  "America/Costa_Rica": "Costa Rica",
+  "America/El_Salvador": "El Salvador",
+  "America/Guatemala": "Guatemala",
+  "America/Tegucigalpa": "Tegucigalpa",
+  "America/Panama": "Panama",
+  "America/Bogota": "Bogota",
+  "America/Mexico_City": "Mexico City",
+  "America/New_York": "New York",
+  "America/Los_Angeles": "Los Angeles",
+  UTC: "UTC",
+};
+
 type StationStatus = "FUERA" | "TRABAJANDO" | "BREAK" | "LUNCH" | "TERMINADO";
 type OvertimeStatus = "SIN_HORAS_EXTRA" | "ACTIVA" | "FINALIZADA";
 type LoginLanguage = "es" | "en";
@@ -317,6 +331,12 @@ function defaultTimeZone() {
   }
 }
 
+function timeZoneLocationLabel(timeZone: string) {
+  if (stationTimeZoneLabels[timeZone]) return stationTimeZoneLabels[timeZone];
+  const rawLocation = timeZone.split("/").pop() || timeZone;
+  return rawLocation.replaceAll("_", " ");
+}
+
 function zonedDateIso(timeZone: string, value: Date | string | number = new Date()) {
   const date = value instanceof Date ? value : new Date(value);
   try {
@@ -550,6 +570,7 @@ export default function StationPage() {
   const consentKey = session ? `${consentPrefix}${session.email}` : "";
   const shiftActive = stationState.status === "TRABAJANDO" || stationState.status === "BREAK" || stationState.status === "LUNCH";
   const loginText = stationLoginCopy[loginLanguage];
+  const stationLocationLabel = timeZoneLocationLabel(stationTimeZone);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1429,7 +1450,7 @@ export default function StationPage() {
           <div className="station-panel-head">
             <div>
               <span>TURNO ACTUAL</span>
-              <h1>Operacion BPO - Managua</h1>
+              <h1>Operacion BPO - {stationLocationLabel}</h1>
             </div>
             <strong className={`station-capture station-capture-${stationState.status.toLowerCase()}`}>
               {statusCopy[stationState.status].capture}

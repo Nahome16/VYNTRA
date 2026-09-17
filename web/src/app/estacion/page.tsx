@@ -332,6 +332,8 @@ export default function StationPage() {
   const [passwordForm, setPasswordForm] = useState({ current: "", next: "", confirm: "" });
   const [resetForm, setResetForm] = useState({ email: "", code: "", password: "" });
   const [resetOpen, setResetOpen] = useState(false);
+  const [howWorksDialogOpen, setHowWorksDialogOpen] = useState(false);
+  const [extensionDialogOpen, setExtensionDialogOpen] = useState(false);
   const [incidentOpen, setIncidentOpen] = useState(false);
   const [incident, setIncident] = useState({ type: "correccion_marcaje", description: "" });
   const [accessCode, setAccessCode] = useState("");
@@ -358,6 +360,7 @@ export default function StationPage() {
   const extensionUpToDate = versionAtLeast(extensionStatus.extensionVersion, requiredExtensionVersion);
   const extensionNeedsUpdate = extensionReachable && !extensionUpToDate;
   const extensionConnected = extensionReachable && extensionUpToDate;
+  const extensionMissing = !extensionReachable;
   const extensionGraceActive = !extensionStatus.lastSeenAt && Date.now() - extensionProbeStartedAtRef.current < 3000;
   const currentTotals = totals(stationState, extensionConnected || extensionGraceActive);
   const canAcceptConsent = consentChecks.every(Boolean);
@@ -445,6 +448,18 @@ export default function StationPage() {
     }, 5000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!extensionDialogOpen && !howWorksDialogOpen) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setExtensionDialogOpen(false);
+        setHowWorksDialogOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [extensionDialogOpen, howWorksDialogOpen]);
 
   useEffect(() => {
     if (!ready || !shiftActive) {
@@ -875,6 +890,13 @@ export default function StationPage() {
   }
 
   if (!session) {
+    const extensionStatusClass = extensionConnected ? "ready" : "needs-update";
+    const extensionStatusText = extensionConnected
+      ? `✓ Extension actualizada · v${requiredExtensionVersion}`
+      : extensionNeedsUpdate
+      ? `Extension desactualizada · v${extensionStatus.extensionVersion || "anterior"}`
+      : "Extension requerida para marcar jornada";
+
     return (
       <main className="station-public-shell station-login-shell">
         <div className="station-public-layout station-login-layout">
@@ -888,11 +910,11 @@ export default function StationPage() {
             </div>
             <h2>Marca tu jornada de forma simple y segura.</h2>
             <div className="station-login-hero-actions">
-              <button type="button" className="station-hero-button">Como funciona</button>
+              <button type="button" className="station-hero-button" onClick={() => setHowWorksDialogOpen(true)}>Como funciona</button>
               {!extensionConnected ? (
-                <a className="station-hero-link" href={extensionDownloadHref} download>
-                  Instalar extension
-                </a>
+                <button type="button" className="station-hero-link" onClick={() => setExtensionDialogOpen(true)}>
+                  {extensionNeedsUpdate ? "Actualizar extension" : "Instalar extension"}
+                </button>
               ) : null}
             </div>
           </section>
@@ -929,7 +951,14 @@ export default function StationPage() {
               </div>
               <button type="submit" className="station-primary" disabled={busy}>{busy ? "Verificando..." : "Entrar"}</button>
             </form>
-            {extensionConnected ? <p className="station-extension-ok">Extension conectada · v{requiredExtensionVersion}</p> : null}
+            <p className={`station-extension-status ${extensionStatusClass}`}>
+              <span>{extensionStatusText}</span>
+              {!extensionConnected ? (
+                <button type="button" onClick={() => setExtensionDialogOpen(true)}>
+                  {extensionNeedsUpdate ? "Actualizar" : "Instalar"}
+                </button>
+              ) : null}
+            </p>
             {resetOpen ? (
               <form className="station-reset-box" onSubmit={confirmReset}>
                 <label>Correo
@@ -948,6 +977,75 @@ export default function StationPage() {
             {statusText ? <p className="station-status-line">{statusText}</p> : null}
           </section>
         </div>
+        {howWorksDialogOpen ? (
+          <div className="station-extension-dialog-backdrop" role="presentation" onClick={() => setHowWorksDialogOpen(false)}>
+            <section
+              className="station-extension-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="station-how-dialog-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                className="station-extension-dialog-close"
+                aria-label="Cerrar"
+                onClick={() => setHowWorksDialogOpen(false)}
+              >
+                ×
+              </button>
+              <header>
+                <span>Estacion de marcaje</span>
+                <h2 id="station-how-dialog-title">Como funciona</h2>
+                <p>La estacion registra tu jornada laboral y mantiene evidencia de actividad mientras estas marcado como trabajando.</p>
+              </header>
+              <ul className="station-info-list">
+                <li>Inicias sesion con tus credenciales laborales y marcas entrada, descansos, almuerzo y salida.</li>
+                <li>La extension valida que esta instalada y actualizada antes de permitir el marcaje.</li>
+                <li>Durante la jornada activa toma capturas autorizadas cada 5 minutos como respaldo de trabajo.</li>
+                <li>Las capturas se detienen cuando finalizas la jornada o sales de la estacion.</li>
+                <li>La zona horaria se selecciona dentro de la estacion despues de iniciar sesion.</li>
+              </ul>
+              <small>Sin la extension actualizada, la estacion bloquea el marcaje hasta completar la actualizacion.</small>
+            </section>
+          </div>
+        ) : null}
+        {extensionDialogOpen ? (
+          <div className="station-extension-dialog-backdrop" role="presentation" onClick={() => setExtensionDialogOpen(false)}>
+            <section
+              className="station-extension-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="station-extension-dialog-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                className="station-extension-dialog-close"
+                aria-label="Cerrar"
+                onClick={() => setExtensionDialogOpen(false)}
+              >
+                ×
+              </button>
+              <header>
+                <span>{extensionMissing ? "Extension requerida" : "Nueva version 0.2.0"}</span>
+                <h2 id="station-extension-dialog-title">Nueva version {requiredExtensionVersion}</h2>
+                <p>Actualiza VYNTRA Browser para habilitar el marcaje y las capturas autorizadas cada 5 minutos durante la jornada activa.</p>
+              </header>
+              <ol>
+                <li>Descarga el archivo de actualizacion.</li>
+                <li>Descomprime el ZIP en una carpeta local.</li>
+                <li>Abre Chrome o Edge y entra a la pagina de extensiones.</li>
+                <li>Activa el modo de desarrollador y reemplaza la extension actual.</li>
+                <li>Vuelve a esta estacion y espera a que el estado cambie a actualizado.</li>
+              </ol>
+              <a className="station-download-button" href={extensionDownloadHref} download>
+                Descargar actualizacion
+              </a>
+              <small>Sin la extension actualizada no se puede marcar la jornada.</small>
+            </section>
+          </div>
+        ) : null}
       </main>
     );
   }

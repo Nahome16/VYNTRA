@@ -5060,7 +5060,35 @@ tbody tr:hover {
 }
 
 .station-login-shell {
-  background: #171717;
+  min-height: 100svh;
+  place-items: stretch;
+  position: relative;
+  background: #071433;
+  padding: 0;
+}
+
+.station-language-toggle {
+  position: absolute;
+  z-index: 5;
+  top: 18px;
+  right: 18px;
+  min-width: 42px;
+  min-height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 999px;
+  background: rgba(23, 34, 60, 0.72);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.station-language-toggle:hover,
+.station-language-toggle:focus-visible {
+  border-color: #60a5fa;
+  background: rgba(59, 130, 246, 0.22);
+  outline: none;
 }
 
 .station-public-layout {
@@ -5078,11 +5106,11 @@ tbody tr:hover {
 }
 
 .station-login-layout {
-  width: min(100%, 1400px);
-  min-height: min(82svh, 620px);
+  width: 100%;
+  min-height: 100svh;
   grid-template-columns: minmax(360px, 1fr) minmax(360px, 540px);
   align-items: center;
-  border-radius: 14px;
+  border-radius: 0;
   background: #071433;
   padding: clamp(34px, 6vw, 80px);
 }
@@ -5143,27 +5171,29 @@ tbody tr:hover {
 
 .station-hero-button,
 .station-hero-link {
-  min-height: 40px;
-  border-radius: 7px;
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.station-hero-button {
-  border: 1px solid rgba(255, 255, 255, 0.45);
-  background: transparent;
-  color: #ffffff;
-  padding: 9px 16px;
-}
-
-.station-hero-link {
   display: inline-flex;
   align-items: center;
-  border: 0;
+  justify-content: center;
+  min-height: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 7px;
   background: transparent;
-  color: #dbeafe;
-  padding: 0;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 9px 16px;
   text-decoration: none;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.station-hero-button:hover,
+.station-hero-link:hover,
+.station-hero-button:focus-visible,
+.station-hero-link:focus-visible {
+  border-color: #60a5fa;
+  background: rgba(59, 130, 246, 0.16);
+  color: #ffffff;
+  outline: none;
 }
 
 .station-login-layout .station-login-panel {
@@ -6194,7 +6224,7 @@ tbody tr:hover {
 
   .station-login-layout {
     grid-template-columns: minmax(240px, 1fr) minmax(280px, 380px);
-    min-height: auto;
+    min-height: 100svh;
     padding: 32px;
   }
 
@@ -6232,9 +6262,13 @@ tbody tr:hover {
     padding: 12px;
   }
 
+  .station-login-shell {
+    padding: 0;
+  }
+
   .station-login-layout {
     gap: 28px;
-    border-radius: 12px;
+    border-radius: 0;
     padding: 22px;
   }
 

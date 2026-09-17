@@ -8,6 +8,7 @@ const stateKey = "vyntra.station.state";
 const consentPrefix = "vyntra.station.consent.";
 const queueKey = "vyntra.station.queue";
 const timeZoneKey = "vyntra.station.timezone";
+const loginLanguageKey = "vyntra.station.loginLanguage";
 const requiredExtensionVersion = "0.2.0";
 const extensionDownloadHref = `/extensions/vyntra-browser-extension.zip?v=${requiredExtensionVersion}`;
 
@@ -27,6 +28,186 @@ const stationTimeZones = [
 
 type StationStatus = "FUERA" | "TRABAJANDO" | "BREAK" | "LUNCH" | "TERMINADO";
 type OvertimeStatus = "SIN_HORAS_EXTRA" | "ACTIVA" | "FINALIZADA";
+type LoginLanguage = "es" | "en";
+
+const stationLoginCopy = {
+  es: {
+    languageToggleLabel: "Cambiar login a ingles",
+    ariaStation: "VYNTRA Estacion",
+    brandSubtitle: "Estacion de marcaje",
+    hero: "Marca tu jornada de forma simple y segura.",
+    howWorks: "Como funciona",
+    installExtension: "Instalar extension",
+    updateExtension: "Actualizar extension",
+    signInTitle: "Iniciar sesion",
+    emailLabel: "Correo electronico",
+    emailPlaceholder: "Correo electronico",
+    passwordLabel: "Contrasena",
+    passwordPlaceholder: "Tu contrasena",
+    remember: "Recordarme",
+    forgotPassword: "Olvidaste tu contrasena?",
+    verifying: "Verificando...",
+    enter: "Entrar",
+    resetEmail: "Correo",
+    sendCode: "Enviar codigo",
+    resetCode: "Codigo",
+    resetPassword: "Nueva contrasena",
+    resetSubmit: "Restablecer",
+    close: "Cerrar",
+    extensionReady: `✓ Extension actualizada · v${requiredExtensionVersion}`,
+    extensionOutdated: (version: string | null) => `Extension desactualizada · v${version || "anterior"}`,
+    extensionRequired: "Extension requerida para marcar jornada",
+    install: "Instalar",
+    update: "Actualizar",
+    howModalEyebrow: "Estacion de marcaje",
+    howModalTitle: "Como funciona",
+    howModalIntro: "La estacion registra tu jornada laboral y mantiene evidencia de actividad mientras estas marcado como trabajando.",
+    howModalItems: [
+      "Inicias sesion con tus credenciales laborales y marcas entrada, descansos, almuerzo y salida.",
+      "La extension valida que esta instalada y actualizada antes de permitir el marcaje.",
+      "Durante la jornada activa toma capturas autorizadas cada 5 minutos como respaldo de trabajo.",
+      "Las capturas se detienen cuando finalizas la jornada o sales de la estacion.",
+      "La zona horaria se selecciona dentro de la estacion despues de iniciar sesion.",
+    ],
+    howModalNote: "Sin la extension actualizada, la estacion bloquea el marcaje hasta completar la actualizacion.",
+    extensionRequiredEyebrow: "Extension requerida",
+    extensionNewVersion: "Nueva version 0.2.0",
+    extensionModalTitle: `Nueva version ${requiredExtensionVersion}`,
+    extensionModalIntro: "Actualiza VYNTRA Browser para habilitar el marcaje y las capturas autorizadas cada 5 minutos durante la jornada activa.",
+    extensionSteps: [
+      "Descarga el archivo de actualizacion.",
+      "Descomprime el ZIP en una carpeta local.",
+      "Abre Chrome o Edge y entra a la pagina de extensiones.",
+      "Activa el modo de desarrollador y reemplaza la extension actual.",
+      "Vuelve a esta estacion y espera a que el estado cambie a actualizado.",
+    ],
+    downloadUpdate: "Descargar actualizacion",
+    extensionModalNote: "Sin la extension actualizada no se puede marcar la jornada.",
+    status: {
+      verifyingCredentials: "Verificando credenciales...",
+      signedIn: "Sesion iniciada",
+      invalidCredentials: "Correo o contrasena invalida",
+      resetCode: (code: string) => `Codigo de prueba: ${code}`,
+      resetRequested: "Si el correo existe, se envio un codigo.",
+      resetRequestFailed: "No se pudo solicitar recuperacion.",
+      resetConfirmed: "Contrasena restablecida. Ingresa con la nueva contrasena.",
+      resetInvalid: "Codigo invalido o vencido.",
+    },
+  },
+  en: {
+    languageToggleLabel: "Switch login to Spanish",
+    ariaStation: "VYNTRA Time Clock",
+    brandSubtitle: "Time clock station",
+    hero: "Clock in and out simply and securely.",
+    howWorks: "How it works",
+    installExtension: "Install extension",
+    updateExtension: "Update extension",
+    signInTitle: "Sign in",
+    emailLabel: "Email address",
+    emailPlaceholder: "Email address",
+    passwordLabel: "Password",
+    passwordPlaceholder: "Your password",
+    remember: "Remember me",
+    forgotPassword: "Forgot your password?",
+    verifying: "Verifying...",
+    enter: "Enter",
+    resetEmail: "Email",
+    sendCode: "Send code",
+    resetCode: "Code",
+    resetPassword: "New password",
+    resetSubmit: "Reset",
+    close: "Close",
+    extensionReady: `✓ Extension updated · v${requiredExtensionVersion}`,
+    extensionOutdated: (version: string | null) => `Extension out of date · v${version || "previous"}`,
+    extensionRequired: "Extension required to clock in",
+    install: "Install",
+    update: "Update",
+    howModalEyebrow: "Time clock station",
+    howModalTitle: "How it works",
+    howModalIntro: "The station records your workday and keeps activity evidence while you are clocked in as working.",
+    howModalItems: [
+      "Sign in with your employee credentials and record start, breaks, lunch, and end of day.",
+      "The extension confirms it is installed and up to date before clocking is allowed.",
+      "During an active workday it takes authorized screenshots every 5 minutes as work evidence.",
+      "Screenshots stop when you end the workday or leave the station.",
+      "The time zone is selected inside the station after signing in.",
+    ],
+    howModalNote: "Without the updated extension, the station blocks clocking until the update is complete.",
+    extensionRequiredEyebrow: "Extension required",
+    extensionNewVersion: "New version 0.2.0",
+    extensionModalTitle: `New version ${requiredExtensionVersion}`,
+    extensionModalIntro: "Update VYNTRA Browser to enable clocking and authorized screenshots every 5 minutes during an active workday.",
+    extensionSteps: [
+      "Download the update file.",
+      "Unzip the ZIP file into a local folder.",
+      "Open Chrome or Edge and go to the extensions page.",
+      "Enable developer mode and replace the current extension.",
+      "Return to this station and wait for the status to change to updated.",
+    ],
+    downloadUpdate: "Download update",
+    extensionModalNote: "Without the updated extension, the workday cannot be clocked.",
+    status: {
+      verifyingCredentials: "Verifying credentials...",
+      signedIn: "Signed in",
+      invalidCredentials: "Invalid email or password",
+      resetCode: (code: string) => `Test code: ${code}`,
+      resetRequested: "If the email exists, a code was sent.",
+      resetRequestFailed: "Could not request password recovery.",
+      resetConfirmed: "Password reset. Sign in with the new password.",
+      resetInvalid: "Invalid or expired code.",
+    },
+  },
+} satisfies Record<LoginLanguage, {
+  languageToggleLabel: string;
+  ariaStation: string;
+  brandSubtitle: string;
+  hero: string;
+  howWorks: string;
+  installExtension: string;
+  updateExtension: string;
+  signInTitle: string;
+  emailLabel: string;
+  emailPlaceholder: string;
+  passwordLabel: string;
+  passwordPlaceholder: string;
+  remember: string;
+  forgotPassword: string;
+  verifying: string;
+  enter: string;
+  resetEmail: string;
+  sendCode: string;
+  resetCode: string;
+  resetPassword: string;
+  resetSubmit: string;
+  close: string;
+  extensionReady: string;
+  extensionOutdated: (version: string | null) => string;
+  extensionRequired: string;
+  install: string;
+  update: string;
+  howModalEyebrow: string;
+  howModalTitle: string;
+  howModalIntro: string;
+  howModalItems: string[];
+  howModalNote: string;
+  extensionRequiredEyebrow: string;
+  extensionNewVersion: string;
+  extensionModalTitle: string;
+  extensionModalIntro: string;
+  extensionSteps: string[];
+  downloadUpdate: string;
+  extensionModalNote: string;
+  status: {
+    verifyingCredentials: string;
+    signedIn: string;
+    invalidCredentials: string;
+    resetCode: (code: string) => string;
+    resetRequested: string;
+    resetRequestFailed: string;
+    resetConfirmed: string;
+    resetInvalid: string;
+  };
+}>;
 
 type StationSession = {
   email: string;
@@ -326,6 +507,7 @@ export default function StationPage() {
   const [statusText, setStatusText] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [loginLanguage, setLoginLanguage] = useState<LoginLanguage>("es");
   const [busy, setBusy] = useState(false);
   const [consentAccepted, setConsentAccepted] = useState(false);
   const [consentChecks, setConsentChecks] = useState([false, false, false, false]);
@@ -367,13 +549,16 @@ export default function StationPage() {
   const needsPasswordChange = Boolean(session?.credential.password_change_required);
   const consentKey = session ? `${consentPrefix}${session.email}` : "";
   const shiftActive = stationState.status === "TRABAJANDO" || stationState.status === "BREAK" || stationState.status === "LUNCH";
+  const loginText = stationLoginCopy[loginLanguage];
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const savedTimeZone = window.localStorage.getItem(timeZoneKey) || defaultTimeZone();
+      const savedLoginLanguage = window.localStorage.getItem(loginLanguageKey);
       const savedSession = loadJson<StationSession>(sessionKey);
       const savedState = normalizeState(loadJson<Partial<StationState>>(stateKey), savedTimeZone);
       setStationTimeZone(savedTimeZone);
+      if (savedLoginLanguage === "es" || savedLoginLanguage === "en") setLoginLanguage(savedLoginLanguage);
       if (savedSession) {
         setSession(savedSession);
         setLoginEmail(savedSession.email);
@@ -592,6 +777,12 @@ export default function StationPage() {
     setStationState((current) => ({ ...current, timeZone: nextTimeZone }));
   }
 
+  function toggleLoginLanguage() {
+    const nextLanguage: LoginLanguage = loginLanguage === "es" ? "en" : "es";
+    setLoginLanguage(nextLanguage);
+    window.localStorage.setItem(loginLanguageKey, nextLanguage);
+  }
+
   function requireExtension() {
     if (extensionConnected) return true;
     if (extensionNeedsUpdate) {
@@ -624,7 +815,7 @@ export default function StationPage() {
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
-    setStatusText("Verificando credenciales...");
+    setStatusText(loginText.status.verifyingCredentials);
     try {
       const payload = await requestJson<{
         ok: boolean;
@@ -656,9 +847,9 @@ export default function StationPage() {
       saveJson(sessionKey, nextSession);
       setConsentAccepted(window.localStorage.getItem(`${consentPrefix}${nextSession.email}`) === "accepted");
       setLoginPassword("");
-      setStatusText("Sesion iniciada");
+      setStatusText(loginText.status.signedIn);
     } catch {
-      setStatusText("Correo o contrasena invalida");
+      setStatusText(loginText.status.invalidCredentials);
     } finally {
       setBusy(false);
     }
@@ -700,9 +891,9 @@ export default function StationPage() {
         method: "POST",
         body: JSON.stringify({ email: resetForm.email || loginEmail }),
       });
-      setStatusText(payload.reset_code ? `Codigo de prueba: ${payload.reset_code}` : "Si el correo existe, se envio un codigo.");
+      setStatusText(payload.reset_code ? loginText.status.resetCode(payload.reset_code) : loginText.status.resetRequested);
     } catch {
-      setStatusText("No se pudo solicitar recuperacion.");
+      setStatusText(loginText.status.resetRequestFailed);
     } finally {
       setBusy(false);
     }
@@ -721,9 +912,9 @@ export default function StationPage() {
         }),
       });
       setResetOpen(false);
-      setStatusText("Contrasena restablecida. Ingresa con la nueva contrasena.");
+      setStatusText(loginText.status.resetConfirmed);
     } catch {
-      setStatusText("Codigo invalido o vencido.");
+      setStatusText(loginText.status.resetInvalid);
     } finally {
       setBusy(false);
     }
@@ -892,49 +1083,57 @@ export default function StationPage() {
   if (!session) {
     const extensionStatusClass = extensionConnected ? "ready" : "needs-update";
     const extensionStatusText = extensionConnected
-      ? `✓ Extension actualizada · v${requiredExtensionVersion}`
+      ? loginText.extensionReady
       : extensionNeedsUpdate
-      ? `Extension desactualizada · v${extensionStatus.extensionVersion || "anterior"}`
-      : "Extension requerida para marcar jornada";
+      ? loginText.extensionOutdated(extensionStatus.extensionVersion)
+      : loginText.extensionRequired;
 
     return (
       <main className="station-public-shell station-login-shell">
+        <button
+          type="button"
+          className="station-language-toggle"
+          aria-label={loginText.languageToggleLabel}
+          onClick={toggleLoginLanguage}
+        >
+          {loginLanguage === "es" ? "EN" : "ES"}
+        </button>
         <div className="station-public-layout station-login-layout">
-          <section className="station-login-hero" aria-label="VYNTRA Estacion">
+          <section className="station-login-hero" aria-label={loginText.ariaStation}>
             <div className="station-login-brand station-login-brand-hero">
               <div className="station-brand-mark">V</div>
               <div>
                 <span>VYNTRA</span>
-                <strong>Estacion de marcaje</strong>
+                <strong>{loginText.brandSubtitle}</strong>
               </div>
             </div>
-            <h2>Marca tu jornada de forma simple y segura.</h2>
+            <h2>{loginText.hero}</h2>
             <div className="station-login-hero-actions">
-              <button type="button" className="station-hero-button" onClick={() => setHowWorksDialogOpen(true)}>Como funciona</button>
+              <button type="button" className="station-hero-button" onClick={() => setHowWorksDialogOpen(true)}>{loginText.howWorks}</button>
               {!extensionConnected ? (
                 <button type="button" className="station-hero-link" onClick={() => setExtensionDialogOpen(true)}>
-                  {extensionNeedsUpdate ? "Actualizar extension" : "Instalar extension"}
+                  {extensionNeedsUpdate ? loginText.updateExtension : loginText.installExtension}
                 </button>
               ) : null}
             </div>
           </section>
           <section className="station-login-panel" aria-labelledby="station-login-title">
-            <h1 id="station-login-title">Iniciar sesion</h1>
+            <h1 id="station-login-title">{loginText.signInTitle}</h1>
             <form className="station-form" onSubmit={login}>
-              <label>Correo laboral
+              <label>{loginText.emailLabel}
                 <span className="station-input-wrap">
-                  <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} autoComplete="email" placeholder="nombre@empresa.com" required />
+                  <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} autoComplete="email" placeholder={loginText.emailPlaceholder} required />
                   <span aria-hidden="true">@</span>
                 </span>
               </label>
-              <label>Contrasena
+              <label>{loginText.passwordLabel}
                 <span className="station-input-wrap">
                   <input
                     type="password"
                     value={loginPassword}
                     onChange={(event) => setLoginPassword(event.target.value)}
                     autoComplete="current-password"
-                    placeholder="Tu contrasena"
+                    placeholder={loginText.passwordPlaceholder}
                     required
                   />
                   <span aria-hidden="true">o</span>
@@ -943,35 +1142,35 @@ export default function StationPage() {
               <div className="station-login-options">
                 <label>
                   <input type="checkbox" />
-                  Recordarme
+                  {loginText.remember}
                 </label>
                 <button type="button" onClick={() => { setResetOpen(true); setResetForm((form) => ({ ...form, email: loginEmail })); }}>
-                  Olvidaste tu contrasena?
+                  {loginText.forgotPassword}
                 </button>
               </div>
-              <button type="submit" className="station-primary" disabled={busy}>{busy ? "Verificando..." : "Entrar"}</button>
+              <button type="submit" className="station-primary" disabled={busy}>{busy ? loginText.verifying : loginText.enter}</button>
             </form>
             <p className={`station-extension-status ${extensionStatusClass}`}>
               <span>{extensionStatusText}</span>
               {!extensionConnected ? (
                 <button type="button" onClick={() => setExtensionDialogOpen(true)}>
-                  {extensionNeedsUpdate ? "Actualizar" : "Instalar"}
+                  {extensionNeedsUpdate ? loginText.update : loginText.install}
                 </button>
               ) : null}
             </p>
             {resetOpen ? (
               <form className="station-reset-box" onSubmit={confirmReset}>
-                <label>Correo
+                <label>{loginText.resetEmail}
                   <input type="email" value={resetForm.email} onChange={(event) => setResetForm({ ...resetForm, email: event.target.value })} required />
                 </label>
-                <button type="button" className="station-secondary" onClick={requestReset} disabled={busy}>Enviar codigo</button>
-                <label>Codigo
+                <button type="button" className="station-secondary" onClick={requestReset} disabled={busy}>{loginText.sendCode}</button>
+                <label>{loginText.resetCode}
                   <input value={resetForm.code} onChange={(event) => setResetForm({ ...resetForm, code: event.target.value })} required />
                 </label>
-                <label>Nueva contrasena
+                <label>{loginText.resetPassword}
                   <input type="password" value={resetForm.password} onChange={(event) => setResetForm({ ...resetForm, password: event.target.value })} required />
                 </label>
-                <button type="submit" className="station-primary" disabled={busy}>Restablecer</button>
+                <button type="submit" className="station-primary" disabled={busy}>{loginText.resetSubmit}</button>
               </form>
             ) : null}
             {statusText ? <p className="station-status-line">{statusText}</p> : null}
@@ -989,24 +1188,20 @@ export default function StationPage() {
               <button
                 type="button"
                 className="station-extension-dialog-close"
-                aria-label="Cerrar"
+                aria-label={loginText.close}
                 onClick={() => setHowWorksDialogOpen(false)}
               >
                 ×
               </button>
               <header>
-                <span>Estacion de marcaje</span>
-                <h2 id="station-how-dialog-title">Como funciona</h2>
-                <p>La estacion registra tu jornada laboral y mantiene evidencia de actividad mientras estas marcado como trabajando.</p>
+                <span>{loginText.howModalEyebrow}</span>
+                <h2 id="station-how-dialog-title">{loginText.howModalTitle}</h2>
+                <p>{loginText.howModalIntro}</p>
               </header>
               <ul className="station-info-list">
-                <li>Inicias sesion con tus credenciales laborales y marcas entrada, descansos, almuerzo y salida.</li>
-                <li>La extension valida que esta instalada y actualizada antes de permitir el marcaje.</li>
-                <li>Durante la jornada activa toma capturas autorizadas cada 5 minutos como respaldo de trabajo.</li>
-                <li>Las capturas se detienen cuando finalizas la jornada o sales de la estacion.</li>
-                <li>La zona horaria se selecciona dentro de la estacion despues de iniciar sesion.</li>
+                {loginText.howModalItems.map((item) => <li key={item}>{item}</li>)}
               </ul>
-              <small>Sin la extension actualizada, la estacion bloquea el marcaje hasta completar la actualizacion.</small>
+              <small>{loginText.howModalNote}</small>
             </section>
           </div>
         ) : null}
@@ -1022,27 +1217,23 @@ export default function StationPage() {
               <button
                 type="button"
                 className="station-extension-dialog-close"
-                aria-label="Cerrar"
+                aria-label={loginText.close}
                 onClick={() => setExtensionDialogOpen(false)}
               >
                 ×
               </button>
               <header>
-                <span>{extensionMissing ? "Extension requerida" : "Nueva version 0.2.0"}</span>
-                <h2 id="station-extension-dialog-title">Nueva version {requiredExtensionVersion}</h2>
-                <p>Actualiza VYNTRA Browser para habilitar el marcaje y las capturas autorizadas cada 5 minutos durante la jornada activa.</p>
+                <span>{extensionMissing ? loginText.extensionRequiredEyebrow : loginText.extensionNewVersion}</span>
+                <h2 id="station-extension-dialog-title">{loginText.extensionModalTitle}</h2>
+                <p>{loginText.extensionModalIntro}</p>
               </header>
               <ol>
-                <li>Descarga el archivo de actualizacion.</li>
-                <li>Descomprime el ZIP en una carpeta local.</li>
-                <li>Abre Chrome o Edge y entra a la pagina de extensiones.</li>
-                <li>Activa el modo de desarrollador y reemplaza la extension actual.</li>
-                <li>Vuelve a esta estacion y espera a que el estado cambie a actualizado.</li>
+                {loginText.extensionSteps.map((step) => <li key={step}>{step}</li>)}
               </ol>
               <a className="station-download-button" href={extensionDownloadHref} download>
-                Descargar actualizacion
+                {loginText.downloadUpdate}
               </a>
-              <small>Sin la extension actualizada no se puede marcar la jornada.</small>
+              <small>{loginText.extensionModalNote}</small>
             </section>
           </div>
         ) : null}

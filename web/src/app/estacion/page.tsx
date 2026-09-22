@@ -1630,7 +1630,7 @@ export default function StationPage() {
                 <span>W</span>
                 <div>
                   <strong>Actividad web</strong>
-                  <small>{activityRef.current.clicks} clics</small>
+                  <small>Registro interno activo</small>
                 </div>
               </article>
               <article>

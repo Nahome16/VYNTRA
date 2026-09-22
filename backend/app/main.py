@@ -2322,6 +2322,19 @@ def reclassify_activities_for_rule(db: Session, rule: ProductivityRule) -> dict:
     return {"matched": len(activities), "changed": changed, "totals": totals, "scope": "rule"}
 
 
+BROWSER_ACTIVITY_EXECUTABLES = {"browser", "browser-extension"}
+
+
+def pending_rule_title_contains(executable_name: str, title_text_value: str) -> str:
+    executable = (executable_name or "").strip().lower()
+    title = (title_text_value or "").strip()
+    if executable in BROWSER_ACTIVITY_EXECUTABLES:
+        return clean_text(title.split(" - ", 1)[0], 255)
+    if executable:
+        return ""
+    return clean_text(title, 255)
+
+
 def find_employee_credential(
     db: Session,
     company_id: str,
@@ -5950,21 +5963,34 @@ def uncategorized_activity_summary(
         )
         .group_by(AppCatalog.executable_name, WindowTitleCatalog.title_text, Employee.department_id, Department.name)
         .order_by(func.coalesce(func.sum(Activity.duration_seconds), 0).desc())
-        .limit(max(1, min(limit, 100)))
+        .limit(1000)
     ).all()
-    return {
-        "company": {"id": company.id, "name": company.name},
-        "items": [
-            {
-                "executable_name": row.executable_name or "",
-                "title_text": row.title_text or "",
+    grouped: dict[tuple[str, str, str | None], dict] = {}
+    for row in rows:
+        executable_name = row.executable_name or ""
+        title_text_value = row.title_text or ""
+        rule_title_contains = pending_rule_title_contains(executable_name, title_text_value)
+        rule_key = rule_title_contains if rule_title_contains else ("*" if executable_name else title_text_value)
+        key = (executable_name, rule_key, row.department_id)
+        current = grouped.get(key)
+        if current is None:
+            current = {
+                "executable_name": executable_name,
+                "title_text": title_text_value,
+                "rule_title_contains": rule_title_contains,
                 "department_id": row.department_id,
                 "department": row.department_name,
-                "samples": int(row.samples or 0),
-                "seconds": int(row.seconds or 0),
+                "samples": 0,
+                "seconds": 0,
             }
-            for row in rows
-        ],
+            grouped[key] = current
+        current["samples"] += int(row.samples or 0)
+        current["seconds"] += int(row.seconds or 0)
+
+    items = sorted(grouped.values(), key=lambda item: int(item["seconds"]), reverse=True)[: max(1, min(limit, 100))]
+    return {
+        "company": {"id": company.id, "name": company.name},
+        "items": items,
     }
 
 

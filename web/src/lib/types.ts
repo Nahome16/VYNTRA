@@ -212,6 +212,7 @@ export type CatalogsResponse = {
 export type UncategorizedItem = {
   executable_name: string;
   title_text: string;
+  rule_title_contains?: string;
   department_id: string | null;
   department: string | null;
   samples: number;

@@ -316,9 +316,13 @@ export default function SettingsPage() {
     }));
     const pendingRows: RuleRow[] = uncategorized.map((item, index) => ({
       kind: "pending",
-      id: `${item.executable_name}-${item.title_text}-${item.department_id || "general"}-${index}`,
+      id: `${item.executable_name}-${item.rule_title_contains || item.title_text}-${item.department_id || "general"}-${index}`,
       app: item.executable_name || "(desconocido)",
-      title: item.title_text || "(sin titulo)",
+      title: item.rule_title_contains
+        ? `Regla: ${item.rule_title_contains} · Ejemplo: ${item.title_text || "(sin titulo)"}`
+        : item.executable_name
+        ? `Ejemplo: ${item.title_text || "(sin titulo)"}`
+        : item.title_text || "(sin titulo)",
       classification: "uncategorized",
       scope: item.department ? `Pendiente: ${item.department}` : "Pendiente sin departamento",
       scopeKind: "pending",
@@ -585,7 +589,7 @@ export default function SettingsPage() {
         await apiPost("/api/productivity/rules", {
           company_id: isSystemAdmin ? activeCompanyId || null : null,
           executable_name: row.item.executable_name,
-          title_contains: row.item.title_text,
+          title_contains: row.item.rule_title_contains ?? (row.item.executable_name ? "" : row.item.title_text),
           classification,
           priority: 120,
           notes: `Creada desde pendientes de clasificar - ${pendingScopeLabel}`,

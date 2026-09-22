@@ -5,6 +5,49 @@ const allowedOrigins = new Set([
   "http://localhost:3001",
 ]);
 
+const pageActivity = {
+  clicks: 0,
+  focusChanges: 0,
+  lastInteractionAt: null,
+};
+let activityFlushTimer = null;
+
+function canTrackPageActivity() {
+  return window.location.protocol === "http:" || window.location.protocol === "https:";
+}
+
+function flushPageActivity() {
+  if (!canTrackPageActivity()) return;
+  if (!pageActivity.clicks && !pageActivity.focusChanges) return;
+  const payload = {
+    type: "page_activity",
+    clicks: pageActivity.clicks,
+    focusChanges: pageActivity.focusChanges,
+    lastInteractionAt: pageActivity.lastInteractionAt,
+    url: window.location.href,
+    title: document.title,
+  };
+  pageActivity.clicks = 0;
+  pageActivity.focusChanges = 0;
+  chrome.runtime.sendMessage(payload, () => undefined);
+}
+
+function scheduleActivityFlush() {
+  if (activityFlushTimer) return;
+  activityFlushTimer = window.setTimeout(() => {
+    activityFlushTimer = null;
+    flushPageActivity();
+  }, 5000);
+}
+
+function markInteraction(kind) {
+  if (!canTrackPageActivity()) return;
+  if (kind === "click") pageActivity.clicks += 1;
+  if (kind === "focus") pageActivity.focusChanges += 1;
+  pageActivity.lastInteractionAt = new Date().toISOString();
+  scheduleActivityFlush();
+}
+
 function postStatus(status) {
   window.postMessage({
     type: "VYNTRA_EXTENSION_STATUS",
@@ -21,6 +64,11 @@ chrome.runtime.onMessage.addListener((message) => {
     postStatus(message.status);
   }
 });
+
+window.addEventListener("click", () => markInteraction("click"), { capture: true, passive: true });
+window.addEventListener("focus", () => markInteraction("focus"));
+document.addEventListener("visibilitychange", () => markInteraction("focus"));
+window.addEventListener("pagehide", flushPageActivity);
 
 window.addEventListener("message", (event) => {
   if (event.source !== window || !allowedOrigins.has(event.origin)) return;

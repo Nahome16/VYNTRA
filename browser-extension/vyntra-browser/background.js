@@ -2,6 +2,7 @@ const STORAGE_KEYS = {
   station: "vyntraStationBridge",
   queue: "vyntraBrowserQueue",
   status: "vyntraBrowserStatus",
+  activity: "vyntraBrowserPageActivity",
 };
 
 const SAMPLE_ALARM = "vyntra-browser-sample";
@@ -9,8 +10,10 @@ const AUTO_CAPTURE_ALARM = "vyntra-browser-auto-capture";
 const SAMPLE_SECONDS = 60;
 const AUTO_CAPTURE_MINUTES = 5;
 const STALE_STATION_MS = 10 * 60 * 1000;
+const MAX_ACTIVE_SHIFT_MS = 18 * 60 * 60 * 1000;
 const WORKING_STATUS = "TRABAJANDO";
-const VERSION = "browser-extension-0.2.0";
+const VERSION = "0.2.2";
+const ACTIVE_STATUSES = new Set(["TRABAJANDO", "BREAK", "LUNCH"]);
 
 function eventId() {
   if (crypto?.randomUUID) return crypto.randomUUID();
@@ -51,6 +54,15 @@ function queryIdleState() {
   });
 }
 
+function emptyPageActivity() {
+  return {
+    clicks: 0,
+    focusChanges: 0,
+    lastInteractionAt: null,
+    tabs: {},
+  };
+}
+
 function getStatus(station, override = {}) {
   const tracking = Boolean(station?.session?.token && station?.shiftActive && station?.consentAccepted && !isStationStale(station));
   const autoCaptureEnabled = tracking && station?.state?.status === WORKING_STATUS;
@@ -66,9 +78,31 @@ function getStatus(station, override = {}) {
   };
 }
 
+function isActiveShift(station) {
+  return Boolean(station?.shiftActive && ACTIVE_STATUSES.has(station?.state?.status));
+}
+
 function isStationStale(station) {
   const syncedAt = Date.parse(station?.syncedAt || "");
+  if (isActiveShift(station)) {
+    const startedAt = Date.parse(station?.state?.startedAt || station?.snapshot?.inicio_jornada || "");
+    if (startedAt && Date.now() - startedAt <= MAX_ACTIVE_SHIFT_MS) return false;
+  }
   return !syncedAt || Date.now() - syncedAt > STALE_STATION_MS;
+}
+
+function secondsSince(timestamp) {
+  if (!timestamp) return 0;
+  return Math.max(0, Math.floor((Date.now() - Number(timestamp)) / 1000));
+}
+
+function stationTotals(station) {
+  const state = station?.state || {};
+  const work = Number(state.workBase || 0) + (state.status === "TRABAJANDO" ? secondsSince(state.phaseStartedAt) : 0);
+  const breakSeconds = Number(state.breakBase || 0) + (state.status === "BREAK" ? secondsSince(state.phaseStartedAt) : 0);
+  const lunch = Number(state.lunchBase || 0) + (state.status === "LUNCH" ? secondsSince(state.phaseStartedAt) : 0);
+  const overtime = Number(state.overtimeBase || 0) + (state.overtimeStatus === "ACTIVA" ? secondsSince(state.overtimeStartedAt) : 0);
+  return { work, breakSeconds, lunch, overtime };
 }
 
 async function saveStatus(status) {
@@ -135,12 +169,73 @@ async function enqueue(event) {
   await storageSet({ [STORAGE_KEYS.queue]: [...queue, event].slice(-200) });
 }
 
-function buildActivityEvent(station, tab, idleState) {
+async function recordPageActivity(message, sender) {
+  const values = await storageGet([STORAGE_KEYS.station, STORAGE_KEYS.activity]);
+  const station = values[STORAGE_KEYS.station];
+  if (!station?.session?.token || !station.shiftActive || !station.consentAccepted || isStationStale(station)) {
+    return { ok: true, ignored: true };
+  }
+
+  const tabId = sender?.tab?.id ? String(sender.tab.id) : "unknown";
+  const activity = {
+    ...emptyPageActivity(),
+    ...(values[STORAGE_KEYS.activity] || {}),
+    tabs: {
+      ...(values[STORAGE_KEYS.activity]?.tabs || {}),
+    },
+  };
+  const tabActivity = {
+    clicks: 0,
+    focusChanges: 0,
+    lastInteractionAt: null,
+    ...(activity.tabs[tabId] || {}),
+  };
+  const clicks = Math.max(0, Number(message.clicks || 0));
+  const focusChanges = Math.max(0, Number(message.focusChanges || 0));
+  const lastInteractionAt = message.lastInteractionAt || nowIso();
+  activity.clicks += clicks;
+  activity.focusChanges += focusChanges;
+  activity.lastInteractionAt = lastInteractionAt;
+  activity.tabs[tabId] = {
+    ...tabActivity,
+    clicks: tabActivity.clicks + clicks,
+    focusChanges: tabActivity.focusChanges + focusChanges,
+    lastInteractionAt,
+    url: message.url || sender?.tab?.url || tabActivity.url || "",
+    title: message.title || sender?.tab?.title || tabActivity.title || "",
+    updatedAt: nowIso(),
+  };
+  await storageSet({ [STORAGE_KEYS.activity]: activity });
+  return { ok: true };
+}
+
+async function readPageActivitySummary(activeTab) {
+  const values = await storageGet(STORAGE_KEYS.activity);
+  const activity = values[STORAGE_KEYS.activity] || emptyPageActivity();
+  const tabActivity = activeTab?.id ? activity.tabs?.[String(activeTab.id)] || null : null;
+  return {
+    clicks: Number(activity.clicks || 0),
+    focusChanges: Number(activity.focusChanges || 0),
+    lastInteractionAt: activity.lastInteractionAt || null,
+    activeTabClicks: Number(tabActivity?.clicks || 0),
+    activeTabFocusChanges: Number(tabActivity?.focusChanges || 0),
+  };
+}
+
+async function clearPageActivity() {
+  await storageSet({ [STORAGE_KEYS.activity]: emptyPageActivity() });
+}
+
+function buildActivityEvent(station, tab, idleState, pageActivity = emptyPageActivity()) {
   const url = tab?.url || "";
   const domain = getHost(url);
   const title = tab?.title || domain || "Pestana activa";
   const isIdle = idleState !== "active";
   const basePayload = station.snapshot && typeof station.snapshot === "object" ? station.snapshot : {};
+  const baseTelemetry = basePayload.telemetria || {};
+  const baseClicks = Number(baseTelemetry.clics || 0);
+  const baseFocusChanges = Number(baseTelemetry.cambios_ventana || 0);
+  const currentTotals = stationTotals(station);
   return {
     id: eventId(),
     tipo: "browser_activity_snapshot",
@@ -150,13 +245,24 @@ function buildActivityEvent(station, tab, idleState) {
       estado: station.state?.status || basePayload.estado || "TRABAJANDO",
       browser_extension: true,
       extension_version: VERSION,
+      seg_trabajado: currentTotals.work,
+      seg_break: currentTotals.breakSeconds,
+      seg_lunch: currentTotals.lunch,
+      seg_horas_extra: currentTotals.overtime,
       recurso_actual: domain || title,
       url_actual: url,
       titulo_actual: title,
       idle_estado_navegador: idleState,
       telemetria: {
-        ...(basePayload.telemetria || {}),
+        ...baseTelemetry,
         origen: "browser_extension",
+        clics: baseClicks + Number(pageActivity.clicks || 0),
+        cambios_ventana: baseFocusChanges + Number(pageActivity.focusChanges || 0),
+        navegador_clics: Number(pageActivity.clicks || 0),
+        navegador_cambios_ventana: Number(pageActivity.focusChanges || 0),
+        navegador_clics_pestana_actual: Number(pageActivity.activeTabClicks || 0),
+        navegador_cambios_pestana_actual: Number(pageActivity.activeTabFocusChanges || 0),
+        navegador_ultima_interaccion: pageActivity.lastInteractionAt || null,
         muestras_recientes: [
           {
             timestamp: nowIso(),
@@ -164,6 +270,8 @@ function buildActivityEvent(station, tab, idleState) {
             titulo: domain ? `${domain} - ${title}` : title,
             url,
             dominio: domain,
+            clicks: Number(pageActivity.activeTabClicks || 0),
+            cambios_ventana: Number(pageActivity.activeTabFocusChanges || 0),
             idle_segundos: isIdle ? SAMPLE_SECONDS : 0,
             is_idle: isIdle,
             duracion_muestra_segundos: SAMPLE_SECONDS,
@@ -186,12 +294,15 @@ async function sampleBrowserActivity() {
 
   try {
     const [tab, idleState] = await Promise.all([queryActiveTab(), queryIdleState()]);
-    const event = buildActivityEvent(station, tab, idleState);
+    const pageActivity = await readPageActivitySummary(tab);
+    const event = buildActivityEvent(station, tab, idleState, pageActivity);
     await postStationEvent(station, event);
+    await clearPageActivity();
     await flushQueue(station);
     await saveStatus(getStatus(station, { lastSync: nowIso() }));
   } catch (error) {
-    const fallbackEvent = buildActivityEvent(station, null, "unknown");
+    const pageActivity = await readPageActivitySummary(null);
+    const fallbackEvent = buildActivityEvent(station, null, "unknown", pageActivity);
     await enqueue(fallbackEvent);
     await saveStatus(getStatus(station, { lastError: error?.message || "No se pudo sincronizar" }));
   }
@@ -285,7 +396,11 @@ function ensureAlarms() {
   chrome.alarms.create(AUTO_CAPTURE_ALARM, { periodInMinutes: AUTO_CAPTURE_MINUTES });
 }
 
-async function handleMessage(message) {
+async function handleMessage(message, sender) {
+  if (message?.type === "page_activity") {
+    return recordPageActivity(message, sender);
+  }
+
   if (message?.type === "station_sync") {
     const station = {
       ...message.payload,
@@ -325,8 +440,8 @@ async function handleMessage(message) {
   return { ok: false, error: "Mensaje no soportado" };
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  handleMessage(message)
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  handleMessage(message, sender)
     .then(sendResponse)
     .catch((error) => sendResponse({ ok: false, error: error?.message || "Error interno" }));
   return true;

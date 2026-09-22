@@ -6,6 +6,8 @@ Extension requerida para Chrome o Edge que complementa la estacion web de marcaj
 
 - Detecta cuando `https://vyntralab.tech/estacion` tiene sesion activa y consentimiento aceptado.
 - Registra la pestana activa del navegador: dominio, URL, titulo, foco e idle.
+- Cuenta clics y cambios de foco en pestanas web del navegador durante la jornada activa.
+- Mantiene el conteo de tiempo y actividad del navegador mientras la jornada siga activa, incluso si el usuario cierra la pestana de la estacion.
 - Envia muestras al endpoint existente `/api/agent/events` usando el token de la estacion web.
 - Mantiene una cola local si no hay conexion.
 - Permite capturar manualmente la pestana activa desde el popup y subirla como evidencia.
@@ -17,6 +19,9 @@ Extension requerida para Chrome o Edge que complementa la estacion web de marcaj
 - No ve procesos ni aplicaciones fuera del navegador.
 - No captura el escritorio completo ni aplicaciones fuera del navegador.
 - No captura durante break, lunch, fuera de jornada, jornada terminada o sin consentimiento activo.
+- Para tomar break, lunch o finalizar jornada, el usuario debe volver a abrir la estacion web.
+- No lee teclas, contrasenas ni texto escrito en formularios; solo registra contadores de actividad.
+- No puede contar clics dentro de paginas internas del navegador como `chrome://`, la barra de direcciones o controles propios de Chrome/Edge.
 - No funciona si Chrome o Edge estan cerrados.
 - No accede a archivos personales; solo a informacion del navegador autorizada por permisos de extension.
 - La captura automatica requiere permiso de acceso a pestanas del navegador para que Chrome/Edge permita capturar la pestana activa sin una accion manual en cada captura.

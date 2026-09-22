@@ -9,7 +9,7 @@ const consentPrefix = "vyntra.station.consent.";
 const queueKey = "vyntra.station.queue";
 const timeZoneKey = "vyntra.station.timezone";
 const loginLanguageKey = "vyntra.station.loginLanguage";
-const requiredExtensionVersion = "0.2.0";
+const requiredExtensionVersion = "0.2.2";
 const extensionDownloadHref = `/extensions/vyntra-browser-extension.zip?v=${requiredExtensionVersion}`;
 
 const stationTimeZones = [
@@ -80,12 +80,12 @@ const stationLoginCopy = {
       "Inicias sesion con tus credenciales laborales y marcas entrada, descansos, almuerzo y salida.",
       "La extension valida que esta instalada y actualizada antes de permitir el marcaje.",
       "Durante la jornada activa toma capturas autorizadas cada 5 minutos como respaldo de trabajo.",
-      "Las capturas se detienen cuando finalizas la jornada o sales de la estacion.",
+      "La extension puede seguir registrando actividad del navegador si cierras la pestana, pero debes volver a la estacion para break, lunch o finalizar jornada.",
       "La zona horaria se selecciona dentro de la estacion despues de iniciar sesion.",
     ],
     howModalNote: "Sin la extension actualizada, la estacion bloquea el marcaje hasta completar la actualizacion.",
     extensionRequiredEyebrow: "Extension requerida",
-    extensionNewVersion: "Nueva version 0.2.0",
+    extensionNewVersion: `Nueva version ${requiredExtensionVersion}`,
     extensionModalTitle: `Nueva version ${requiredExtensionVersion}`,
     extensionModalIntro: "Actualiza VYNTRA Browser para habilitar el marcaje y las capturas autorizadas cada 5 minutos durante la jornada activa.",
     extensionSteps: [
@@ -143,12 +143,12 @@ const stationLoginCopy = {
       "Sign in with your employee credentials and record start, breaks, lunch, and end of day.",
       "The extension confirms it is installed and up to date before clocking is allowed.",
       "During an active workday it takes authorized screenshots every 5 minutes as work evidence.",
-      "Screenshots stop when you end the workday or leave the station.",
+      "The extension can keep recording browser activity if you close the tab, but you must return to the station for breaks, lunch or clock-out.",
       "The time zone is selected inside the station after signing in.",
     ],
     howModalNote: "Without the updated extension, the station blocks clocking until the update is complete.",
     extensionRequiredEyebrow: "Extension required",
-    extensionNewVersion: "New version 0.2.0",
+    extensionNewVersion: `New version ${requiredExtensionVersion}`,
     extensionModalTitle: `New version ${requiredExtensionVersion}`,
     extensionModalIntro: "Update VYNTRA Browser to enable clocking and authorized screenshots every 5 minutes during an active workday.",
     extensionSteps: [
@@ -713,6 +713,16 @@ export default function StationPage() {
     // The timer intentionally samples the current station state every time this effect is renewed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.token, shiftActive, stationState]);
+
+  useEffect(() => {
+    if (!shiftActive) return undefined;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [shiftActive]);
 
   useEffect(() => {
     syncBrowserExtension();

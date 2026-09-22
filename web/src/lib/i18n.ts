@@ -373,6 +373,7 @@ const en: Record<string, string> = {
   "Guardando resolucion...": "Saving resolution...",
   "Incidencia actualizada": "Incident updated",
   "No se pudo guardar la resolucion": "Could not save the resolution",
+  "Tu usuario no tiene permiso para resolver incidencias": "Your user does not have permission to resolve incidents",
   "Empleado, equipo, tipo o descripcion": "Employee, device, type or description",
   "Bandeja de incidencias": "Incident inbox",
   resultados: "results",
@@ -423,6 +424,11 @@ const en: Record<string, string> = {
     "Check that the note and expected impact are correct.",
   "Confirmar y guardar": "Confirm and save",
   "Revisar impacto": "Review impact",
+  "Modo lectura": "Read-only mode",
+  "Tu usuario puede revisar incidencias, pero no resolverlas.":
+    "Your user can review incidents, but cannot resolve them.",
+  "Solicita a RR. HH. o a un administrador que apruebe, rechace o cierre esta incidencia.":
+    "Ask HR or an administrator to approve, reject, or close this incident.",
   "Selecciona una incidencia para revisar.": "Select an incident to review.",
 
   // Perfil de empleado

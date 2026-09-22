@@ -3951,6 +3951,47 @@ tbody tr:hover {
 .settings-rules-bar {grid-template-columns: minmax(220px, 1fr) auto auto;
 }
 
+.settings-rule-scope-panel {display: grid;grid-template-columns: minmax(260px, 1fr) minmax(160px, 0.35fr) minmax(200px, 0.45fr);gap: 10px;align-items: end;border: 1px solid var(--line);border-radius: 8px;background: var(--surface-sunken);padding: 12px;
+}
+
+.settings-rule-scope-panel > div {display: grid;gap: 3px;min-width: 0;
+}
+
+.settings-rule-scope-panel span,
+.settings-rule-scope-panel label {color: var(--muted);font-size: 11px;font-weight: 900;text-transform: uppercase;
+}
+
+.settings-rule-scope-panel strong {color: var(--ink);font-size: 14px;
+}
+
+.settings-rule-scope-panel small {color: var(--muted);font-size: 12px;
+}
+
+.settings-rule-scope-panel label {display: grid;gap: 6px;
+}
+
+.settings-rule-scope-panel select {height: 38px;min-width: 0;border: 1px solid var(--line);border-radius: 8px;background: var(--surface);color: var(--ink);padding: 0 10px;
+}
+
+.settings-rule-scope-panel select:disabled {opacity: 0.58;
+}
+
+.settings-rule-scope-list {display: flex;gap: 8px;overflow-x: auto;padding-bottom: 2px;
+}
+
+.settings-rule-scope-list button {display: grid;min-width: 150px;gap: 2px;border: 1px solid var(--line);border-radius: 8px;background: var(--surface);color: var(--ink-soft);padding: 8px 10px;text-align: left;
+}
+
+.settings-rule-scope-list button.active,
+.settings-rule-scope-list button:hover {border-color: var(--cyan-line);background: var(--cyan-soft);
+}
+
+.settings-rule-scope-list span {overflow: hidden;text-overflow: ellipsis;white-space: nowrap;font-size: 12px;font-weight: 900;
+}
+
+.settings-rule-scope-list strong {color: var(--muted);font-size: 11px;
+}
+
 .settings-access-bar {grid-template-columns: minmax(220px, 1fr) minmax(150px, auto) auto;
 }
 
@@ -4073,6 +4114,18 @@ tbody tr:hover {
 }
 
 .settings-classification-select {min-height: 30px;border: 1px solid transparent;border-radius: 999px;padding: 0 28px 0 10px;font-size: 12px;font-weight: 900;
+}
+
+.settings-scope-badge {display: inline-flex;align-items: center;min-height: 26px;border: 1px solid var(--line);border-radius: 999px;background: var(--surface-sunken);color: var(--ink-soft);padding: 0 10px;font-size: 12px;font-weight: 800;
+}
+
+.settings-scope-department {border-color: var(--cyan-line);background: var(--cyan-soft);color: var(--cyan);
+}
+
+.settings-scope-employee {border-color: var(--primary-line);background: var(--primary-soft);color: var(--primary-ink);
+}
+
+.settings-scope-pending {border-color: var(--warn-line);background: var(--warn-soft);color: var(--warn);
 }
 
 .settings-pending-filter {justify-self: end;border-color: var(--bad-line);color: var(--bad);
@@ -4418,6 +4471,7 @@ tbody tr:hover {
   }
   .settings-actionbar,
   .settings-rules-bar,
+  .settings-rule-scope-panel,
   .settings-access-bar,
   .attendance-filter-row {grid-template-columns: 1fr;
   }

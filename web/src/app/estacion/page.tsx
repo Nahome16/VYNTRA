@@ -270,6 +270,11 @@ type QueuedEvent = {
   payload: Record<string, unknown>;
 };
 
+type SendEventResult = {
+  status: "sent" | "queued" | "rejected" | "skipped";
+  error?: string;
+};
+
 type ExtensionStatus = {
   available: boolean;
   tracking: boolean;
@@ -815,7 +820,7 @@ export default function StationPage() {
   }
 
   async function sendEvent(type: string, nextState: StationState, showStatus = true, extra: Record<string, unknown> = {}) {
-    if (!session?.token) return;
+    if (!session?.token) return { status: "skipped", error: "Sesion no disponible" } satisfies SendEventResult;
     const event: QueuedEvent = {
       id: eventId(),
       tipo: type,
@@ -827,9 +832,15 @@ export default function StationPage() {
       if (response.ok === false) throw new StationEventRejected(response.rejected?.[0]?.error || "Evento rechazado");
       await flushQueue(session.token);
       if (showStatus) setStatusText("Sincronizado");
+      return { status: "sent" } satisfies SendEventResult;
     } catch (error) {
       if (!(error instanceof StationEventRejected)) queueEvents([event]);
-      if (showStatus) setStatusText(error instanceof Error ? error.message : "Sin conexion. El evento quedo pendiente.");
+      const errorMessage = error instanceof Error ? error.message : "Sin conexion. El evento quedo pendiente.";
+      if (showStatus) setStatusText(errorMessage);
+      return {
+        status: error instanceof StationEventRejected ? "rejected" : "queued",
+        error: errorMessage,
+      } satisfies SendEventResult;
     }
   }
 
@@ -1079,15 +1090,38 @@ export default function StationPage() {
   async function submitIncident(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!incident.description.trim()) return;
-    await sendEvent("incident_submitted", stationState, true, {
+    const incidentTypeLabel: Record<string, string> = {
+      correccion_marcaje: "Correccion de marcaje",
+      permiso_vacaciones: "Permisos o vacaciones",
+      tiempo_perdido: "Tiempo perdido por sistema",
+    };
+    const result = await sendEvent("incident_submitted", stationState, true, {
       tipo: incident.type,
       incident_type: incident.type,
+      titulo: incidentTypeLabel[incident.type] || "Incidencia",
+      problema: incidentTypeLabel[incident.type] || incident.type,
       motivo: incident.description.trim(),
+      dia: stationState.workDate || currentWorkDate,
+      zona_horaria: stationTimeZone,
+      estado_jornada: stationState.status,
+      web_station_incident: true,
+      evidencia_tecnica: {
+        periodo_sugerido: stationState.startedAt ? `${formatZonedTime(stationState.startedAt, stationTimeZone)} - ${formatZonedTime(Date.now(), stationTimeZone)}` : "Jornada web",
+        minutos_estimados: 15,
+        app_activa: "Estacion web",
+        ventana_activa: "Estacion de marcaje",
+        estado_jornada: stationState.status,
+        sincronizacion: isOnline ? "En linea" : "Sin conexion",
+        equipo: session?.device.name || "Estacion web",
+        zona_horaria: stationTimeZone,
+        extension: extensionConnected ? "Conectada" : "No conectada",
+      },
       requested_at: nowIso(),
     });
+    if (result.status === "rejected") return;
     setIncident({ type: "correccion_marcaje", description: "" });
     setIncidentOpen(false);
-    setStatusText("Incidencia enviada");
+    setStatusText(result.status === "queued" ? "Incidencia guardada pendiente de sincronizacion" : "Incidencia enviada");
   }
 
   function logout() {

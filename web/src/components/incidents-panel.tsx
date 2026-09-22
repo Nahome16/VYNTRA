@@ -109,6 +109,7 @@ export function IncidentsPanel({ active = true }: { active?: boolean }) {
   const [confirmResolution, setConfirmResolution] = useState(false);
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
+  const canResolveIncidents = Boolean(user?.permissions.includes("incidents:resolve"));
 
   const loadIncidents = useCallback(async () => {
     setLoading(true);
@@ -207,8 +208,9 @@ export function IncidentsPanel({ active = true }: { active?: boolean }) {
       setResolutionNotes(nextSelection?.resolution_notes || "");
       setConfirmResolution(false);
       setStatusText(t("Incidencia actualizada"));
-    } catch {
-      setStatusText(t("No se pudo guardar la resolucion"));
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      setStatusText(status === 403 ? t("Tu usuario no tiene permiso para resolver incidencias") : t("No se pudo guardar la resolucion"));
     }
   }
 
@@ -329,52 +331,60 @@ export function IncidentsPanel({ active = true }: { active?: boolean }) {
                 </section>
               ) : null}
 
-              <form className="incident-resolution" onSubmit={resolveIncident}>
-                <label>
-                  {t("Resolucion")}
-                  <select
-                    value={resolutionStatus}
-                    onChange={(event) => {
-                      setResolutionStatus(event.target.value as IncidentStatus);
-                      setConfirmResolution(false);
-                    }}
-                  >
-                    <option value="approved">{t("Aprobar")}</option>
-                    <option value="rejected">{t("Rechazar")}</option>
-                    <option value="closed">{t("Cerrar sin ajuste")}</option>
-                  </select>
-                </label>
-                <label>
-                  {t("Nota")}
-                  <textarea
-                    value={resolutionNotes}
-                    onChange={(event) => {
-                      setResolutionNotes(event.target.value);
-                      setConfirmResolution(false);
-                    }}
-                    placeholder={t("Resultado de la revision")}
-                    rows={4}
-                  />
-                </label>
-                <section className={`resolution-impact resolution-impact-${resolutionStatus}`}>
-                  <span>{t("Impacto previsto")}</span>
-                  <strong>{resolutionImpactText(selectedIncident, resolutionStatus, t)}</strong>
-                  <small>
-                    {resolutionStatus === "approved"
-                      ? t("El ajuste aparecera como neutral justificado, no como productividad artificial.")
-                      : t("La decision quedara auditada con la nota de revision.")}
-                  </small>
+              {canResolveIncidents ? (
+                <form className="incident-resolution" onSubmit={resolveIncident}>
+                  <label>
+                    {t("Resolucion")}
+                    <select
+                      value={resolutionStatus}
+                      onChange={(event) => {
+                        setResolutionStatus(event.target.value as IncidentStatus);
+                        setConfirmResolution(false);
+                      }}
+                    >
+                      <option value="approved">{t("Aprobar")}</option>
+                      <option value="rejected">{t("Rechazar")}</option>
+                      <option value="closed">{t("Cerrar sin ajuste")}</option>
+                    </select>
+                  </label>
+                  <label>
+                    {t("Nota")}
+                    <textarea
+                      value={resolutionNotes}
+                      onChange={(event) => {
+                        setResolutionNotes(event.target.value);
+                        setConfirmResolution(false);
+                      }}
+                      placeholder={t("Resultado de la revision")}
+                      rows={4}
+                    />
+                  </label>
+                  <section className={`resolution-impact resolution-impact-${resolutionStatus}`}>
+                    <span>{t("Impacto previsto")}</span>
+                    <strong>{resolutionImpactText(selectedIncident, resolutionStatus, t)}</strong>
+                    <small>
+                      {resolutionStatus === "approved"
+                        ? t("El ajuste aparecera como neutral justificado, no como productividad artificial.")
+                        : t("La decision quedara auditada con la nota de revision.")}
+                    </small>
+                  </section>
+                  {confirmResolution ? (
+                    <div className="resolution-confirm">
+                      <strong>{t("Confirmar decision")}</strong>
+                      <span>{t("Revisa que la nota y el impacto previsto sean correctos.")}</span>
+                    </div>
+                  ) : null}
+                  <button className="secondary-button" type="submit" disabled={loading}>
+                    {confirmResolution ? t("Confirmar y guardar") : t("Revisar impacto")}
+                  </button>
+                </form>
+              ) : (
+                <section className="resolution-impact resolution-impact-closed">
+                  <span>{t("Modo lectura")}</span>
+                  <strong>{t("Tu usuario puede revisar incidencias, pero no resolverlas.")}</strong>
+                  <small>{t("Solicita a RR. HH. o a un administrador que apruebe, rechace o cierre esta incidencia.")}</small>
                 </section>
-                {confirmResolution ? (
-                  <div className="resolution-confirm">
-                    <strong>{t("Confirmar decision")}</strong>
-                    <span>{t("Revisa que la nota y el impacto previsto sean correctos.")}</span>
-                  </div>
-                ) : null}
-                <button className="secondary-button" type="submit" disabled={loading}>
-                  {confirmResolution ? t("Confirmar y guardar") : t("Revisar impacto")}
-                </button>
-              </form>
+              )}
             </div>
           ) : (
             <EmptyState>{t("Selecciona una incidencia para revisar.")}</EmptyState>

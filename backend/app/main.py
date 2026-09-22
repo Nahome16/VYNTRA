@@ -2184,6 +2184,69 @@ def reclassify_activities_for_company(db: Session, company_id: str) -> dict:
     return {"changed": changed, "totals": totals}
 
 
+def reclassify_activities_for_rule(db: Session, rule: ProductivityRule) -> dict:
+    query = select(Activity).where(Activity.company_id == rule.company_id)
+    if rule.executable_name:
+        app_ids = select(AppCatalog.id).where(
+            AppCatalog.company_id == rule.company_id,
+            AppCatalog.executable_name == rule.executable_name,
+        )
+        query = query.where(Activity.app_id.in_(app_ids))
+    if rule.title_contains:
+        title_ids = select(WindowTitleCatalog.id).where(
+            WindowTitleCatalog.company_id == rule.company_id,
+            func.lower(WindowTitleCatalog.title_text).contains(rule.title_contains.lower()),
+        )
+        query = query.where(Activity.window_title_id.in_(title_ids))
+    if rule.employee_id:
+        query = query.where(Activity.employee_id == rule.employee_id)
+    elif rule.department_id or rule.position_id:
+        query = query.join(Employee, Employee.id == Activity.employee_id)
+        if rule.department_id:
+            query = query.where(Employee.department_id == rule.department_id)
+        if rule.position_id:
+            query = query.where(Employee.position_id == rule.position_id)
+
+    activities = db.execute(query.order_by(Activity.started_at.desc())).scalars().all()
+    changed = 0
+    totals = {
+        "productive": 0,
+        "neutral": 0,
+        "non_productive": 0,
+        "uncategorized": 0,
+    }
+    employees: dict[str, Employee | None] = {}
+    apps: dict[str, AppCatalog | None] = {}
+    titles: dict[str, WindowTitleCatalog | None] = {}
+
+    for activity in activities:
+        if activity.employee_id not in employees:
+            employees[activity.employee_id] = db.get(Employee, activity.employee_id)
+        employee = employees[activity.employee_id]
+        if employee is None:
+            continue
+        if activity.app_id and activity.app_id not in apps:
+            apps[activity.app_id] = db.get(AppCatalog, activity.app_id)
+        if activity.window_title_id and activity.window_title_id not in titles:
+            titles[activity.window_title_id] = db.get(WindowTitleCatalog, activity.window_title_id)
+        app_row = apps.get(activity.app_id or "")
+        title_row = titles.get(activity.window_title_id or "")
+        new_classification = classify_activity(
+            db,
+            rule.company_id,
+            employee,
+            app_row.executable_name if app_row else "",
+            title_row.title_text if title_row else "",
+        )
+        totals[new_classification] = totals.get(new_classification, 0) + 1
+        if activity.classification != new_classification:
+            activity.classification = new_classification
+            activity.is_productive = classification_to_bool(new_classification)
+            changed += 1
+
+    return {"matched": len(activities), "changed": changed, "totals": totals, "scope": "rule"}
+
+
 def find_employee_credential(
     db: Session,
     company_id: str,
@@ -5683,7 +5746,7 @@ def create_productivity_rule(
 
     reclassify_result = None
     if bool(payload.get("reclassify", True)):
-        reclassify_result = reclassify_activities_for_company(db, company.id)
+        reclassify_result = reclassify_activities_for_rule(db, rule)
 
     db.commit()
     rebuild_queued = bool(payload.get("rebuild_blocks", True))
@@ -5747,7 +5810,7 @@ def update_productivity_rule(
     rule.updated_at = now_utc()
     reclassify_result = None
     if bool(payload.get("reclassify", True)):
-        reclassify_result = reclassify_activities_for_company(db, rule.company_id)
+        reclassify_result = reclassify_activities_for_rule(db, rule)
 
     db.commit()
     rebuild_queued = bool(payload.get("rebuild_blocks", True))

@@ -20,9 +20,11 @@ const classifications = ["productive", "neutral", "non_productive", "uncategoriz
 type SectionKey = keyof typeof sectionLabels;
 type RuleClassification = (typeof classifications)[number];
 type AccessType = "station_reopen" | "overtime";
+type RuleScope = "company" | "department" | "employee";
+type RuleScopeKind = RuleScope | "position" | "pending";
 type RuleRow =
-  | { kind: "rule"; id: string; app: string; title: string; classification: string; scope: string; department_id: string | null; rule: ProductivityRule }
-  | { kind: "pending"; id: string; app: string; title: string; classification: "uncategorized"; scope: string; department_id: null; item: UncategorizedItem };
+  | { kind: "rule"; id: string; app: string; title: string; classification: string; scope: string; scopeKind: RuleScopeKind; department_id: string | null; rule: ProductivityRule }
+  | { kind: "pending"; id: string; app: string; title: string; classification: "uncategorized"; scope: string; scopeKind: "pending"; department_id: null; item: UncategorizedItem };
 
 function isSectionKey(value: string): value is SectionKey {
   return value in sectionLabels;
@@ -63,6 +65,13 @@ function scopeLabel(rule: ProductivityRule) {
   if (rule.department) return `Departamento: ${rule.department}`;
   if (rule.position) return `Puesto: ${rule.position}`;
   return "General";
+}
+
+function scopeKind(rule: ProductivityRule): RuleScopeKind {
+  if (rule.employee_id) return "employee";
+  if (rule.department_id) return "department";
+  if (rule.position_id) return "position";
+  return "company";
 }
 
 function initialsFor(name: string) {
@@ -142,9 +151,11 @@ export default function SettingsPage() {
   const [ruleFilterMenuOpen, setRuleFilterMenuOpen] = useState(false);
   const [showClassificationFilter, setShowClassificationFilter] = useState(false);
   const [pendingOnly, setPendingOnly] = useState(false);
+  const [quickRuleScope, setQuickRuleScope] = useState<Exclude<RuleScope, "employee">>("company");
+  const [quickRuleDepartmentId, setQuickRuleDepartmentId] = useState("");
   const [showRuleModal, setShowRuleModal] = useState(false);
   const [editingRule, setEditingRule] = useState<ProductivityRule | null>(null);
-  const [ruleScope, setRuleScope] = useState<"company" | "department" | "employee">("company");
+  const [ruleScope, setRuleScope] = useState<RuleScope>("company");
   const [ruleDepartmentId, setRuleDepartmentId] = useState("");
   const [ruleEmployeeId, setRuleEmployeeId] = useState("");
   const [ruleExecutable, setRuleExecutable] = useState("");
@@ -206,6 +217,8 @@ export default function SettingsPage() {
     const timer = window.setTimeout(() => {
       setEmployeeDepartmentFilter("");
       setRuleDepartmentFilter("");
+      setQuickRuleScope("company");
+      setQuickRuleDepartmentId("");
       setAccessEmployeeId("");
       setRuleEmployeeId("");
       setRuleDepartmentId("");
@@ -252,6 +265,21 @@ export default function SettingsPage() {
     () => [`${activeEmployees} usuarios activos`, `${rules.length} reglas`, `${activeCodes} codigos vigentes`],
     [activeCodes, activeEmployees, rules.length],
   );
+  const quickRuleScopeLabel = useMemo(() => {
+    if (quickRuleScope !== "department") return "General empresa";
+    return quickRuleDepartmentId ? `Departamento: ${departmentMap.get(quickRuleDepartmentId) || "Departamento"}` : "Departamento sin seleccionar";
+  }, [departmentMap, quickRuleDepartmentId, quickRuleScope]);
+  const ruleScopeSummaries = useMemo(() => {
+    const generalRules = rules.filter((rule) => scopeKind(rule) === "company").length;
+    return [
+      { id: "general", label: "General empresa", count: generalRules },
+      ...departments.map((department) => ({
+        id: department.id,
+        label: department.name,
+        count: rules.filter((rule) => rule.department_id === department.id).length,
+      })),
+    ];
+  }, [departments, rules]);
 
   const filteredEmployees = useMemo(() => {
     const needle = employeeSearch.trim().toLowerCase();
@@ -282,6 +310,7 @@ export default function SettingsPage() {
       title: rule.title_contains || "*",
       classification: rule.classification,
       scope: scopeLabel(rule),
+      scopeKind: scopeKind(rule),
       department_id: rule.department_id,
       rule,
     }));
@@ -292,6 +321,7 @@ export default function SettingsPage() {
       title: item.title_text || "(sin titulo)",
       classification: "uncategorized",
       scope: "Pendiente",
+      scopeKind: "pending",
       department_id: null,
       item,
     }));
@@ -303,7 +333,7 @@ export default function SettingsPage() {
     return ruleRows.filter((row) => {
       const matchesDepartment =
         !ruleDepartmentFilter ||
-        (ruleDepartmentFilter === "general" ? row.department_id === null : row.department_id === ruleDepartmentFilter);
+        (ruleDepartmentFilter === "general" ? row.scopeKind === "company" : row.department_id === ruleDepartmentFilter);
       const matchesClassification = !ruleClassificationFilter || row.classification === ruleClassificationFilter;
       const matchesSearch = matchesNeedle([row.app, row.title, row.scope, classificationLabel(row.classification)], needle);
       return matchesDepartment && matchesClassification && matchesSearch;
@@ -476,8 +506,8 @@ export default function SettingsPage() {
       setRuleClassification(rule.classification as RuleClassification);
       setRuleNotes(rule.notes || "");
     } else {
-      setRuleScope("company");
-      setRuleDepartmentId("");
+      setRuleScope(quickRuleScope === "department" && quickRuleDepartmentId ? "department" : "company");
+      setRuleDepartmentId(quickRuleScope === "department" ? quickRuleDepartmentId : "");
       setRuleEmployeeId("");
       setRuleExecutable("");
       setRuleTitle("");
@@ -534,6 +564,10 @@ export default function SettingsPage() {
 
   async function updateRuleClassification(row: RuleRow, classification: RuleClassification) {
     if (classification === row.classification) return;
+    if (row.kind === "pending" && quickRuleScope === "department" && !quickRuleDepartmentId) {
+      setStatusText("Selecciona el departamento al que aplicara esta regla");
+      return;
+    }
     setStatusText("Actualizando clasificacion...");
     try {
       if (row.kind === "rule") {
@@ -550,8 +584,8 @@ export default function SettingsPage() {
           title_contains: row.item.title_text,
           classification,
           priority: 120,
-          notes: "Creada desde pendientes de clasificar",
-          department_id: null,
+          notes: `Creada desde pendientes de clasificar - ${quickRuleScopeLabel}`,
+          department_id: quickRuleScope === "department" ? quickRuleDepartmentId : null,
           employee_id: null,
           reclassify: true,
           rebuild_blocks: true,
@@ -875,7 +909,7 @@ export default function SettingsPage() {
             <div className="settings-actionbar settings-rules-bar">
               <div className="settings-search">
                 <span aria-hidden="true">⌕</span>
-                <input value={ruleSearch} onChange={(event) => setRuleSearch(event.target.value)} placeholder="Buscar app, titulo o persona..." />
+                <input value={ruleSearch} onChange={(event) => setRuleSearch(event.target.value)} placeholder="Buscar app, titulo o alcance..." />
               </div>
               <div className="settings-dropdown">
                 <button className="row-action settings-filter-trigger" type="button" onClick={() => setRuleFilterMenuOpen((open) => !open)}>
@@ -936,6 +970,62 @@ export default function SettingsPage() {
               <button className="settings-primary-action" type="button" onClick={() => openRuleModal()}>
                 + Nueva regla
               </button>
+            </div>
+            <div className="settings-rule-scope-panel">
+              <div>
+                <span>Nuevas clasificaciones pendientes</span>
+                <strong>Aplicar a: {quickRuleScopeLabel}</strong>
+                <small>Cuando cambies una app pendiente desde la tabla, la regla se creara con este alcance.</small>
+              </div>
+              <label>Alcance
+                <select
+                  value={quickRuleScope}
+                  onChange={(event) => {
+                    const nextScope = event.target.value as Exclude<RuleScope, "employee">;
+                    setQuickRuleScope(nextScope);
+                    setQuickRuleDepartmentId(nextScope === "department" ? quickRuleDepartmentId || departments[0]?.id || "" : "");
+                  }}
+                >
+                  <option value="company">General empresa</option>
+                  <option value="department">Departamento</option>
+                </select>
+              </label>
+              <label>Departamento
+                <select
+                  value={quickRuleDepartmentId}
+                  onChange={(event) => setQuickRuleDepartmentId(event.target.value)}
+                  disabled={quickRuleScope !== "department"}
+                >
+                  <option value="">Selecciona departamento</option>
+                  {departments.map((department) => (
+                    <option value={department.id} key={department.id}>{department.name}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="settings-rule-scope-list" aria-label="Resumen de reglas por alcance">
+              {ruleScopeSummaries.map((scope) => (
+                <button
+                  type="button"
+                  key={scope.id}
+                  className={ruleDepartmentFilter === scope.id ? "active" : ""}
+                  onClick={() => {
+                    setPendingOnly(false);
+                    setRuleClassificationFilter("");
+                    setRuleDepartmentFilter(scope.id);
+                    if (scope.id === "general") {
+                      setQuickRuleScope("company");
+                      setQuickRuleDepartmentId("");
+                    } else {
+                      setQuickRuleScope("department");
+                      setQuickRuleDepartmentId(scope.id);
+                    }
+                  }}
+                >
+                  <span>{scope.label}</span>
+                  <strong>{scope.count} reglas</strong>
+                </button>
+              ))}
             </div>
             {ruleDepartmentFilter || ruleClassificationFilter ? (
               <div className="settings-filter-chips">
@@ -1004,7 +1094,10 @@ export default function SettingsPage() {
                           ))}
                         </select>
                       </td>
-                      <td>{row.scope}</td>
+                      <td>
+                        <span className={`settings-scope-badge settings-scope-${row.scopeKind}`}>{row.scope}</span>
+                        {row.kind === "pending" ? <small>Nueva regla: {quickRuleScopeLabel}</small> : null}
+                      </td>
                       <td>
                         {row.kind === "rule" ? (
                           <button className="row-action" type="button" onClick={() => openRuleModal(row.rule)}>
@@ -1185,7 +1278,7 @@ export default function SettingsPage() {
               <select
                 value={ruleScope}
                 onChange={(event) => {
-                  setRuleScope(event.target.value as "company" | "department" | "employee");
+                  setRuleScope(event.target.value as RuleScope);
                   setRuleDepartmentId("");
                   setRuleEmployeeId("");
                 }}

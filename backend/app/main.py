@@ -1347,7 +1347,7 @@ def productivity_totals(blocks: list[ProductivityBlock | dict]) -> dict:
     total = totals["total_seconds"]
     totals.update(
         {
-            "productivity_pct": percent(totals["productive_seconds"], active),
+            "productivity_pct": percent(totals["productive_seconds"] + totals["neutral_seconds"], active),
             "acceptable_pct": percent(totals["productive_seconds"] + totals["neutral_seconds"], active),
             "non_productive_pct": percent(totals["non_productive_seconds"], active),
             "neutral_pct": percent(totals["neutral_seconds"], active),
@@ -1611,7 +1611,7 @@ def adjustment_virtual_blocks(
     for row in rows:
         active = row["active_seconds"]
         total = row["total_seconds"]
-        row["productivity_pct"] = percent(row["productive_seconds"], active)
+        row["productivity_pct"] = percent(row["productive_seconds"] + row["neutral_seconds"], active)
         row["acceptable_pct"] = percent(row["productive_seconds"] + row["neutral_seconds"], active)
         row["non_productive_pct"] = percent(row["non_productive_seconds"], active)
         row["neutral_pct"] = percent(row["neutral_seconds"], active)
@@ -6066,7 +6066,7 @@ def productivity_dashboard(
     for day in by_day.values():
         day_active = day["active_seconds"]
         day_total = day["total_seconds"]
-        day["productivity_pct"] = percent(day["productive_seconds"], day_active)
+        day["productivity_pct"] = percent(day["productive_seconds"] + day["neutral_seconds"], day_active)
         day["acceptable_pct"] = percent(day["productive_seconds"] + day["neutral_seconds"], day_active)
         day["idle_pct"] = percent(day["idle_seconds"], day_total)
         day["break_pct"] = percent(day["break_seconds"], day_total)

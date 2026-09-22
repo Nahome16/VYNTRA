@@ -128,9 +128,10 @@ function DailyBarTrend({ points }: { points: TrendPoint[] }) {
 }
 
 function TimeDonut({ totals }: { totals: DashboardTotals }) {
+  const productiveOnlyPct = Math.max(0, totals.productivity_pct - totals.neutral_pct);
   const segments = [
-    { key: "productivo", label: "Productivo", value: totals.productivity_pct },
-    { key: "neutral", label: "Neutral", value: totals.neutral_pct + totals.uncategorized_pct },
+    { key: "productivo", label: "Productivo", value: productiveOnlyPct },
+    { key: "neutral", label: "Neutral", value: totals.neutral_pct },
     { key: "no-productivo", label: "No productivo", value: totals.non_productive_pct },
   ];
   const radius = 42;
@@ -158,7 +159,7 @@ function TimeDonut({ totals }: { totals: DashboardTotals }) {
           );
         })}
         <text x="60" y="57" textAnchor="middle">{totals.productivity_pct}%</text>
-        <text x="60" y="72" textAnchor="middle">Total</text>
+        <text x="60" y="72" textAnchor="middle">Prod. + neutral</text>
       </svg>
       <ul>
         {segments.map((segment, index) => (
@@ -396,18 +397,18 @@ export default function DashboardPage() {
             <StatCard
               label={t("Productividad")}
               value={`${totals.productivity_pct}%`}
-              detail={`${formatDuration(totals.productive_seconds)} productivo`}
+              detail={`${formatDuration(totals.productive_seconds + totals.neutral_seconds)} productivo + neutral`}
               tone={metricTone(totals.productivity_pct)}
               delta={trendDelta(totals.productivity_pct, previousTotals?.productivity_pct)}
               deltaTone={deltaTone(trendDelta(totals.productivity_pct, previousTotals?.productivity_pct))}
             />
             <StatCard
-              label={t("Aceptable")}
-              value={`${totals.acceptable_pct}%`}
+              label={t("Neutral")}
+              value={`${totals.neutral_pct}%`}
               detail={`${formatDuration(totals.neutral_seconds + totals.justified_seconds)} neutral/justificado`}
-              tone={metricTone(totals.acceptable_pct)}
-              delta={trendDelta(totals.acceptable_pct, previousTotals?.acceptable_pct)}
-              deltaTone={deltaTone(trendDelta(totals.acceptable_pct, previousTotals?.acceptable_pct))}
+              tone="plain"
+              delta={trendDelta(totals.neutral_pct, previousTotals?.neutral_pct)}
+              deltaTone={deltaTone(trendDelta(totals.neutral_pct, previousTotals?.neutral_pct))}
             />
             <StatCard
               label={t("No productivo")}

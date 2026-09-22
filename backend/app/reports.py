@@ -199,8 +199,8 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
     gap = 5 * mm
     card_w = (PAGE_W - 2 * MARGIN - 3 * gap) / 4
     cards = [
-        ("Productividad", fmt_pct(totals.get("productivity_pct")), fmt_duration(totals.get("productive_seconds", 0)), tone_for_pct(totals.get("productivity_pct", 0))),
-        ("Aceptable", fmt_pct(totals.get("acceptable_pct")), "Productivo + neutral", tone_for_pct(totals.get("acceptable_pct", 0))),
+        ("Productividad", fmt_pct(totals.get("productivity_pct")), "Productivo + neutral", tone_for_pct(totals.get("productivity_pct", 0))),
+        ("Neutral", fmt_pct(totals.get("neutral_pct")), fmt_duration(totals.get("neutral_seconds", 0)), BLUE),
         ("No productivo", fmt_pct(totals.get("non_productive_pct")), fmt_duration(totals.get("non_productive_seconds", 0)), BAD if totals.get("non_productive_pct", 0) > 12 else BLUE),
         ("Idle", fmt_pct(totals.get("idle_pct")), fmt_duration(totals.get("idle_seconds", 0)), WARN if totals.get("idle_pct", 0) > 15 else BLUE),
     ]

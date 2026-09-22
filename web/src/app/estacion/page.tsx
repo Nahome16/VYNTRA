@@ -9,8 +9,9 @@ const consentPrefix = "vyntra.station.consent.";
 const queueKey = "vyntra.station.queue";
 const timeZoneKey = "vyntra.station.timezone";
 const loginLanguageKey = "vyntra.station.loginLanguage";
-const requiredExtensionVersion = "0.2.2";
-const extensionDownloadHref = `/extensions/vyntra-browser-extension.zip?v=${requiredExtensionVersion}`;
+const requiredExtensionVersion = "0.2.0";
+const latestExtensionVersion = "0.2.2";
+const extensionDownloadHref = `/extensions/vyntra-browser-extension.zip?v=${latestExtensionVersion}`;
 
 const stationTimeZones = [
   "America/Managua",
@@ -68,8 +69,8 @@ const stationLoginCopy = {
     resetPassword: "Nueva contrasena",
     resetSubmit: "Restablecer",
     close: "Cerrar",
-    extensionReady: `✓ Extension actualizada · v${requiredExtensionVersion}`,
-    extensionOutdated: (version: string | null) => `Extension desactualizada · v${version || "anterior"}`,
+    extensionReady: "✓ Extension conectada",
+    extensionOutdated: (version: string | null) => `Extension incompatible · v${version || "anterior"}`,
     extensionRequired: "Extension requerida para marcar jornada",
     install: "Instalar",
     update: "Actualizar",
@@ -78,16 +79,16 @@ const stationLoginCopy = {
     howModalIntro: "La estacion registra tu jornada laboral y mantiene evidencia de actividad mientras estas marcado como trabajando.",
     howModalItems: [
       "Inicias sesion con tus credenciales laborales y marcas entrada, descansos, almuerzo y salida.",
-      "La extension valida que esta instalada y actualizada antes de permitir el marcaje.",
+      "La extension valida que esta instalada y en una version compatible antes de permitir el marcaje.",
       "Durante la jornada activa toma capturas autorizadas cada 5 minutos como respaldo de trabajo.",
       "La extension puede seguir registrando actividad del navegador si cierras la pestana, pero debes volver a la estacion para break, lunch o finalizar jornada.",
       "La zona horaria se selecciona dentro de la estacion despues de iniciar sesion.",
     ],
-    howModalNote: "Sin la extension actualizada, la estacion bloquea el marcaje hasta completar la actualizacion.",
+    howModalNote: "Sin una extension compatible, la estacion bloquea el marcaje hasta completar la instalacion.",
     extensionRequiredEyebrow: "Extension requerida",
-    extensionNewVersion: `Nueva version ${requiredExtensionVersion}`,
-    extensionModalTitle: `Nueva version ${requiredExtensionVersion}`,
-    extensionModalIntro: "Actualiza VYNTRA Browser para habilitar el marcaje y las capturas autorizadas cada 5 minutos durante la jornada activa.",
+    extensionNewVersion: `Nueva version ${latestExtensionVersion}`,
+    extensionModalTitle: `Nueva version ${latestExtensionVersion}`,
+    extensionModalIntro: "Instala o actualiza VYNTRA Browser para probar las mejoras de actividad y capturas autorizadas cada 5 minutos durante la jornada activa.",
     extensionSteps: [
       "Descarga el archivo de actualizacion.",
       "Descomprime el ZIP en una carpeta local.",
@@ -96,7 +97,7 @@ const stationLoginCopy = {
       "Vuelve a esta estacion y espera a que el estado cambie a actualizado.",
     ],
     downloadUpdate: "Descargar actualizacion",
-    extensionModalNote: "Sin la extension actualizada no se puede marcar la jornada.",
+    extensionModalNote: "Durante esta prueba, la actualizacion no bloquea el marcaje si ya tienes una version compatible.",
     status: {
       verifyingCredentials: "Verificando credenciales...",
       signedIn: "Sesion iniciada",
@@ -131,8 +132,8 @@ const stationLoginCopy = {
     resetPassword: "New password",
     resetSubmit: "Reset",
     close: "Close",
-    extensionReady: `✓ Extension updated · v${requiredExtensionVersion}`,
-    extensionOutdated: (version: string | null) => `Extension out of date · v${version || "previous"}`,
+    extensionReady: "✓ Extension connected",
+    extensionOutdated: (version: string | null) => `Incompatible extension · v${version || "previous"}`,
     extensionRequired: "Extension required to clock in",
     install: "Install",
     update: "Update",
@@ -141,16 +142,16 @@ const stationLoginCopy = {
     howModalIntro: "The station records your workday and keeps activity evidence while you are clocked in as working.",
     howModalItems: [
       "Sign in with your employee credentials and record start, breaks, lunch, and end of day.",
-      "The extension confirms it is installed and up to date before clocking is allowed.",
+      "The extension confirms it is installed and compatible before clocking is allowed.",
       "During an active workday it takes authorized screenshots every 5 minutes as work evidence.",
       "The extension can keep recording browser activity if you close the tab, but you must return to the station for breaks, lunch or clock-out.",
       "The time zone is selected inside the station after signing in.",
     ],
-    howModalNote: "Without the updated extension, the station blocks clocking until the update is complete.",
+    howModalNote: "Without a compatible extension, the station blocks clocking until setup is complete.",
     extensionRequiredEyebrow: "Extension required",
-    extensionNewVersion: `New version ${requiredExtensionVersion}`,
-    extensionModalTitle: `New version ${requiredExtensionVersion}`,
-    extensionModalIntro: "Update VYNTRA Browser to enable clocking and authorized screenshots every 5 minutes during an active workday.",
+    extensionNewVersion: `New version ${latestExtensionVersion}`,
+    extensionModalTitle: `New version ${latestExtensionVersion}`,
+    extensionModalIntro: "Install or update VYNTRA Browser to test the activity improvements and authorized screenshots every 5 minutes during an active workday.",
     extensionSteps: [
       "Download the update file.",
       "Unzip the ZIP file into a local folder.",
@@ -159,7 +160,7 @@ const stationLoginCopy = {
       "Return to this station and wait for the status to change to updated.",
     ],
     downloadUpdate: "Download update",
-    extensionModalNote: "Without the updated extension, the workday cannot be clocked.",
+    extensionModalNote: "During this test, the update does not block clocking if you already have a compatible version.",
     status: {
       verifyingCredentials: "Verifying credentials...",
       signedIn: "Signed in",
@@ -486,7 +487,7 @@ function ExtensionDownloadCard({ compact = false }: { compact?: boolean }) {
     <section className={compact ? "station-extension-card compact" : "station-extension-card"}>
       <div className="station-card-title">
         <h2>Extension VYNTRA Browser</h2>
-        <span>Version {requiredExtensionVersion}</span>
+        <span>Version {latestExtensionVersion}</span>
       </div>
       <p>Es requerida para marcar jornada. Esta version agrega capturas automaticas autorizadas cada 5 minutos mientras la jornada esta activa.</p>
       <a className="station-download-button" href={extensionDownloadHref} download>
@@ -499,7 +500,7 @@ function ExtensionDownloadCard({ compact = false }: { compact?: boolean }) {
         <li>Elige cargar extension sin empaquetar y selecciona la carpeta descargada.</li>
         <li>Vuelve a esta estacion e inicia sesion.</li>
       </ol>
-      <small>La estacion no permite iniciar, pausar, reabrir ni finalizar jornada si la extension no esta conectada o esta desactualizada.</small>
+      <small>La estacion no permite iniciar, pausar, reabrir ni finalizar jornada si la extension no esta conectada o no es compatible.</small>
     </section>
   );
 }
@@ -564,9 +565,11 @@ export default function StationPage() {
   const closedWorkDate = stationState.workDate || (stationState.endedAt ? zonedDateIso(stationTimeZone, stationState.endedAt) : null);
   const closedToday = stationState.status === "TERMINADO" && closedWorkDate === currentWorkDate;
   const extensionReachable = Boolean(extensionStatus.available && extensionStatus.lastSeenAt && Date.now() - extensionStatus.lastSeenAt < 15000);
-  const extensionUpToDate = versionAtLeast(extensionStatus.extensionVersion, requiredExtensionVersion);
-  const extensionNeedsUpdate = extensionReachable && !extensionUpToDate;
-  const extensionConnected = extensionReachable && extensionUpToDate;
+  const extensionMeetsMinimum = versionAtLeast(extensionStatus.extensionVersion, requiredExtensionVersion);
+  const extensionUpToDate = versionAtLeast(extensionStatus.extensionVersion, latestExtensionVersion);
+  const extensionNeedsUpdate = extensionReachable && !extensionMeetsMinimum;
+  const extensionUpdateAvailable = extensionReachable && extensionMeetsMinimum && !extensionUpToDate;
+  const extensionConnected = extensionReachable && extensionMeetsMinimum;
   const extensionMissing = !extensionReachable;
   const extensionGraceActive = !extensionStatus.lastSeenAt && Date.now() - extensionProbeStartedAtRef.current < 3000;
   const currentTotals = totals(stationState, extensionConnected || extensionGraceActive);
@@ -717,12 +720,20 @@ export default function StationPage() {
   useEffect(() => {
     if (!shiftActive) return undefined;
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      sendClosingEvent("beforeunload");
       event.preventDefault();
       event.returnValue = "";
     };
+    const onPageHide = () => sendClosingEvent("pagehide");
     window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [shiftActive]);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+    // The unload handlers need the latest station/session snapshot while a shift is active.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.token, shiftActive, stationState, extensionConnected, extensionStatus.lastSeenAt]);
 
   useEffect(() => {
     syncBrowserExtension();
@@ -822,7 +833,7 @@ export default function StationPage() {
   function requireExtension() {
     if (extensionConnected) return true;
     if (extensionNeedsUpdate) {
-      setStatusText(`Hay una nueva actualizacion de VYNTRA Browser. Descarga e instala la version ${requiredExtensionVersion} para marcar jornada.`);
+      setStatusText(`La extension instalada no es compatible. Instala VYNTRA Browser ${requiredExtensionVersion} o superior para marcar jornada.`);
       return false;
     }
     setStatusText("Instala y conecta la extension VYNTRA Browser para marcar jornada.");
@@ -851,6 +862,34 @@ export default function StationPage() {
         status: error instanceof StationEventRejected ? "rejected" : "queued",
         error: errorMessage,
       } satisfies SendEventResult;
+    }
+  }
+
+  function sendClosingEvent(reason: "pagehide" | "beforeunload") {
+    if (!session?.token || !shiftActive) return;
+    const event: QueuedEvent = {
+      id: eventId(),
+      tipo: "station_tab_closed",
+      created_at: nowIso(),
+      payload: {
+        ...snapshot(stationState),
+        cierre_pestana: true,
+        motivo_cierre: reason,
+      },
+    };
+    try {
+      void fetch("/api/agent/events", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Device-Token": session.token,
+        },
+        body: JSON.stringify({ events: [event] }),
+        cache: "no-store",
+        keepalive: true,
+      });
+    } catch {
+      // Browsers may abort unload work. The warning still protects the main flow.
     }
   }
 
@@ -1148,7 +1187,9 @@ export default function StationPage() {
   if (!session) {
     const extensionStatusClass = extensionConnected ? "ready" : "needs-update";
     const extensionStatusText = extensionConnected
-      ? loginText.extensionReady
+      ? extensionUpdateAvailable
+        ? `${loginText.extensionReady} · ${loginLanguage === "es" ? "nueva version" : "new version"} ${latestExtensionVersion} ${loginLanguage === "es" ? "disponible" : "available"}`
+        : loginText.extensionReady
       : extensionNeedsUpdate
       ? loginText.extensionOutdated(extensionStatus.extensionVersion)
       : loginText.extensionRequired;
@@ -1175,9 +1216,9 @@ export default function StationPage() {
             <h2>{loginText.hero}</h2>
             <div className="station-login-hero-actions">
               <button type="button" className="station-hero-button" onClick={() => setHowWorksDialogOpen(true)}>{loginText.howWorks}</button>
-              {!extensionConnected ? (
+              {!extensionConnected || extensionUpdateAvailable ? (
                 <button type="button" className="station-hero-link" onClick={() => setExtensionDialogOpen(true)}>
-                  {extensionNeedsUpdate ? loginText.updateExtension : loginText.installExtension}
+                  {extensionConnected || extensionNeedsUpdate ? loginText.updateExtension : loginText.installExtension}
                 </button>
               ) : null}
             </div>
@@ -1217,9 +1258,9 @@ export default function StationPage() {
             </form>
             <p className={`station-extension-status ${extensionStatusClass}`}>
               <span>{extensionStatusText}</span>
-              {!extensionConnected ? (
+              {!extensionConnected || extensionUpdateAvailable ? (
                 <button type="button" onClick={() => setExtensionDialogOpen(true)}>
-                  {extensionNeedsUpdate ? loginText.update : loginText.install}
+                  {extensionConnected || extensionNeedsUpdate ? loginText.update : loginText.install}
                 </button>
               ) : null}
             </p>
@@ -1382,10 +1423,10 @@ export default function StationPage() {
   const canMark = extensionConnected && !busy;
   const canStartNewShift = stationState.status === "FUERA" || (stationState.status === "TERMINADO" && !closedToday);
   const extensionBlockText = extensionNeedsUpdate
-    ? `Hay una nueva actualizacion. Instala VYNTRA Browser ${requiredExtensionVersion}.`
+    ? `La extension instalada no es compatible. Instala VYNTRA Browser ${requiredExtensionVersion} o superior.`
     : "Marcaje bloqueado hasta conectar la extension.";
   const extensionStatusText = extensionNeedsUpdate
-    ? `Actualizar a ${requiredExtensionVersion}`
+    ? `Instala version ${requiredExtensionVersion} o superior`
     : "Instala VYNTRA Browser";
   const statusCopy: Record<StationStatus, { label: string; capture: string; detail: string }> = {
     FUERA: {
@@ -1394,7 +1435,7 @@ export default function StationPage() {
       detail: extensionConnected
         ? "Selecciona iniciar jornada para comenzar el registro web."
         : extensionNeedsUpdate
-        ? `Instala VYNTRA Browser ${requiredExtensionVersion} para habilitar el marcaje.`
+        ? `Instala VYNTRA Browser ${requiredExtensionVersion} o superior para habilitar el marcaje.`
         : "Instala y conecta VYNTRA Browser para habilitar el marcaje.",
     },
     TRABAJANDO: {
@@ -1510,6 +1551,11 @@ export default function StationPage() {
           </div>
 
           <p className="station-action-hint">{statusCopy[stationState.status].detail}</p>
+          {shiftActive ? (
+            <p className="station-workday-guidance">
+              Puedes trabajar en otras pestanas. Vuelve aqui para marcar break, lunch o finalizar jornada.
+            </p>
+          ) : null}
 
           <div className="station-action-row">
             {visibleActions}

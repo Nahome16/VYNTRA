@@ -45,6 +45,8 @@
   --cyan-soft: #e2f4f8;
   --cyan-line: #a8d9e5;
   --plain-bg: #eef1f6;
+  --font-sans: "Segoe UI", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", "Consolas", monospace;
 
   /* Elevación */
   --shadow-xs: 0 1px 2px rgba(14, 23, 38, 0.05);
@@ -5996,6 +5998,17 @@ tbody tr:hover {
   margin: 0;
   color: #94a3b8;
   font-size: 13px;
+}
+
+.station-workday-guidance {
+  margin: 0;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .station-action-row {

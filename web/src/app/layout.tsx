@@ -1,23 +1,9 @@
 import type { Metadata, Viewport } from "next";
-import { Figtree, IBM_Plex_Mono } from "next/font/google";
 import Script from "next/script";
 import { AuthProvider } from "@/components/auth-provider";
 import { PreferencesProvider } from "@/components/preferences-provider";
 import { PREFERENCES_BOOT_SCRIPT } from "@/lib/i18n";
 import "./globals.css";
-
-const sans = Figtree({
-  subsets: ["latin"],
-  variable: "--font-sans",
-  display: "swap",
-});
-
-const mono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-mono",
-  display: "swap",
-});
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -41,7 +27,7 @@ export default function RootLayout({
       lang="es"
       data-theme="light"
       suppressHydrationWarning
-      className={`h-full antialiased ${sans.variable} ${mono.variable}`}
+      className="h-full antialiased"
     >
       <head>
         <Script id="vyntra-preferences" strategy="beforeInteractive">

@@ -24,7 +24,7 @@ type RuleScope = "company" | "department" | "employee";
 type RuleScopeKind = RuleScope | "position" | "pending";
 type RuleRow =
   | { kind: "rule"; id: string; app: string; title: string; classification: string; scope: string; scopeKind: RuleScopeKind; department_id: string | null; rule: ProductivityRule }
-  | { kind: "pending"; id: string; app: string; title: string; classification: "uncategorized"; scope: string; scopeKind: "pending"; department_id: null; item: UncategorizedItem };
+  | { kind: "pending"; id: string; app: string; title: string; classification: "uncategorized"; scope: string; scopeKind: "pending"; department_id: string | null; item: UncategorizedItem };
 
 function isSectionKey(value: string): value is SectionKey {
   return value in sectionLabels;
@@ -316,13 +316,13 @@ export default function SettingsPage() {
     }));
     const pendingRows: RuleRow[] = uncategorized.map((item, index) => ({
       kind: "pending",
-      id: `${item.executable_name}-${item.title_text}-${index}`,
+      id: `${item.executable_name}-${item.title_text}-${item.department_id || "general"}-${index}`,
       app: item.executable_name || "(desconocido)",
       title: item.title_text || "(sin titulo)",
       classification: "uncategorized",
-      scope: "Pendiente",
+      scope: item.department ? `Pendiente: ${item.department}` : "Pendiente sin departamento",
       scopeKind: "pending",
-      department_id: null,
+      department_id: item.department_id,
       item,
     }));
     return pendingOnly ? pendingRows : [...existingRules, ...pendingRows];
@@ -564,7 +564,7 @@ export default function SettingsPage() {
 
   async function updateRuleClassification(row: RuleRow, classification: RuleClassification) {
     if (classification === row.classification) return;
-    if (row.kind === "pending" && quickRuleScope === "department" && !quickRuleDepartmentId) {
+    if (row.kind === "pending" && !row.item.department_id && quickRuleScope === "department" && !quickRuleDepartmentId) {
       setStatusText("Selecciona el departamento al que aplicara esta regla");
       return;
     }
@@ -578,14 +578,18 @@ export default function SettingsPage() {
         });
         setRules((current) => current.map((rule) => (rule.id === row.id ? response.rule : rule)));
       } else {
+        const pendingDepartmentId = row.item.department_id || (quickRuleScope === "department" ? quickRuleDepartmentId : null);
+        const pendingScopeLabel = row.item.department
+          ? `Departamento: ${row.item.department}`
+          : quickRuleScopeLabel;
         await apiPost("/api/productivity/rules", {
           company_id: isSystemAdmin ? activeCompanyId || null : null,
           executable_name: row.item.executable_name,
           title_contains: row.item.title_text,
           classification,
           priority: 120,
-          notes: `Creada desde pendientes de clasificar - ${quickRuleScopeLabel}`,
-          department_id: quickRuleScope === "department" ? quickRuleDepartmentId : null,
+          notes: `Creada desde pendientes de clasificar - ${pendingScopeLabel}`,
+          department_id: pendingDepartmentId,
           employee_id: null,
           reclassify: true,
           rebuild_blocks: true,
@@ -1096,7 +1100,11 @@ export default function SettingsPage() {
                       </td>
                       <td>
                         <span className={`settings-scope-badge settings-scope-${row.scopeKind}`}>{row.scope}</span>
-                        {row.kind === "pending" ? <small>Nueva regla: {quickRuleScopeLabel}</small> : null}
+                        {row.kind === "pending" ? (
+                          <small>
+                            Nueva regla: {row.item.department ? `Departamento: ${row.item.department}` : quickRuleScopeLabel}
+                          </small>
+                        ) : null}
                       </td>
                       <td>
                         {row.kind === "rule" ? (

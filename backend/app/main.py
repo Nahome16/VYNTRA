@@ -5934,17 +5934,21 @@ def uncategorized_activity_summary(
         select(
             AppCatalog.executable_name.label("executable_name"),
             WindowTitleCatalog.title_text.label("title_text"),
+            Employee.department_id.label("department_id"),
+            Department.name.label("department_name"),
             func.count(Activity.id).label("samples"),
             func.coalesce(func.sum(Activity.duration_seconds), 0).label("seconds"),
         )
         .select_from(Activity)
         .join(AppCatalog, AppCatalog.id == Activity.app_id, isouter=True)
         .join(WindowTitleCatalog, WindowTitleCatalog.id == Activity.window_title_id, isouter=True)
+        .join(Employee, Employee.id == Activity.employee_id)
+        .join(Department, Department.id == Employee.department_id, isouter=True)
         .where(
             Activity.company_id == company.id,
             Activity.classification == "uncategorized",
         )
-        .group_by(AppCatalog.executable_name, WindowTitleCatalog.title_text)
+        .group_by(AppCatalog.executable_name, WindowTitleCatalog.title_text, Employee.department_id, Department.name)
         .order_by(func.coalesce(func.sum(Activity.duration_seconds), 0).desc())
         .limit(max(1, min(limit, 100)))
     ).all()
@@ -5954,6 +5958,8 @@ def uncategorized_activity_summary(
             {
                 "executable_name": row.executable_name or "",
                 "title_text": row.title_text or "",
+                "department_id": row.department_id,
+                "department": row.department_name,
                 "samples": int(row.samples or 0),
                 "seconds": int(row.seconds or 0),
             }

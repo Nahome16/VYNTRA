@@ -1067,6 +1067,70 @@ def latest_employee_schedule(db: Session, employee_id: str, on_date: str | None 
     return db.execute(query.order_by(EmployeeSchedule.effective_from.desc())).scalars().first()
 
 
+def shift_work_seconds_for_attendance(shift: Shift) -> int:
+    stored = int(shift.work_seconds or 0)
+    if not shift.started_at or not shift.ended_at:
+        return stored
+
+    gross = seconds_between(_as_aware_utc(shift.started_at), _as_aware_utc(shift.ended_at))
+    pauses = int(shift.break_seconds or 0) + int(shift.lunch_seconds or 0)
+    if pauses > 0 and gross > 0 and abs(stored - gross) <= 1:
+        return max(0, stored - pauses)
+    return stored
+
+
+def event_payload(event: ShiftEvent) -> dict:
+    try:
+        payload = json.loads(event.payload_json or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def attendance_phase_from_events(shift: Shift, events: list[ShiftEvent]) -> str:
+    if shift.ended_at or shift.status == "closed":
+        return "TERMINADO"
+
+    for event in reversed(events):
+        payload_state = str(event_payload(event).get("estado") or "").upper()
+        if payload_state in {"TRABAJANDO", "BREAK", "LUNCH", "TERMINADO"}:
+            return payload_state
+        if event.event_type in {"break_started", "break_restored_by_admin"}:
+            return "BREAK"
+        if event.event_type == "lunch_started":
+            return "LUNCH"
+        if event.event_type in {"shift_started", "break_finished", "lunch_finished", "shift_restored_by_admin"}:
+            return "TRABAJANDO"
+        if event.event_type == "shift_finished":
+            return "TERMINADO"
+
+    if shift.status == "paused":
+        return "PAUSADO"
+    return "TRABAJANDO" if shift.started_at else "FUERA"
+
+
+def attendance_seconds_for_shift(shift: Shift, events: list[ShiftEvent]) -> tuple[int, int, int, str]:
+    work_seconds = shift_work_seconds_for_attendance(shift)
+    break_seconds = int(shift.break_seconds or 0)
+    lunch_seconds = int(shift.lunch_seconds or 0)
+    phase = attendance_phase_from_events(shift, events)
+
+    if shift.started_at and not shift.ended_at and phase in {"TRABAJANDO", "BREAK", "LUNCH"}:
+        latest_event_at = max(
+            (_as_aware_utc(event.occurred_at) for event in events),
+            default=_as_aware_utc(shift.started_at),
+        )
+        elapsed = max(0, int((now_utc() - latest_event_at).total_seconds()))
+        if phase == "TRABAJANDO":
+            work_seconds += elapsed
+        elif phase == "BREAK":
+            break_seconds += elapsed
+        elif phase == "LUNCH":
+            lunch_seconds += elapsed
+
+    return work_seconds, break_seconds, lunch_seconds, phase
+
+
 def serialize_employee_for_attendance(
     employee: Employee,
     departments: dict[str, Department],
@@ -1105,6 +1169,8 @@ def serialize_shift_for_attendance(
     justified_by_shift: dict[str, int] | None = None,
 ) -> dict:
     justified_by_shift = justified_by_shift or {}
+    events = events_by_shift.get(shift.id, [])
+    work_seconds, break_seconds, lunch_seconds, current_phase = attendance_seconds_for_shift(shift, events)
     return {
         "id": shift.id,
         "company_id": shift.company_id,
@@ -1114,9 +1180,10 @@ def serialize_shift_for_attendance(
         "status": shift.status,
         "started_at": shift.started_at.isoformat() if shift.started_at else None,
         "ended_at": shift.ended_at.isoformat() if shift.ended_at else None,
-        "work_seconds": shift.work_seconds,
-        "break_seconds": shift.break_seconds,
-        "lunch_seconds": shift.lunch_seconds,
+        "current_phase": current_phase,
+        "work_seconds": work_seconds,
+        "break_seconds": break_seconds,
+        "lunch_seconds": lunch_seconds,
         "idle_seconds": shift.idle_seconds,
         "justified_seconds": int(justified_by_shift.get(shift.id, 0) or 0),
         "events": [
@@ -1125,7 +1192,7 @@ def serialize_shift_for_attendance(
                 "event_type": event.event_type,
                 "occurred_at": event.occurred_at.isoformat(),
             }
-            for event in events_by_shift.get(shift.id, [])
+            for event in events
         ],
     }
 
@@ -2046,6 +2113,14 @@ def apply_shift_snapshot(shift: Shift, event_type: str, payload: dict):
     elif event_type in {"break_started", "lunch_started"}:
         shift.status = "paused"
     elif event_type in {"break_finished", "lunch_finished", "shift_restored_by_admin"}:
+        shift.status = "open"
+
+    payload_status = str(payload.get("estado") or "").upper()
+    if payload_status == "TERMINADO":
+        shift.status = "closed"
+    elif payload_status in {"BREAK", "LUNCH"}:
+        shift.status = "paused"
+    elif payload_status == "TRABAJANDO":
         shift.status = "open"
 
     shift.work_seconds = int(payload.get("seg_trabajado") or shift.work_seconds or 0)

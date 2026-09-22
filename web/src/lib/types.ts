@@ -319,6 +319,7 @@ export type AttendanceShift = {
   device_id: string | null;
   shift_date: string;
   status: string;
+  current_phase?: string;
   started_at: string | null;
   ended_at: string | null;
   work_seconds: number;

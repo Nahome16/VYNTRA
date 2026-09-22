@@ -28,6 +28,9 @@ const eventLabels: Record<string, string> = {
   lunch_finished: "Fin lunch",
   overtime_started: "Inicio extra",
   overtime_finished: "Fin extra",
+  activity_snapshot: "Actividad",
+  browser_activity_snapshot: "Actividad navegador",
+  station_tab_closed: "Pestana cerrada",
 };
 
 function todayISO() {
@@ -65,7 +68,10 @@ function percentOfDay(value: string | null) {
 
 function statusForShift(shift?: AttendanceShift) {
   if (!shift?.started_at) return { label: "Ausente", tone: "bad" as const };
-  if (shift.ended_at || shift.status === "closed") return { label: "Finalizado", tone: "plain" as const };
+  const phase = (shift.current_phase || "").toUpperCase();
+  if (shift.ended_at || shift.status === "closed" || phase === "TERMINADO") return { label: "Finalizado", tone: "plain" as const };
+  if (phase === "LUNCH") return { label: "Almuerzo", tone: "warn" as const };
+  if (phase === "BREAK" || phase === "PAUSADO") return { label: "Break", tone: "warn" as const };
   const lastEvent = shift.events.at(-1)?.event_type;
   if (lastEvent === "lunch_started") return { label: "Almuerzo", tone: "warn" as const };
   if (lastEvent === "break_started") return { label: "Break", tone: "warn" as const };
@@ -74,7 +80,7 @@ function statusForShift(shift?: AttendanceShift) {
 
 function workedSeconds(shift?: AttendanceShift) {
   if (!shift) return 0;
-  return Math.max(0, (shift.work_seconds || 0) - (shift.break_seconds || 0) - (shift.lunch_seconds || 0) + (shift.justified_seconds || 0));
+  return Math.max(0, (shift.work_seconds || 0) + (shift.justified_seconds || 0));
 }
 
 function employeeLabel(employee: AttendanceEmployee | undefined, fallback: string) {
@@ -110,6 +116,10 @@ function timelineSpan(start: string | null, end: string | null, minWidth = 0.5) 
     left: `${Math.min(100, Math.max(0, left))}%`,
     width: `${Math.max(right - left, minWidth)}%`,
   };
+}
+
+function shiftTimelineEnd(shift: AttendanceShift) {
+  return shift.ended_at || (shift.started_at ? new Date().toISOString() : null);
 }
 
 function timeInput(value: string | null) {
@@ -165,14 +175,16 @@ export default function AttendancePage() {
   const [reportLoading, setReportLoading] = useState(false);
   const isSystemAdmin = user?.role === "system_admin";
 
-  const loadAttendance = useCallback(async (range?: { dateFrom?: string; dateTo?: string }) => {
+  const loadAttendance = useCallback(async (range?: { dateFrom?: string; dateTo?: string; silent?: boolean }) => {
     if (isSystemAdmin && !activeCompanyId) {
       setOverview(null);
       setStatusText("Selecciona una empresa en Sistema para ver asistencia");
       return;
     }
-    setLoading(true);
-    setStatusText(t("Actualizando asistencia..."));
+    if (!range?.silent) {
+      setLoading(true);
+      setStatusText(t("Actualizando asistencia..."));
+    }
     const params = new URLSearchParams();
     const nextDateFrom = range?.dateFrom ?? dateFrom;
     const nextDateTo = range?.dateTo ?? dateTo;
@@ -187,11 +199,11 @@ export default function AttendancePage() {
         `/api/attendance/overview?${params.toString()}`,
       );
       setOverview(nextOverview);
-      setStatusText(t("Datos actualizados"));
+      if (!range?.silent) setStatusText(t("Datos actualizados"));
     } catch {
-      setStatusText(t("No se pudo cargar asistencia"));
+      if (!range?.silent) setStatusText(t("No se pudo cargar asistencia"));
     } finally {
-      setLoading(false);
+      if (!range?.silent) setLoading(false);
     }
   }, [activeCompanyId, apiGet, dateFrom, dateTo, isSystemAdmin, selectedDepartment, selectedEmployee, t]);
 
@@ -202,6 +214,14 @@ export default function AttendancePage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [loadAttendance, user]);
+
+  useEffect(() => {
+    if (!user || view !== "live") return;
+    const timer = window.setInterval(() => {
+      void loadAttendance({ silent: true });
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [loadAttendance, user, view]);
 
   useEffect(() => {
     if (!isSystemAdmin) return;
@@ -863,8 +883,8 @@ export default function AttendancePage() {
                             </span>
                           </div>
                           <div className="day-track">
-                            {selectedDayShift.started_at && selectedDayShift.ended_at ? (
-                              <span className="track-work" style={timelineSpan(selectedDayShift.started_at, selectedDayShift.ended_at, 1)} />
+                            {selectedDayShift.started_at ? (
+                              <span className="track-work" style={timelineSpan(selectedDayShift.started_at, shiftTimelineEnd(selectedDayShift), 1)} />
                             ) : null}
                             {eventTime(selectedDayShift, "break_started") && eventTime(selectedDayShift, "break_finished") ? (
                               <span

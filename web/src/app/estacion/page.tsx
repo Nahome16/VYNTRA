@@ -422,6 +422,14 @@ function totals(state: StationState, canAccrueTime = true) {
   return { work, breakSeconds, lunch, overtime };
 }
 
+function workdayElapsedSeconds(state: StationState) {
+  if (!state.startedAt) return 0;
+  const startedAt = new Date(state.startedAt).getTime();
+  const endedAt = state.endedAt ? new Date(state.endedAt).getTime() : Date.now();
+  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt)) return 0;
+  return Math.max(0, Math.floor((endedAt - startedAt) / 1000));
+}
+
 function closeCurrentPhase(state: StationState): StationState {
   const current = totals(state);
   return {
@@ -1419,7 +1427,8 @@ export default function StationPage() {
     );
   }
 
-  const dailyProgress = Math.min(100, Math.max(0, (currentTotals.work / (8 * 60 * 60)) * 100));
+  const workdayElapsed = workdayElapsedSeconds(stationState);
+  const dailyProgress = Math.min(100, Math.max(0, (workdayElapsed / (8 * 60 * 60)) * 100));
   const canMark = extensionConnected && !busy;
   const canStartNewShift = stationState.status === "FUERA" || (stationState.status === "TERMINADO" && !closedToday);
   const extensionBlockText = extensionNeedsUpdate
@@ -1544,8 +1553,8 @@ export default function StationPage() {
 
           <div className="station-clock-face" style={{ "--station-progress": `${dailyProgress}%` } as CSSProperties}>
             <div>
-              <strong>{formatHms(currentTotals.work)}</strong>
-              <span>Tiempo trabajado hoy</span>
+              <strong>{formatHms(workdayElapsed)}</strong>
+              <span>Jornada completa hoy</span>
               <small>Meta diaria: 8h</small>
             </div>
           </div>
@@ -1553,7 +1562,7 @@ export default function StationPage() {
           <p className="station-action-hint">{statusCopy[stationState.status].detail}</p>
           {shiftActive ? (
             <p className="station-workday-guidance">
-              Puedes trabajar en otras pestanas. Vuelve aqui para marcar break, lunch o finalizar jornada.
+              El cronometro cuenta desde el inicio hasta el cierre manual de la jornada.
             </p>
           ) : null}
 

@@ -163,6 +163,8 @@ const en: Record<string, string> = {
   "Cargando asistencia...": "Loading attendance...",
   "Activos ahora": "Active now",
   "Jornada abierta": "Shift open",
+  Jornada: "Shift",
+  "Jornada total": "Total shift",
   "Ausentes hoy": "Absent today",
   "Sin entrada registrada": "No clock-in recorded",
   "Pausas cortas": "Short breaks",

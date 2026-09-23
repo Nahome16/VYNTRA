@@ -79,8 +79,11 @@ function statusForShift(shift?: AttendanceShift) {
 }
 
 function workedSeconds(shift?: AttendanceShift) {
-  if (!shift) return 0;
-  return Math.max(0, (shift.work_seconds || 0) + (shift.justified_seconds || 0));
+  if (!shift?.started_at) return 0;
+  const startedAt = new Date(shift.started_at).getTime();
+  const endedAt = shift.ended_at ? new Date(shift.ended_at).getTime() : Date.now();
+  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt)) return 0;
+  return Math.max(0, Math.floor((endedAt - startedAt) / 1000));
 }
 
 function employeeLabel(employee: AttendanceEmployee | undefined, fallback: string) {
@@ -643,7 +646,7 @@ export default function AttendancePage() {
                     <dl>
                       <div><dt>{t("Entrada")}</dt><dd>{timeOnly(shift?.started_at || null)}</dd></div>
                       <div><dt>{t("Salida")}</dt><dd>{timeOnly(shift?.ended_at || null)}</dd></div>
-                      <div><dt>{t("Activo")}</dt><dd>{formatDuration(workedSeconds(shift))}</dd></div>
+                      <div><dt>{t("Jornada")}</dt><dd>{formatDuration(workedSeconds(shift))}</dd></div>
                     </dl>
                   </article>
                 );
@@ -715,7 +718,7 @@ export default function AttendancePage() {
                   <div className="mini-stats">
                     <div><span>{t("Jornadas")}</span><strong>{row.started}</strong></div>
                     <div><span>{t("Finalizadas")}</span><strong>{row.finished}</strong></div>
-                    <div><span>{t("Activo")}</span><strong>{formatDuration(row.workSeconds)}</strong></div>
+                    <div><span>{t("Jornada total")}</span><strong>{formatDuration(row.workSeconds)}</strong></div>
                     <div><span>{t("Lunch")}</span><strong>{formatDuration(row.lunchSeconds)}</strong></div>
                   </div>
                 </article>
@@ -730,7 +733,7 @@ export default function AttendancePage() {
                   <div><span>{t("Empleados")}</span><strong>{stats.totalEmployees}</strong></div>
                   <div><span>{t("Jornadas iniciadas")}</span><strong>{stats.started}</strong></div>
                   <div><span>{t("Jornadas finalizadas")}</span><strong>{stats.finished}</strong></div>
-                  <div><span>{t("Tiempo activo")}</span><strong>{formatDuration(stats.workSeconds)}</strong></div>
+                  <div><span>{t("Jornada total")}</span><strong>{formatDuration(stats.workSeconds)}</strong></div>
                   <div><span>{t("Break total")}</span><strong>{formatDuration(stats.breakSeconds)}</strong></div>
                   <div><span>{t("Lunch total")}</span><strong>{formatDuration(stats.lunchSeconds)}</strong></div>
                   <div><span>{t("Justificado")}</span><strong>{formatDuration(stats.justifiedSeconds)}</strong></div>
@@ -824,7 +827,7 @@ export default function AttendancePage() {
                         <button className={metricDetailKey === "punctual" ? "active" : ""} type="button" onClick={() => setMetricDetailKey("punctual")}><span>{t("Puntuales")}</span><strong className="metric-good">{selectedAssociateStats.punctual}</strong></button>
                         <button className={metricDetailKey === "tardy" ? "active" : ""} type="button" onClick={() => setMetricDetailKey("tardy")}><span>{t("Tardanzas")}</span><strong className="metric-bad">{selectedAssociateStats.tardy}</strong></button>
                         <div><span>{t("Jornadas")}</span><strong>{selectedAssociateStats.completed}</strong></div>
-                        <div><span>{t("Activo")}</span><strong>{formatDuration(selectedAssociateStats.workSeconds)}</strong></div>
+                        <div><span>{t("Jornada total")}</span><strong>{formatDuration(selectedAssociateStats.workSeconds)}</strong></div>
                         <button className={metricDetailKey === "justified" ? "active" : ""} type="button" onClick={() => setMetricDetailKey("justified")}><span>{t("Justificado")}</span><strong>{formatDuration(selectedAssociateStats.justifiedSeconds)}</strong></button>
                         <button className={metricDetailKey === "break" ? "active" : ""} type="button" onClick={() => setMetricDetailKey("break")}><span>{t("Break")}</span><strong>{formatDuration(selectedAssociateStats.breakSeconds)}</strong></button>
                         <button className={metricDetailKey === "lunch" ? "active" : ""} type="button" onClick={() => setMetricDetailKey("lunch")}><span>{t("Lunch")}</span><strong>{formatDuration(selectedAssociateStats.lunchSeconds)}</strong></button>

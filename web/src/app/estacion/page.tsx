@@ -9,8 +9,8 @@ const consentPrefix = "vyntra.station.consent.";
 const queueKey = "vyntra.station.queue";
 const timeZoneKey = "vyntra.station.timezone";
 const loginLanguageKey = "vyntra.station.loginLanguage";
-const requiredExtensionVersion = "0.2.0";
-const latestExtensionVersion = "0.2.2";
+const requiredExtensionVersion = "0.2.3";
+const latestExtensionVersion = "0.2.3";
 const extensionDownloadHref = `/extensions/vyntra-browser-extension.zip?v=${latestExtensionVersion}`;
 
 const stationTimeZones = [
@@ -88,7 +88,7 @@ const stationLoginCopy = {
     extensionRequiredEyebrow: "Extension requerida",
     extensionNewVersion: `Nueva version ${latestExtensionVersion}`,
     extensionModalTitle: `Nueva version ${latestExtensionVersion}`,
-    extensionModalIntro: "Instala o actualiza VYNTRA Browser para probar las mejoras de actividad y capturas autorizadas cada 5 minutos durante la jornada activa.",
+    extensionModalIntro: "Instala o actualiza VYNTRA Browser para usar la estacion de marcaje con actividad en otras pestanas y capturas autorizadas cada 5 minutos durante la jornada activa.",
     extensionSteps: [
       "Descarga el archivo de actualizacion.",
       "Descomprime el ZIP en una carpeta local.",
@@ -97,7 +97,7 @@ const stationLoginCopy = {
       "Vuelve a esta estacion y espera a que el estado cambie a actualizado.",
     ],
     downloadUpdate: "Descargar actualizacion",
-    extensionModalNote: "Durante esta prueba, la actualizacion no bloquea el marcaje si ya tienes una version compatible.",
+    extensionModalNote: "Sin esta version de la extension no se puede abrir ni marcar la jornada.",
     status: {
       verifyingCredentials: "Verificando credenciales...",
       signedIn: "Sesion iniciada",
@@ -151,7 +151,7 @@ const stationLoginCopy = {
     extensionRequiredEyebrow: "Extension required",
     extensionNewVersion: `New version ${latestExtensionVersion}`,
     extensionModalTitle: `New version ${latestExtensionVersion}`,
-    extensionModalIntro: "Install or update VYNTRA Browser to test the activity improvements and authorized screenshots every 5 minutes during an active workday.",
+    extensionModalIntro: "Install or update VYNTRA Browser to use the time clock with activity in other tabs and authorized screenshots every 5 minutes during an active workday.",
     extensionSteps: [
       "Download the update file.",
       "Unzip the ZIP file into a local folder.",
@@ -160,7 +160,7 @@ const stationLoginCopy = {
       "Return to this station and wait for the status to change to updated.",
     ],
     downloadUpdate: "Download update",
-    extensionModalNote: "During this test, the update does not block clocking if you already have a compatible version.",
+    extensionModalNote: "Without this extension version, the station cannot be opened or used to clock in.",
     status: {
       verifyingCredentials: "Verifying credentials...",
       signedIn: "Signed in",
@@ -903,6 +903,11 @@ export default function StationPage() {
 
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!extensionConnected) {
+      setExtensionDialogOpen(true);
+      requireExtension();
+      return;
+    }
     setBusy(true);
     setStatusText(loginText.status.verifyingCredentials);
     try {
@@ -1262,7 +1267,7 @@ export default function StationPage() {
                   {loginText.forgotPassword}
                 </button>
               </div>
-              <button type="submit" className="station-primary" disabled={busy}>{busy ? loginText.verifying : loginText.enter}</button>
+              <button type="submit" className="station-primary" disabled={busy || !extensionConnected}>{busy ? loginText.verifying : loginText.enter}</button>
             </form>
             <p className={`station-extension-status ${extensionStatusClass}`}>
               <span>{extensionStatusText}</span>
@@ -1633,13 +1638,6 @@ export default function StationPage() {
                 <div>
                   <strong>{isOnline ? "Sincronizado" : "Pendiente"}</strong>
                   <small>{isOnline ? "En linea" : "Sin conexion"}</small>
-                </div>
-              </article>
-              <article>
-                <span>W</span>
-                <div>
-                  <strong>Actividad web</strong>
-                  <small>Registro interno activo</small>
                 </div>
               </article>
               <article>

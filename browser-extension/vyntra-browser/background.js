@@ -12,7 +12,7 @@ const AUTO_CAPTURE_MINUTES = 5;
 const STALE_STATION_MS = 10 * 60 * 1000;
 const MAX_ACTIVE_SHIFT_MS = 18 * 60 * 60 * 1000;
 const WORKING_STATUS = "TRABAJANDO";
-const VERSION = "0.2.2";
+const VERSION = "0.2.3";
 const ACTIVE_STATUSES = new Set(["TRABAJANDO", "BREAK", "LUNCH"]);
 
 function eventId() {

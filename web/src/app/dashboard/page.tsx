@@ -403,14 +403,6 @@ export default function DashboardPage() {
               deltaTone={deltaTone(trendDelta(totals.productivity_pct, previousTotals?.productivity_pct))}
             />
             <StatCard
-              label={t("Neutral")}
-              value={`${totals.neutral_pct}%`}
-              detail={`${formatDuration(totals.neutral_seconds + totals.justified_seconds)} neutral/justificado`}
-              tone="plain"
-              delta={trendDelta(totals.neutral_pct, previousTotals?.neutral_pct)}
-              deltaTone={deltaTone(trendDelta(totals.neutral_pct, previousTotals?.neutral_pct))}
-            />
-            <StatCard
               label={t("No productivo")}
               value={`${totals.non_productive_pct}%`}
               detail={formatDuration(totals.non_productive_seconds)}

@@ -5,6 +5,8 @@ import { AppShell } from "@/components/app-shell";
 import { EmptyState, RefreshButton, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { IncidentsPanel } from "@/components/incidents-panel";
+import { zonedDateISO } from "@/lib/dates";
+import { useDialog } from "@/lib/use-dialog";
 import { AccessCode, CatalogsResponse, Employee, ProductivityRule, UncategorizedItem } from "@/lib/types";
 
 const sectionLabels = {
@@ -29,6 +31,15 @@ type RuleRow =
 function isSectionKey(value: string): value is SectionKey {
   return value in sectionLabels;
 }
+
+/** Permiso de lectura que necesita cada seccion (null = siempre visible). */
+const sectionPermissions: Record<SectionKey, string | null> = {
+  usuarios: "employees:read",
+  accesos: "access_codes:read",
+  incidencias: "incidents:read",
+  reglas: "rules:read",
+  cuenta: null,
+};
 
 const accessTypeLabels: Record<AccessType, string> = {
   station_reopen: "Reabrir",
@@ -104,8 +115,19 @@ function deliveryStatusText(status?: string) {
 }
 
 export default function SettingsPage() {
-  const { apiGet, apiPatch, apiPost, activeCompanyId, changePassword, user } = useAuth();
+  const { apiGet, apiPatch, apiPost, activeCompanyId, changePassword, hasPermission, user } = useAuth();
   const [activeSection, setActiveSection] = useState<SectionKey>("usuarios");
+  const canReadEmployees = hasPermission("employees:read");
+  const canReadRules = hasPermission("rules:read");
+  const canReadAccessCodes = hasPermission("access_codes:read");
+  const visibleSections = useMemo(
+    () => (Object.keys(sectionLabels) as SectionKey[]).filter((key) => {
+      const permission = sectionPermissions[key];
+      return !permission || hasPermission(permission);
+    }),
+    [hasPermission],
+  );
+  const currentSection: SectionKey = visibleSections.includes(activeSection) ? activeSection : visibleSections[0] || "cuenta";
   const [catalogs, setCatalogs] = useState<CatalogsResponse | null>(null);
   const [rules, setRules] = useState<ProductivityRule[]>([]);
   const [uncategorized, setUncategorized] = useState<UncategorizedItem[]>([]);
@@ -163,6 +185,10 @@ export default function SettingsPage() {
   const [ruleClassification, setRuleClassification] = useState<RuleClassification>("productive");
   const [ruleNotes, setRuleNotes] = useState("");
 
+  const employeeDialogRef = useDialog<HTMLDivElement>(showEmployeeModal, closeEmployeeModal);
+  const accessDialogRef = useDialog<HTMLDivElement>(showAccessModal, closeAccessModal);
+  const ruleDialogRef = useDialog<HTMLDivElement>(showRuleModal, closeRuleModal);
+
   const loadSettings = useCallback(async () => {
     if (isSystemAdmin && !activeCompanyId) {
       setCatalogs(null);
@@ -179,11 +205,15 @@ export default function SettingsPage() {
       ? `?company_id=${encodeURIComponent(activeCompanyId)}&limit=30`
       : "?limit=30";
     try {
+      // Solo se consultan las secciones para las que el rol tiene permiso; asi no
+      // se provocan respuestas 403 (p. ej. un rol sin rules:read).
       const [nextCatalogs, nextRules, nextUncategorized, nextCodes] = await Promise.all([
-        apiGet<CatalogsResponse>(`/api/productivity/catalogs${companyQuery}`),
-        apiGet<{ rules: ProductivityRule[] }>(`/api/productivity/rules${companyQuery}`),
-        apiGet<{ items: UncategorizedItem[] }>(`/api/productivity/uncategorized${companyLimitQuery}`),
-        apiGet<{ codes: AccessCode[] }>(`/api/settings/access-codes${companyQuery}`),
+        canReadEmployees ? apiGet<CatalogsResponse>(`/api/productivity/catalogs${companyQuery}`) : Promise.resolve(null),
+        canReadRules ? apiGet<{ rules: ProductivityRule[] }>(`/api/productivity/rules${companyQuery}`) : Promise.resolve({ rules: [] }),
+        canReadRules
+          ? apiGet<{ items: UncategorizedItem[] }>(`/api/productivity/uncategorized${companyLimitQuery}`)
+          : Promise.resolve({ items: [] }),
+        canReadAccessCodes ? apiGet<{ codes: AccessCode[] }>(`/api/settings/access-codes${companyQuery}`) : Promise.resolve({ codes: [] }),
       ]);
       setCatalogs(nextCatalogs);
       setRules(nextRules.rules);
@@ -192,8 +222,8 @@ export default function SettingsPage() {
       setAccessEmployeeId(
         (current) =>
           current ||
-          nextCatalogs.employees.find((employee) => employee.status === "active")?.id ||
-          nextCatalogs.employees[0]?.id ||
+          nextCatalogs?.employees.find((employee) => employee.status === "active")?.id ||
+          nextCatalogs?.employees[0]?.id ||
           "",
       );
       setStatusText("Datos actualizados");
@@ -202,7 +232,7 @@ export default function SettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeCompanyId, apiGet, isSystemAdmin]);
+  }, [activeCompanyId, apiGet, canReadAccessCodes, canReadEmployees, canReadRules, isSystemAdmin]);
 
   useEffect(() => {
     if (!user) return;
@@ -297,7 +327,7 @@ export default function SettingsPage() {
     const needle = accessSearch.trim().toLowerCase();
     return accessCodes.filter((code) => {
       const sourceDate = code.created_at || code.valid_from;
-      const matchesDate = !accessDate || (sourceDate ? new Date(sourceDate).toISOString().slice(0, 10) === accessDate : false);
+      const matchesDate = !accessDate || (sourceDate ? zonedDateISO(undefined, sourceDate) === accessDate : false);
       return matchesDate && matchesNeedle([code.employee, code.email, code.code, code.reason, code.type_label], needle);
     });
   }, [accessCodes, accessDate, accessSearch]);
@@ -719,10 +749,10 @@ export default function SettingsPage() {
             <p>{activeCompanyName} - usuarios, accesos, incidencias y reglas</p>
           </div>
           <div className="settings-board-tabs" role="tablist" aria-label="Secciones de ajustes">
-            {(Object.keys(sectionLabels) as SectionKey[]).map((key) => (
+            {visibleSections.map((key) => (
               <button
-                aria-selected={activeSection === key}
-                className={activeSection === key ? "active" : ""}
+                aria-selected={currentSection === key}
+                className={currentSection === key ? "active" : ""}
                 key={key}
                 onClick={() => selectSection(key)}
                 role="tab"
@@ -742,7 +772,7 @@ export default function SettingsPage() {
           ))}
         </div>
 
-        {activeSection === "usuarios" ? (
+        {currentSection === "usuarios" ? (
           <>
             <div className="settings-actionbar">
               <div className="settings-search">
@@ -855,7 +885,7 @@ export default function SettingsPage() {
           </>
         ) : null}
 
-        {activeSection === "accesos" ? (
+        {currentSection === "accesos" ? (
           <>
             <div className="settings-actionbar settings-access-bar">
               <div className="settings-search">
@@ -912,7 +942,7 @@ export default function SettingsPage() {
           </>
         ) : null}
 
-        {activeSection === "reglas" ? (
+        {currentSection === "reglas" ? (
           <>
             <div className="settings-actionbar settings-rules-bar">
               <div className="settings-search">
@@ -1127,11 +1157,11 @@ export default function SettingsPage() {
           </>
         ) : null}
 
-        {activeSection === "incidencias" ? (
-          <IncidentsPanel active={activeSection === "incidencias"} />
+        {currentSection === "incidencias" ? (
+          <IncidentsPanel active={currentSection === "incidencias"} />
         ) : null}
 
-        {activeSection === "cuenta" ? (
+        {currentSection === "cuenta" ? (
           <section className="settings-account-grid">
             <div className="settings-account-card">
               <div>
@@ -1189,14 +1219,14 @@ export default function SettingsPage() {
           </section>
         ) : null}
 
-        {activeSection !== "incidencias" ? <StatusLine>{statusText}</StatusLine> : null}
+        {currentSection !== "incidencias" ? <StatusLine>{statusText}</StatusLine> : null}
       </section>
 
       {showEmployeeModal ? (
-        <div className="settings-modal" role="dialog" aria-modal="true" onClick={closeEmployeeModal}>
+        <div className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-employee-dialog-title" ref={employeeDialogRef} onClick={closeEmployeeModal}>
           <form className="settings-modal-panel" onSubmit={handleSaveEmployee} onClick={(event) => event.stopPropagation()}>
             <header>
-              <h2>{editingEmployee ? "Editar usuario" : "Agregar usuario"}</h2>
+              <h2 id="settings-employee-dialog-title">{editingEmployee ? "Editar usuario" : "Agregar usuario"}</h2>
               <button type="button" onClick={closeEmployeeModal} aria-label="Cerrar">x</button>
             </header>
             <label>Nombre completo<input value={employeeName} onChange={(event) => setEmployeeName(event.target.value)} placeholder="Empleado nuevo" required /></label>
@@ -1231,10 +1261,10 @@ export default function SettingsPage() {
       ) : null}
 
       {showAccessModal ? (
-        <div className="settings-modal" role="dialog" aria-modal="true" onClick={closeAccessModal}>
+        <div className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-access-dialog-title" ref={accessDialogRef} onClick={closeAccessModal}>
           <form className="settings-modal-panel" onSubmit={handleCreateAccessCode} onClick={(event) => event.stopPropagation()}>
             <header>
-              <h2>{accessTypeLabels[accessDraftType]}</h2>
+              <h2 id="settings-access-dialog-title">{accessTypeLabels[accessDraftType]}</h2>
               <button type="button" onClick={closeAccessModal} aria-label="Cerrar">x</button>
             </header>
             <label>Usuario
@@ -1280,10 +1310,10 @@ export default function SettingsPage() {
       ) : null}
 
       {showRuleModal ? (
-        <div className="settings-modal" role="dialog" aria-modal="true" onClick={closeRuleModal}>
+        <div className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-rule-dialog-title" ref={ruleDialogRef} onClick={closeRuleModal}>
           <form className="settings-modal-panel" onSubmit={handleSaveRule} onClick={(event) => event.stopPropagation()}>
             <header>
-              <h2>{editingRule ? "Editar regla" : "Nueva regla"}</h2>
+              <h2 id="settings-rule-dialog-title">{editingRule ? "Editar regla" : "Nueva regla"}</h2>
               <button type="button" onClick={closeRuleModal} aria-label="Cerrar">x</button>
             </header>
             <label>Aplicar a

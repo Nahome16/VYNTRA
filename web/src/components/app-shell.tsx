@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
+import { requiredPermissionFor } from "@/lib/permissions";
 
 const iconProps = {
   viewBox: "0 0 24 24",
@@ -20,7 +21,6 @@ const navItems = [
   {
     href: "/sistema",
     label: "Sistema",
-    permission: "system:manage",
     icon: (
       <svg {...iconProps}>
         <path d="M12 3 4 7v6c0 4 3.2 7.1 8 8 4.8-.9 8-4 8-8V7z" />
@@ -31,7 +31,6 @@ const navItems = [
   {
     href: "/dashboard",
     label: "Dashboard",
-    permission: "dashboard:read",
     icon: (
       <svg {...iconProps}>
         <path d="M3 13h7V3H3zM14 21h7V11h-7zM14 8h7V3h-7zM3 21h7v-5H3z" />
@@ -41,7 +40,6 @@ const navItems = [
   {
     href: "/empleados",
     label: "Empleados",
-    permission: "employees:read",
     icon: (
       <svg {...iconProps}>
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
@@ -53,7 +51,6 @@ const navItems = [
   {
     href: "/asistencia",
     label: "Asistencia",
-    permission: "attendance:read",
     icon: (
       <svg {...iconProps}>
         <rect x="3" y="4" width="18" height="18" rx="2" />
@@ -64,7 +61,6 @@ const navItems = [
   {
     href: "/dispositivos",
     label: "Dispositivos",
-    permission: "devices:read",
     icon: (
       <svg {...iconProps}>
         <rect x="4" y="5" width="16" height="12" rx="2" />
@@ -75,7 +71,6 @@ const navItems = [
   {
     href: "/descargas",
     label: "Descargas",
-    permission: "devices:manage",
     icon: (
       <svg {...iconProps}>
         <path d="M12 3v11" />
@@ -87,7 +82,6 @@ const navItems = [
   {
     href: "/auditoria",
     label: "Auditoria",
-    permission: "audit:read",
     icon: (
       <svg {...iconProps}>
         <path d="M9 11h6M9 15h6" />
@@ -99,7 +93,6 @@ const navItems = [
   {
     href: "/ajustes",
     label: "Ajustes",
-    permission: "settings:manage",
     icon: (
       <svg {...iconProps}>
         <circle cx="12" cy="12" r="3" />
@@ -122,7 +115,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { ready, user, logout, apiGet } = useAuth();
+  const { ready, user, logout, apiGet, accessNotice, clearAccessNotice } = useAuth();
   const { t, theme, toggleTheme, language, toggleLanguage } = usePreferences();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [noticeMessages, setNoticeMessages] = useState<Array<{ type: string; message: string }>>([]);
@@ -131,6 +124,12 @@ export function AppShell({
   useEffect(() => {
     if (ready && !user) router.replace("/login");
   }, [ready, router, user]);
+
+  // El aviso de "Acceso restringido" (403) pertenece a la vista donde ocurrio.
+  useEffect(() => {
+    const timer = window.setTimeout(() => clearAccessNotice(), 0);
+    return () => window.clearTimeout(timer);
+  }, [clearAccessNotice, pathname]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -186,7 +185,10 @@ export function AppShell({
 
         <nav>
           {navItems
-            .filter((item) => (user.permissions || []).includes(item.permission))
+            .filter((item) => {
+              const permission = requiredPermissionFor(item.href);
+              return !permission || (user.permissions || []).includes(permission);
+            })
             .map((item) => (
             <Link
               href={item.href}
@@ -267,6 +269,16 @@ export function AppShell({
             {actions ? <div className="page-actions">{actions}</div> : null}
           </div>
         </header>
+        {accessNotice ? (
+          <div className="system-notice-stack" role="status" aria-live="polite">
+            <p className="system-notice system-notice-warning">
+              {t(accessNotice)}{" "}
+              <button type="button" className="system-notice-dismiss" onClick={clearAccessNotice} aria-label={t("Cerrar aviso")}>
+                ×
+              </button>
+            </p>
+          </div>
+        ) : null}
         {noticeMessages.length ? (
           <div className="system-notice-stack" role="status" aria-live="polite">
             {noticeMessages.map((notice, index) => (

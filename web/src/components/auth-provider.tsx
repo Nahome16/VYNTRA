@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, FormEvent, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { ApiError, isApiError, requestJson } from "@/lib/api";
 import { AdminUser } from "@/lib/types";
 
 type AuthContextValue = {
@@ -12,6 +13,11 @@ type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   logout: () => void;
+  /** true si el usuario actual tiene el permiso indicado. */
+  hasPermission: (permission: string) => boolean;
+  /** Mensaje visible cuando el backend respondio 403 a una accion del usuario. */
+  accessNotice: string;
+  clearAccessNotice: () => void;
   apiGet: <T,>(path: string) => Promise<T>;
   apiPost: <T,>(path: string, body: unknown) => Promise<T>;
   apiPatch: <T,>(path: string, body: unknown) => Promise<T>;
@@ -46,28 +52,7 @@ const companyScopedWritePaths = new Set([
   "/api/attendance/shifts",
 ]);
 
-class ApiError extends Error {
-  status: number;
-
-  constructor(status: number) {
-    super(`HTTP ${status}`);
-    this.status = status;
-  }
-}
-
-async function requestJson<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init.headers || {}),
-    },
-    cache: "no-store",
-  });
-  if (!response.ok) throw new ApiError(response.status);
-  return response.json();
-}
+export const ACCESS_RESTRICTED_MESSAGE = "Acceso restringido: tu rol no tiene permiso para esta accion o recurso.";
 
 function hasCompanyId(path: string) {
   return /(?:\?|&)company_id=/.test(path);
@@ -104,6 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AdminUser | null>(null);
   const [activeCompanyId, setActiveCompanyIdState] = useState("");
   const [ready, setReady] = useState(false);
+  const [accessNotice, setAccessNotice] = useState("");
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -119,7 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      requestJson<{ user: AdminUser }>("/api/admin/me", storedToken)
+      requestJson<{ user: AdminUser }>("/api/admin/me", { token: storedToken })
         .then((payload) => {
           setToken(storedToken);
           setUser(payload.user);
@@ -129,13 +115,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setActiveCompanyIdState("");
           }
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           setToken("");
           setUser(null);
           setActiveCompanyIdState("");
-          window.localStorage.removeItem(tokenKey);
-          window.localStorage.removeItem(userKey);
-          window.localStorage.removeItem(activeCompanyKey);
+          // Solo se descarta la sesion guardada si el backend la rechaza. Ante
+          // errores de red o 5xx se conserva para reintentar al recargar.
+          if (isApiError(error) && (error.status === 401 || error.status === 403)) {
+            window.localStorage.removeItem(tokenKey);
+            window.localStorage.removeItem(userKey);
+            window.localStorage.removeItem(activeCompanyKey);
+          }
         })
         .finally(() => {
           if (storedUser) {
@@ -160,12 +150,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const payload = await requestJson<{
       access_token: string;
       user: AdminUser;
-    }>("/api/admin/login", "", {
+    }>("/api/admin/login", {
       method: "POST",
       body: JSON.stringify({ email: cleanEmail, password }),
     });
     setToken(payload.access_token);
     setUser(payload.user);
+    setAccessNotice("");
     setActiveCompanyIdState("");
     window.localStorage.setItem(tokenKey, payload.access_token);
     window.localStorage.setItem(userKey, JSON.stringify(payload.user));
@@ -183,7 +174,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
-    const payload = await requestJson<{ user: AdminUser }>("/api/admin/password/change", token, {
+    const payload = await requestJson<{ user: AdminUser }>("/api/admin/password/change", {
+      token,
       method: "POST",
       body: JSON.stringify({
         current_password: currentPassword,
@@ -206,6 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setToken("");
     setUser(null);
+    setAccessNotice("");
     setActiveCompanyIdState("");
     window.localStorage.removeItem(tokenKey);
     window.localStorage.removeItem(userKey);
@@ -213,18 +206,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [token]);
 
   const requestAuthorized = useCallback(
-    async <T,>(path: string, init: RequestInit = {}) => {
+    async <T,>(path: string, init: { method?: string; body?: string } = {}) => {
       try {
-        return await requestJson<T>(scopedReadPath(path, user, activeCompanyId), token, init);
+        return await requestJson<T>(scopedReadPath(path, user, activeCompanyId), { ...init, token });
       } catch (error) {
-        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        // 401: la sesion ya no es valida -> cerrar sesion.
+        // 403: la sesion es valida pero el rol (o la IP) no tiene acceso a este
+        // recurso -> avisar sin expulsar al usuario del panel.
+        if (error instanceof ApiError && error.status === 401) {
           logout();
+        } else if (error instanceof ApiError && error.status === 403) {
+          setAccessNotice(ACCESS_RESTRICTED_MESSAGE);
         }
         throw error;
       }
     },
     [activeCompanyId, logout, token, user],
   );
+
+  const hasPermission = useCallback(
+    (permission: string) => Boolean(user?.permissions?.includes(permission)),
+    [user],
+  );
+
+  const clearAccessNotice = useCallback(() => setAccessNotice(""), []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -236,19 +241,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       changePassword,
       logout,
+      hasPermission,
+      accessNotice,
+      clearAccessNotice,
       apiGet: <T,>(path: string) => requestAuthorized<T>(path),
       apiPost: <T,>(path: string, body: unknown) =>
         requestAuthorized<T>(path, {
           method: "POST",
           body: JSON.stringify(scopedWriteBody(path, body, user, activeCompanyId)),
         }),
+      // Mismo alcance por empresa que apiPost (solo afecta rutas de companyScopedWritePaths).
       apiPatch: <T,>(path: string, body: unknown) =>
         requestAuthorized<T>(path, {
           method: "PATCH",
-          body: JSON.stringify(body),
+          body: JSON.stringify(scopedWriteBody(path, body, user, activeCompanyId)),
         }),
     }),
-    [activeCompanyId, changePassword, login, logout, ready, requestAuthorized, setActiveCompanyId, token, user],
+    [
+      accessNotice,
+      activeCompanyId,
+      changePassword,
+      clearAccessNotice,
+      hasPermission,
+      login,
+      logout,
+      ready,
+      requestAuthorized,
+      setActiveCompanyId,
+      token,
+      user,
+    ],
   );
 
   return (
@@ -304,11 +326,11 @@ function PasswordChangeGate() {
   }
 
   return (
-    <div className="password-gate" role="dialog" aria-modal="true">
+    <div className="password-gate" role="dialog" aria-modal="true" aria-labelledby="password-gate-title">
       <form className="password-gate-panel" onSubmit={submitPasswordChange}>
         <header>
           <span>Credencial temporal</span>
-          <h2>Cambia tu contrasena para continuar</h2>
+          <h2 id="password-gate-title">Cambia tu contrasena para continuar</h2>
           <p>Tu acceso fue creado con una contrasena temporal. Define una nueva contrasena antes de usar el panel.</p>
         </header>
         <label>
@@ -318,6 +340,7 @@ function PasswordChangeGate() {
             value={currentPassword}
             onChange={(event) => setCurrentPassword(event.target.value)}
             autoComplete="current-password"
+            autoFocus
             required
           />
         </label>
@@ -342,7 +365,7 @@ function PasswordChangeGate() {
           />
         </label>
         <small>Minimo 8 caracteres, mayuscula, minuscula, numero y signo.</small>
-        {statusText ? <p className="password-gate-status">{statusText}</p> : null}
+        <p className="password-gate-status" role="status" aria-live="polite" hidden={!statusText}>{statusText}</p>
         <button type="submit" disabled={!canSubmit}>
           {saving ? "Guardando..." : "Guardar y continuar"}
         </button>

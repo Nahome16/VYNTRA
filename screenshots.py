@@ -7,6 +7,10 @@ productiva, es decir, una herramienta de trabajo. Nunca se captura la
 pantalla completa, el escritorio, la barra de tareas ni los avisos emergentes:
 la imagen se obtiene con PrintWindow, que dibuja unicamente el contenido de la
 ventana, sin lo que haya encima o alrededor de ella.
+
+Retencion local: si la subida al backend esta habilitada, cada captura se
+elimina del equipo al subirse; en cualquier caso, las capturas locales con mas
+de 7 dias se purgan automaticamente.
 """
 
 import datetime
@@ -18,7 +22,13 @@ import time
 
 import capture_policy
 from activity_tracker import get_foreground_window
+from agent_runtime import get_logger, local_now
 from outbox import append_event
+
+log = get_logger("screenshots")
+
+LOCAL_RETENTION_DAYS = 7
+PURGE_INTERVAL_SECONDS = 60 * 60
 
 PW_RENDERFULLCONTENT = 0x00000002
 
@@ -79,22 +89,60 @@ def nombre_equipo() -> str:
     return socket.gethostname()
 
 
+def purge_old_captures(base: str, days: int = LOCAL_RETENTION_DAYS, now: float | None = None) -> int:
+    """Elimina capturas locales (.webp) con mas de `days` dias y carpetas vacias."""
+    if not base or not os.path.isdir(base):
+        return 0
+    cutoff = (now if now is not None else time.time()) - days * 86400
+    removed = 0
+    for root, _dirs, files in os.walk(base, topdown=False):
+        for name in files:
+            if not name.lower().endswith(".webp"):
+                continue
+            path = os.path.join(root, name)
+            try:
+                if os.path.getmtime(path) < cutoff:
+                    os.remove(path)
+                    removed += 1
+            except OSError as exc:
+                log.warning("No se pudo purgar la captura %s: %s", path, exc)
+        if os.path.abspath(root) != os.path.abspath(base):
+            try:
+                if not os.listdir(root):
+                    os.rmdir(root)
+            except OSError:
+                pass
+    if removed:
+        log.info("Capturas locales purgadas (> %s dias): %s", days, removed)
+    return removed
+
+
 class ScreenshotEngine:
     def __init__(self, cfg, on_event=None):
         self.cfg = cfg
         self.on_event = on_event
         self.intervalo = getattr(cfg, "captura_intervalo_segundos", 300)
         self.base = getattr(cfg, "carpeta_capturas", "capturas")
-        self._running = False
+        self._stop = threading.Event()
+        self._stop.set()
         self._paused = False
         self._thread = None
+        self._lock = threading.Lock()
+        self._last_purge = 0.0
         self.ultima = None
-        self.drive_uploader = None
         self.backend_uploader = None
+
+    @property
+    def _running(self) -> bool:
+        return not self._stop.is_set()
 
     @property
     def activo(self) -> bool:
         return self._running and not self._paused
+
+    @property
+    def hilo_vivo(self) -> bool:
+        return bool(self._thread and self._thread.is_alive())
 
     def carpeta_dia(self) -> str:
         hoy = datetime.date.today()
@@ -109,14 +157,33 @@ class ScreenshotEngine:
         return ruta
 
     def start(self):
-        if self._running:
-            return
-        self._running = True
-        self._paused = False
-        self.carpeta_dia()
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
+        with self._lock:
+            if self._running and self.hilo_vivo:
+                return
+            # Cada hilo recibe su propio evento de parada: un hilo anterior que
+            # aun no termino no puede seguir capturando en paralelo.
+            self._stop.set()
+            self._stop = threading.Event()
+            self._paused = False
+            self.carpeta_dia()
+            self._thread = threading.Thread(
+                target=self._loop, args=(self._stop,), name="vyntra-screenshots", daemon=True
+            )
+            self._thread.start()
+        self.ensure_uploader_started()
         self._notify("Capturas iniciadas.")
+
+    def restart_if_dead(self) -> bool:
+        """Reinicia el hilo si deberia estar corriendo y murio. Devuelve True si reinicio."""
+        with self._lock:
+            if not self._running or self.hilo_vivo:
+                return False
+            self._stop = threading.Event()
+            self._thread = threading.Thread(
+                target=self._loop, args=(self._stop,), name="vyntra-screenshots", daemon=True
+            )
+            self._thread.start()
+        return True
 
     def pause(self):
         self._paused = True
@@ -127,23 +194,33 @@ class ScreenshotEngine:
         self._notify("Capturas reanudadas.")
 
     def stop(self):
-        self._running = False
+        self._stop.set()
         self._notify("Capturas detenidas.")
 
-    def _loop(self):
-        while self._running:
+    def _loop(self, stop_event: threading.Event):
+        while not stop_event.is_set():
+            self._purge_if_due()
             if not self._paused:
                 try:
-                    self._capturar()
+                    self._capturar(stop_event)
                 except Exception as exc:
+                    log.exception("Error de captura")
                     self._notify(f"Error de captura: {exc}")
-            for _ in range(max(1, int(self.intervalo))):
-                if not self._running:
-                    return
-                time.sleep(1)
+            if stop_event.wait(max(1, int(self.intervalo))):
+                return
 
-    def _capturar(self):
-        ts = datetime.datetime.now()
+    def _purge_if_due(self):
+        ahora = time.monotonic()
+        if self._last_purge and ahora - self._last_purge < PURGE_INTERVAL_SECONDS:
+            return
+        self._last_purge = ahora
+        try:
+            purge_old_captures(self.base)
+        except Exception:
+            log.exception("No se pudieron purgar capturas antiguas")
+
+    def _capturar(self, stop_event: threading.Event | None = None):
+        ts = local_now()
         hwnd, titulo_literal, proceso = get_foreground_window()
         identificador, _ = capture_policy.normalize_title(proceso, titulo_literal)
         if not capture_policy.evidence_allowed(proceso, titulo_literal):
@@ -157,6 +234,8 @@ class ScreenshotEngine:
         except Exception as exc:
             self._notify(f"Captura omitida: {exc}")
             return
+        if stop_event is not None and stop_event.is_set():
+            return
         imagen.save(ruta, "WEBP", quality=80, optimize=True)
 
         self.ultima = ts
@@ -168,55 +247,13 @@ class ScreenshotEngine:
             "intervalo_segundos": self.intervalo,
             "monitores": 1,
             "alcance": "ventana_activa",
-            "proceso": proceso,
+            "proceso": capture_policy.normalize_process_name(proceso),
             "identificador": identificador,
             "agent_version": getattr(self.cfg, "agent_version", "unknown"),
         }
         append_event("screenshot_created", metadata)
-        self._upload_to_drive(ruta)
         self._upload_to_backend(ruta, metadata)
         self._notify(f"Captura {ts:%H:%M:%S}")
-
-    def _upload_to_drive(self, ruta: str):
-        if not self._ensure_drive_uploader():
-            return
-        try:
-            self.drive_uploader.upload_image_backup(ruta, self._drive_folder_parts(ruta))
-        except Exception as exc:
-            self._notify(f"Drive upload fallo: {exc}")
-
-    def _drive_folder_parts(self, ruta: str) -> list[str]:
-        try:
-            rel_dir = os.path.dirname(os.path.relpath(ruta, self.base))
-            if rel_dir in ("", "."):
-                return [nombre_equipo()]
-            return [
-                part
-                for part in rel_dir.split(os.sep)
-                if part and part not in (".", "..")
-            ]
-        except Exception:
-            ts = datetime.datetime.now()
-            return [
-                nombre_equipo(),
-                f"{ts.year:04d}",
-                f"{ts.month:02d}",
-                f"{ts.day:02d}",
-            ]
-
-    def _ensure_drive_uploader(self) -> bool:
-        if self.drive_uploader:
-            return True
-        if not getattr(self.cfg, "drive_upload_enabled", False):
-            return False
-        try:
-            from gdrive import DriveUploader
-
-            self.drive_uploader = DriveUploader(self.cfg, on_event=self.on_event)
-            return True
-        except Exception as exc:
-            self._notify(f"Drive no inicializado: {exc}")
-            return False
 
     def _upload_to_backend(self, ruta: str, metadata: dict):
         if not self._ensure_backend_uploader():
@@ -224,7 +261,15 @@ class ScreenshotEngine:
         try:
             self.backend_uploader.enqueue_capture(ruta, metadata)
         except Exception as exc:
+            log.exception("No se pudo encolar la evidencia")
             self._notify(f"Backend evidencia pendiente: {exc}")
+
+    def ensure_uploader_started(self) -> bool:
+        """Crea e inicia el hilo de subida de evidencias (incluye pendientes previas)."""
+        if not self._ensure_backend_uploader():
+            return False
+        self.backend_uploader.start()
+        return True
 
     def _ensure_backend_uploader(self) -> bool:
         if self.backend_uploader:
@@ -237,6 +282,7 @@ class ScreenshotEngine:
             self.backend_uploader = BackendEvidenceUploader(self.cfg, on_event=self.on_event)
             return True
         except Exception as exc:
+            log.exception("Backend de evidencias no inicializado")
             self._notify(f"Backend evidencia no inicializado: {exc}")
             return False
 
@@ -245,4 +291,4 @@ class ScreenshotEngine:
             try:
                 self.on_event(msg)
             except Exception:
-                pass
+                log.exception("Callback de capturas fallo")

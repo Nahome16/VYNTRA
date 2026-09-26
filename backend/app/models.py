@@ -5,7 +5,7 @@ models.py - Database tables for the VYNTRA platform.
 from datetime import datetime, timezone
 import uuid
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -174,6 +174,7 @@ class EmployeeCredential(Base):
     __table_args__ = (
         UniqueConstraint("company_id", "email", name="uq_employee_credential_company_email"),
         UniqueConstraint("employee_id", name="uq_employee_credential_employee"),
+        Index("ix_employee_credentials_email", "email"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -269,6 +270,9 @@ class EmployeeSchedule(Base):
 
 class Shift(Base):
     __tablename__ = "shifts"
+    __table_args__ = (
+        Index("ix_shifts_company_employee_date", "company_id", "employee_id", "shift_date"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False)
@@ -292,6 +296,7 @@ class Shift(Base):
 
 class ShiftEvent(Base):
     __tablename__ = "shift_events"
+    __table_args__ = (Index("ix_shift_events_shift_occurred", "shift_id", "occurred_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     shift_id: Mapped[str] = mapped_column(ForeignKey("shifts.id"), nullable=False)
@@ -307,6 +312,8 @@ class EvidenceFile(Base):
     __tablename__ = "evidence_files"
     __table_args__ = (
         UniqueConstraint("device_id", "sha256", name="uq_evidence_device_sha256"),
+        Index("ix_evidence_files_company_captured", "company_id", "captured_at"),
+        Index("ix_evidence_files_employee_captured", "employee_id", "captured_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -382,6 +389,9 @@ class Activity(Base):
     __tablename__ = "activities"
     __table_args__ = (
         UniqueConstraint("source_event_id", "source_sample_index", name="uq_activity_source_sample"),
+        Index("ix_activities_company_employee_started", "company_id", "employee_id", "started_at"),
+        Index("ix_activities_device_started", "device_id", "started_at"),
+        Index("ix_activities_shift", "shift_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -412,6 +422,7 @@ class ProductivityBlock(Base):
             "block_start",
             name="uq_productivity_employee_block",
         ),
+        Index("ix_productivity_blocks_company_date", "company_id", "block_date"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -458,6 +469,10 @@ class ETLRunLog(Base):
 
 class Incident(Base):
     __tablename__ = "incidents"
+    __table_args__ = (
+        Index("ix_incidents_company_requested", "company_id", "requested_at"),
+        Index("ix_incidents_source_event", "source_event_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False)
@@ -471,6 +486,8 @@ class Incident(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolution_notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
     payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    # Id del evento del agente que origino la incidencia (deduplicacion indexada).
+    source_event_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
     employee: Mapped[Employee] = relationship(back_populates="incidents")
     device: Mapped[Device | None] = relationship(back_populates="incidents")
@@ -478,7 +495,10 @@ class Incident(Base):
 
 class TimeAdjustment(Base):
     __tablename__ = "time_adjustments"
-    __table_args__ = (UniqueConstraint("incident_id", name="uq_time_adjustment_incident"),)
+    __table_args__ = (
+        UniqueConstraint("incident_id", name="uq_time_adjustment_incident"),
+        Index("ix_time_adjustments_company_started", "company_id", "started_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False)
@@ -548,6 +568,10 @@ class StationRestoreCode(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    __table_args__ = (
+        Index("ix_audit_logs_company_created", "company_id", "created_at"),
+        Index("ix_audit_logs_entity", "entity_type", "entity_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     company_id: Mapped[str | None] = mapped_column(ForeignKey("companies.id"), nullable=True)
@@ -563,6 +587,7 @@ class AuditLog(Base):
 
 class EvidenceUploadAttempt(Base):
     __tablename__ = "evidence_upload_attempts"
+    __table_args__ = (Index("ix_evidence_upload_attempts_created", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     device_id: Mapped[str | None] = mapped_column(ForeignKey("devices.id"), nullable=True)
@@ -575,6 +600,10 @@ class EvidenceUploadAttempt(Base):
 
 class LoginAttempt(Base):
     __tablename__ = "login_attempts"
+    __table_args__ = (
+        Index("ix_login_attempts_created", "created_at"),
+        Index("ix_login_attempts_email_created", "email_attempted", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     email_attempted: Mapped[str] = mapped_column(String(180), nullable=False)
@@ -595,3 +624,15 @@ class LoginLockout(Base):
     failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+
+class AgentEventReceipt(Base):
+    """Recibo de idempotencia de eventos del agente (uno por id de evento)."""
+
+    __tablename__ = "agent_event_receipts"
+    __table_args__ = (Index("ix_agent_event_receipts_received", "received_at"),)
+
+    event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    device_id: Mapped[str | None] = mapped_column(ForeignKey("devices.id"), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)

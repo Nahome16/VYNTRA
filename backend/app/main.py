@@ -10,6 +10,7 @@ import base64
 import io
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -33,15 +34,18 @@ from app.auth import (
     AdminPrincipal,
     ROLE_PERMISSIONS,
     create_admin_access_token,
+    hash_password as pbkdf2_hash_password,
     hash_token,
+    password_needs_rehash,
     permissions_for_role,
     require_admin,
     require_device,
     require_permission,
+    verify_password_constant_time,
     verify_password_hash,
 )
 from app.capture_policy import ScopedRule, normalize_window_title, sanitize_capture_payload
-from app.config import settings
+from app.config import settings, validate_runtime_settings
 from app.database import Base, engine, get_db, SessionLocal
 from app.models import (
     Activity,
@@ -85,6 +89,12 @@ from app.storage import (
     validate_image_signature,
 )
 
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logger = logging.getLogger("vyntra.api")
 
 app = FastAPI(title=settings.app_name)
 
@@ -348,7 +358,8 @@ def client_ip(request: Request) -> str:
 
 
 def allow_local_testing_secrets() -> bool:
-    return settings.environment.strip().lower() != "production"
+    # Fail-closed: solo con ENVIRONMENT explicitamente development/dev/local/test.
+    return settings.is_development
 
 
 def smtp_configured() -> bool:
@@ -388,6 +399,7 @@ def send_plain_email(to_email: str, subject: str, body: str) -> str:
                     smtp.login(settings.smtp_username, settings.smtp_password)
                 smtp.send_message(message)
     except Exception:
+        logger.exception("SMTP delivery failed (subject=%r)", subject)
         return "failed"
 
     return "sent"
@@ -484,6 +496,7 @@ def send_plain_email_audit_task(
         )
         db.commit()
     except Exception:
+        logger.exception("Could not store email delivery audit log (action=%s)", action)
         db.rollback()
     finally:
         db.close()
@@ -566,14 +579,15 @@ def generate_reset_code() -> str:
 
 
 def hash_password(password: str) -> str:
-    iterations = 390000
-    salt = secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
-    return "pbkdf2_sha256:{}:{}:{}".format(
-        iterations,
-        base64.b64encode(salt).decode("ascii"),
-        base64.b64encode(digest).decode("ascii"),
-    )
+    return pbkdf2_hash_password(password)
+
+
+def rehash_password_if_needed(row, password: str) -> bool:
+    """Re-hashea con las iteraciones actuales tras un login correcto (row.password_hash)."""
+    if password_needs_rehash(row.password_hash):
+        row.password_hash = hash_password(password)
+        return True
+    return False
 
 
 def generate_restore_code() -> str:
@@ -589,10 +603,16 @@ def current_lockout(db: Session, email: str, ip_address: str) -> LoginLockout | 
     ).scalar_one_or_none()
 
 
+def station_lockout_key(email: str) -> str:
+    """Clave de bloqueo de la estacion, separada de la del panel para el mismo correo."""
+    return f"station:{email}"[:180]
+
+
 def assert_not_locked_out(db: Session, email: str, ip_address: str):
     lockout = current_lockout(db, email, ip_address)
-    if lockout and lockout.locked_until and lockout.locked_until > now_utc():
-        retry_after = max(1, int((lockout.locked_until - now_utc()).total_seconds()))
+    current_time = now_utc()
+    if lockout and lockout.locked_until and _as_aware_utc(lockout.locked_until) > current_time:
+        retry_after = max(1, int((_as_aware_utc(lockout.locked_until) - current_time).total_seconds()))
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many failed login attempts",
@@ -600,27 +620,53 @@ def assert_not_locked_out(db: Session, email: str, ip_address: str):
         )
 
 
-def record_admin_login_result(db: Session, email: str, ip_address: str, success: bool):
-    db.add(
-        LoginAttempt(
-            email_attempted=email,
-            ip_address=ip_address[:45],
-            success=success,
+def record_login_result(
+    db: Session,
+    email: str,
+    ip_address: str,
+    success: bool,
+    *,
+    lockout_key: str | None = None,
+    add_attempt: bool = True,
+):
+    if add_attempt:
+        db.add(
+            LoginAttempt(
+                email_attempted=email,
+                ip_address=ip_address[:45],
+                success=success,
+            )
         )
-    )
-    lockout = current_lockout(db, email, ip_address)
+    key = lockout_key or email
+    lockout = current_lockout(db, key, ip_address)
     if success:
         if lockout is not None:
             db.delete(lockout)
         return
 
+    current_time = now_utc()
     if lockout is None:
-        lockout = LoginLockout(email_attempted=email, ip_address=ip_address[:45], failed_count=0)
+        lockout = LoginLockout(email_attempted=key, ip_address=ip_address[:45], failed_count=0)
         db.add(lockout)
-    lockout.failed_count += 1
-    lockout.updated_at = now_utc()
+    else:
+        lock_expired = lockout.locked_until is not None and _as_aware_utc(lockout.locked_until) <= current_time
+        window_expired = (
+            lockout.updated_at is not None
+            and current_time - _as_aware_utc(lockout.updated_at) > timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+        )
+        # Un bloqueo vencido (o fallos antiguos) no cuenta: se reinicia el contador para
+        # que un solo fallo por ventana no mantenga la cuenta bloqueada indefinidamente.
+        if lock_expired or window_expired:
+            lockout.failed_count = 0
+            lockout.locked_until = None
+    lockout.failed_count = int(lockout.failed_count or 0) + 1
+    lockout.updated_at = current_time
     if lockout.failed_count >= LOGIN_LOCKOUT_THRESHOLD:
-        lockout.locked_until = now_utc() + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+        lockout.locked_until = current_time + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+
+
+def record_admin_login_result(db: Session, email: str, ip_address: str, success: bool):
+    record_login_result(db, email, ip_address, success)
 
 
 def revoke_admin_sessions(
@@ -2399,12 +2445,13 @@ def authenticate_employee_credential(
 ) -> tuple[EmployeeCredential | None, Employee | None, bool]:
     credential = find_employee_credential(db, company_id, email)
     employee = db.get(Employee, credential.employee_id) if credential else None
+    password_ok = verify_password_constant_time(password, credential.password_hash if credential else None)
     success = (
         credential is not None
         and employee is not None
         and credential.status == "active"
         and employee.status == "active"
-        and verify_password_hash(password, credential.password_hash)
+        and password_ok
     )
     return credential, employee, success
 
@@ -2832,22 +2879,25 @@ def bootstrap_data():
                 User.email == settings.bootstrap_admin_email,
             )
         ).scalar_one_or_none()
+        # El bootstrap nunca sobrescribe el hash de contrasena de usuarios existentes:
+        # solo lo usa al crear el usuario por primera vez.
         if admin_user is None:
-            db.add(
-                User(
-                    company_id=company.id,
-                    role_id=admin_role.id,
-                    email=settings.bootstrap_admin_email,
-                    full_name=settings.bootstrap_admin_name,
-                    password_hash=settings.bootstrap_admin_password_hash,
-                    status="active",
+            if settings.bootstrap_admin_password_hash:
+                db.add(
+                    User(
+                        company_id=company.id,
+                        role_id=admin_role.id,
+                        email=settings.bootstrap_admin_email,
+                        full_name=settings.bootstrap_admin_name,
+                        password_hash=settings.bootstrap_admin_password_hash,
+                        status="active",
+                    )
                 )
-            )
+            else:
+                logger.warning("Bootstrap admin not created: BOOTSTRAP_ADMIN_PASSWORD_HASH is empty")
         else:
             admin_user.role_id = admin_role.id
             admin_user.full_name = settings.bootstrap_admin_name
-            if settings.bootstrap_admin_password_hash:
-                admin_user.password_hash = settings.bootstrap_admin_password_hash
             admin_user.status = "active"
 
         system_admin_email = settings.bootstrap_system_admin_email.strip().lower()
@@ -2872,7 +2922,6 @@ def bootstrap_data():
             else:
                 system_admin_user.role_id = system_admin_role.id
                 system_admin_user.full_name = settings.bootstrap_system_admin_name
-                system_admin_user.password_hash = settings.bootstrap_system_admin_password_hash
                 system_admin_user.status = "active"
 
         department = get_or_create_department(db, company.id, "General")
@@ -2921,18 +2970,20 @@ def bootstrap_data():
                     )
                 ).scalar_one_or_none()
             if credential is None:
-                db.add(
-                    EmployeeCredential(
-                        company_id=company.id,
-                        employee_id=employee.id,
-                        email=login_email,
-                        password_hash=settings.bootstrap_employee_password_hash,
-                        status="active",
+                if settings.bootstrap_employee_password_hash:
+                    db.add(
+                        EmployeeCredential(
+                            company_id=company.id,
+                            employee_id=employee.id,
+                            email=login_email,
+                            password_hash=settings.bootstrap_employee_password_hash,
+                            status="active",
+                        )
                     )
-                )
+                else:
+                    logger.warning("Bootstrap employee credential not created: BOOTSTRAP_EMPLOYEE_PASSWORD_HASH is empty")
             else:
                 credential.employee_id = employee.id
-                credential.password_hash = settings.bootstrap_employee_password_hash
                 credential.status = "active"
 
         token_hash = hash_token(settings.bootstrap_device_token)
@@ -2968,7 +3019,40 @@ def bootstrap_data():
         db.commit()
 
 
+def is_postgresql() -> bool:
+    return engine.dialect.name == "postgresql"
+
+
+def ensure_incident_schema():
+    """Columna indexada para deduplicar incidencias por id de evento del agente."""
+    if not is_postgresql():
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS source_event_id VARCHAR(36)"))
+
+
+def ensure_indexes():
+    """
+    Crea los indices declarados en models.py que falten en bases existentes.
+
+    create_all() solo crea indices junto con tablas nuevas; en tablas existentes
+    se emite CREATE INDEX IF NOT EXISTS por cada indice declarado. Un fallo en un
+    indice se registra y no impide el arranque.
+    """
+    from sqlalchemy.schema import CreateIndex
+
+    for table in Base.metadata.sorted_tables:
+        for index in sorted(table.indexes, key=lambda item: item.name or ""):
+            try:
+                with engine.begin() as conn:
+                    conn.execute(CreateIndex(index, if_not_exists=True))
+            except Exception:
+                logger.exception("Could not ensure index %s on %s", index.name, table.name)
+
+
 def ensure_employee_credential_schema():
+    if not is_postgresql():
+        return
     columns = {
         "password_change_required": "BOOLEAN NOT NULL DEFAULT FALSE",
         "password_changed_at": "TIMESTAMP WITH TIME ZONE",
@@ -2997,6 +3081,8 @@ def ensure_employee_credential_schema():
 
 
 def ensure_user_schema():
+    if not is_postgresql():
+        return
     columns = {
         "password_change_required": "BOOLEAN NOT NULL DEFAULT FALSE",
         "password_changed_at": "TIMESTAMP WITH TIME ZONE",
@@ -3020,6 +3106,8 @@ def ensure_user_schema():
 
 
 def ensure_employee_schedule_schema():
+    if not is_postgresql():
+        return
     columns = {
         "expected_break_minutes": "INTEGER NOT NULL DEFAULT 15",
         "expected_lunch_minutes": "INTEGER NOT NULL DEFAULT 60",
@@ -3044,17 +3132,37 @@ def ensure_employee_schedule_schema():
 
 @app.on_event("startup")
 def on_startup():
+    # Fail-closed: fuera de desarrollo no se arranca con secretos debiles o de ejemplo.
+    validate_runtime_settings(settings)
     os.makedirs(settings.storage_dir, exist_ok=True)
     Base.metadata.create_all(bind=engine)
     ensure_employee_credential_schema()
     ensure_user_schema()
     ensure_employee_schedule_schema()
+    ensure_incident_schema()
+    ensure_indexes()
     bootstrap_data()
 
 
 @app.get("/health")
 def health():
     return {"ok": True, "environment": settings.environment}
+
+
+@app.get("/health/ready")
+@app.get("/api/health/ready")
+def health_ready():
+    """Readiness: verifica la base de datos con SELECT 1."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception:
+        logger.exception("Readiness check failed: database unavailable")
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"ok": False, "database": "unavailable"},
+        )
+    return {"ok": True, "database": "ok"}
 
 
 def serialize_admin_user(db: Session, user: User, role_name: str | None = None) -> dict:
@@ -3274,10 +3382,13 @@ def admin_login(
     ).scalar_one_or_none()
     role = db.get(Role, user.role_id) if user and user.role_id else None
     role_name = role.name if role else ""
+    # Siempre se ejecuta un PBKDF2 (contra un hash ficticio si el usuario no existe)
+    # para no revelar por tiempo de respuesta si el correo esta registrado.
+    password_ok = verify_password_constant_time(password, user.password_hash if user else None)
     if (
         user is None
         or role_name not in ROLE_PERMISSIONS
-        or not verify_password_hash(password, user.password_hash)
+        or not password_ok
     ):
         record_admin_login_result(db, email, client_ip_address, False)
         db.add(
@@ -3323,6 +3434,7 @@ def admin_login(
         user_agent=(request.headers.get("user-agent") or "")[:255],
     )
     user.last_login_at = now
+    rehash_password_if_needed(user, password)
     db.add(session)
     db.flush()
     record_admin_login_result(db, email, client_ip_address, True)
@@ -4362,6 +4474,9 @@ def station_enroll(
         db.commit()
         raise HTTPException(status_code=400, detail="Missing credentials")
 
+    lockout_key = station_lockout_key(email)
+    assert_not_locked_out(db, lockout_key, client_ip_address)
+
     credentials = db.execute(
         select(EmployeeCredential).where(EmployeeCredential.email == email)
     ).scalars().all()
@@ -4369,6 +4484,9 @@ def station_enroll(
     employee = db.get(Employee, credential.employee_id) if credential else None
     company = db.get(Company, credential.company_id) if credential else None
     success = False
+    if not credentials:
+        # Mismo costo de PBKDF2 aunque el correo no exista.
+        verify_password_constant_time(password, None)
     for candidate in credentials:
         candidate_employee = db.get(Employee, candidate.employee_id)
         candidate_company = db.get(Company, candidate.company_id)
@@ -4386,7 +4504,7 @@ def station_enroll(
             success = True
             break
 
-    db.add(LoginAttempt(email_attempted=email, ip_address=client_ip_address[:45], success=success))
+    record_login_result(db, email, client_ip_address, success, lockout_key=lockout_key)
     if not success:
         db.add(
             StationLoginEvent(
@@ -4457,6 +4575,7 @@ def station_enroll(
         action = "device_reenrolled"
 
     credential.last_login_at = occurred_at
+    rehash_password_if_needed(credential, password)
     db.add(
         StationLoginEvent(
             company_id=company.id,
@@ -4557,15 +4676,11 @@ def station_login(
         db.commit()
         raise HTTPException(status_code=400, detail="Missing credentials")
 
+    lockout_key = station_lockout_key(email)
+    assert_not_locked_out(db, lockout_key, client_ip_address)
     credential, employee, success = authenticate_employee_credential(db, device.company_id, email, password)
 
-    db.add(
-        LoginAttempt(
-            email_attempted=email,
-            ip_address=client_ip_address[:45],
-            success=success,
-        )
-    )
+    record_login_result(db, email, client_ip_address, success, lockout_key=lockout_key)
     db.add(
         StationLoginEvent(
             company_id=device.company_id,
@@ -4592,6 +4707,7 @@ def station_login(
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     credential.last_login_at = occurred_at
+    rehash_password_if_needed(credential, password)
     device.employee_id = credential.employee_id
     device.last_seen_at = occurred_at
     db.commit()
@@ -4623,20 +4739,21 @@ def station_login(
 
 @app.post("/api/station/password/change")
 def station_change_password(
+    request: Request,
     payload: StationPasswordChangePayload,
     device: Device = Depends(require_device),
     db: Session = Depends(get_db),
 ):
     email = clean_email(payload.email)
-    credential = find_employee_credential(db, device.company_id, email)
-    employee = db.get(Employee, credential.employee_id) if credential else None
-    if (
-        credential is None
-        or employee is None
-        or credential.status != "active"
-        or employee.status != "active"
-        or not verify_password_hash(payload.current_password, credential.password_hash)
-    ):
+    client_ip_address = client_ip(request)
+    lockout_key = station_lockout_key(email)
+    assert_not_locked_out(db, lockout_key, client_ip_address)
+    credential, employee, success = authenticate_employee_credential(
+        db, device.company_id, email, payload.current_password
+    )
+    if not success:
+        record_login_result(db, email, client_ip_address, False, lockout_key=lockout_key)
+        db.commit()
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     validate_password_policy(payload.new_password)
@@ -4644,6 +4761,7 @@ def station_change_password(
         raise HTTPException(status_code=400, detail="New password must be different")
 
     changed_at = now_utc()
+    record_login_result(db, email, client_ip_address, True, lockout_key=lockout_key)
     credential.password_hash = hash_password(payload.new_password)
     credential.password_change_required = False
     credential.password_changed_at = changed_at

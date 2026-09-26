@@ -1,5 +1,6 @@
 const STORAGE_KEYS = {
   station: "vyntraStationBridge",
+  stationToken: "vyntraStationToken",
   queue: "vyntraBrowserQueue",
   status: "vyntraBrowserStatus",
   activity: "vyntraBrowserPageActivity",
@@ -13,8 +14,33 @@ const AUTO_CAPTURE_MINUTES = 5;
 const STALE_STATION_MS = 10 * 60 * 1000;
 const MAX_ACTIVE_SHIFT_MS = 18 * 60 * 60 * 1000;
 const WORKING_STATUS = "TRABAJANDO";
-const VERSION = "0.3.0";
+const VERSION = "0.3.1";
 const ACTIVE_STATUSES = new Set(["TRABAJANDO", "BREAK", "LUNCH"]);
+
+// Build de desarrollo: manifest.dev.json declara version_name "<version>-dev" y
+// agrega localhost. En produccion solo se aceptan los origenes de vyntralab.tech.
+const IS_DEV_BUILD = /-dev$/.test(chrome.runtime.getManifest?.().version_name || "");
+const PRODUCTION_STATION_ORIGINS = ["https://vyntralab.tech", "https://www.vyntralab.tech"];
+const DEV_STATION_ORIGINS = ["http://localhost:3000", "http://localhost:3001"];
+const STATION_ORIGINS = new Set(IS_DEV_BUILD ? [...PRODUCTION_STATION_ORIGINS, ...DEV_STATION_ORIGINS] : PRODUCTION_STATION_ORIGINS);
+const DEFAULT_API_BASE = "https://vyntralab.tech";
+
+// Cola local de eventos.
+const MAX_QUEUE_EVENTS = 500;
+const SEND_BATCH_SIZE = 50;
+// Eventos de marcaje: nunca se descartan al recortar la cola.
+const SHIFT_CRITICAL_EVENTS = new Set([
+  "shift_started",
+  "shift_finished",
+  "shift_restored_by_admin",
+  "break_started",
+  "break_finished",
+  "lunch_started",
+  "lunch_finished",
+  "overtime_requested",
+  "overtime_started",
+  "overtime_finished",
+]);
 
 // Politica de captura minima: la lista de sitios permitidos son las reglas de
 // productividad de la empresa. La URL y el titulo literal de la pestana solo se
@@ -24,6 +50,11 @@ const UNLISTED_SITE_TITLE = "(sitio fuera de lista)";
 const LISTED_APP_TITLE = "(aplicacion permitida)";
 const MAX_IDENTIFIER_LENGTH = 120;
 const RULES_MAX_AGE_MS = 30 * 60 * 1000;
+const DOMAIN_PATTERN_RE = /^\.?[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
+
+// Contador de clics fuera de la estacion: solo en sitios productivos, mediante
+// un content script dinamico registrado para esos dominios.
+const PRODUCTIVE_SCRIPT_ID = "vyntra-productive-activity";
 
 function eventId() {
   if (crypto?.randomUUID) return crypto.randomUUID();
@@ -42,6 +73,14 @@ function getHost(url) {
   }
 }
 
+function getOrigin(url) {
+  try {
+    return new URL(url || "").origin;
+  } catch {
+    return "";
+  }
+}
+
 function storageGet(keys) {
   return chrome.storage.local.get(keys);
 }
@@ -52,6 +91,72 @@ function storageSet(values) {
 
 function storageRemove(keys) {
   return chrome.storage.local.remove(keys);
+}
+
+// ---- token de la estacion ----------------------------------------------------
+// El token se guarda en chrome.storage.session (memoria del navegador, no
+// accesible para content scripts) cuando esta disponible; si no, en local.
+function sessionStorageArea() {
+  return chrome.storage?.session || null;
+}
+
+async function saveStation(station) {
+  const token = station?.session?.token || "";
+  const sessionArea = sessionStorageArea();
+  if (sessionArea && station) {
+    const { token: _omit, ...sessionWithoutToken } = station.session || {};
+    await sessionArea.set({ [STORAGE_KEYS.stationToken]: token });
+    await storageSet({ [STORAGE_KEYS.station]: { ...station, session: sessionWithoutToken } });
+    return;
+  }
+  await storageSet({ [STORAGE_KEYS.station]: station });
+}
+
+async function loadStation() {
+  const values = await storageGet(STORAGE_KEYS.station);
+  const station = values[STORAGE_KEYS.station];
+  if (!station) return null;
+  const sessionArea = sessionStorageArea();
+  if (!sessionArea) return station;
+  const tokenValues = await sessionArea.get(STORAGE_KEYS.stationToken);
+  const token = tokenValues[STORAGE_KEYS.stationToken] || station.session?.token || "";
+  return { ...station, session: { ...(station.session || {}), token } };
+}
+
+async function clearStation() {
+  await storageRemove([STORAGE_KEYS.station, STORAGE_KEYS.rules]);
+  const sessionArea = sessionStorageArea();
+  if (sessionArea) await sessionArea.remove(STORAGE_KEYS.stationToken);
+}
+
+// ---- validacion de origenes ------------------------------------------------
+function isAllowedStationOrigin(origin) {
+  return STATION_ORIGINS.has(String(origin || ""));
+}
+
+function isAllowedApiBase(apiBase) {
+  return isAllowedStationOrigin(String(apiBase || "").replace(/\/+$/, ""));
+}
+
+function stationApiBase(station) {
+  const apiBase = String(station?.apiBase || "").replace(/\/+$/, "");
+  return isAllowedApiBase(apiBase) ? apiBase : DEFAULT_API_BASE;
+}
+
+function isFromThisExtension(sender) {
+  return Boolean(sender) && sender.id === chrome.runtime.id;
+}
+
+function isFromExtensionPage(sender) {
+  if (!isFromThisExtension(sender) || sender.tab) return false;
+  const base = chrome.runtime.getURL("");
+  return typeof sender.url === "string" && sender.url.startsWith(base);
+}
+
+function isFromStationPage(sender) {
+  if (!isFromThisExtension(sender) || !sender.tab) return false;
+  if (typeof sender.frameId === "number" && sender.frameId !== 0) return false;
+  return isAllowedStationOrigin(getOrigin(sender.url));
 }
 
 function queryActiveTab() {
@@ -125,60 +230,125 @@ async function saveStatus(status) {
 }
 
 async function currentStatus() {
-  const values = await storageGet([STORAGE_KEYS.station, STORAGE_KEYS.status]);
-  return values[STORAGE_KEYS.status] || getStatus(values[STORAGE_KEYS.station]);
+  const values = await storageGet(STORAGE_KEYS.status);
+  return values[STORAGE_KEYS.status] || getStatus(await loadStation());
+}
+
+function stationUrlPatterns() {
+  return [...STATION_ORIGINS].map((origin) => `${origin}/estacion*`);
 }
 
 function notifyStationTabs(status) {
-  chrome.tabs.query({
-    url: [
-      "https://vyntralab.tech/estacion*",
-      "https://www.vyntralab.tech/estacion*",
-      "http://localhost:3000/estacion*",
-      "http://localhost:3001/estacion*",
-    ],
-  }).then((tabs) => {
+  chrome.tabs.query({ url: stationUrlPatterns() }).then((tabs) => {
     for (const tab of tabs) {
       if (tab.id) chrome.tabs.sendMessage(tab.id, { type: "extension_status", status }).catch(() => undefined);
     }
   }).catch(() => undefined);
 }
 
-async function postStationEvent(station, event) {
-  const apiBase = station.apiBase || "https://vyntralab.tech";
-  const response = await fetch(`${apiBase}/api/agent/events`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Device-Token": station.session.token,
-    },
-    body: JSON.stringify({ events: [event] }),
+// ---- cola de eventos (serializada) -----------------------------------------
+// Mutex simple con cadena de promesas: enqueue y flush nunca se intercalan, asi
+// que no se pierden eventos por lecturas/escrituras concurrentes del storage.
+let queueChain = Promise.resolve();
+
+function withQueueLock(task) {
+  const run = queueChain.then(task, task);
+  queueChain = run.catch(() => undefined);
+  return run;
+}
+
+function isShiftCritical(event) {
+  return SHIFT_CRITICAL_EVENTS.has(String(event?.tipo || ""));
+}
+
+// Recorta la cola descartando primero los eventos mas antiguos que no son de
+// marcaje. Los eventos de marcaje nunca se descartan.
+function trimQueue(queue, max = MAX_QUEUE_EVENTS) {
+  if (queue.length <= max) return queue;
+  let excess = queue.length - max;
+  const kept = [];
+  for (const event of queue) {
+    if (excess > 0 && !isShiftCritical(event)) {
+      excess -= 1;
+      continue;
+    }
+    kept.push(event);
+  }
+  return kept;
+}
+
+function enqueue(events) {
+  const list = Array.isArray(events) ? events : [events];
+  return withQueueLock(async () => {
+    const values = await storageGet(STORAGE_KEYS.queue);
+    const queue = values[STORAGE_KEYS.queue] || [];
+    await storageSet({ [STORAGE_KEYS.queue]: trimQueue([...queue, ...list]) });
   });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+}
+
+class TransientSendError extends Error {}
+
+async function postStationEvents(station, events) {
+  let response;
+  try {
+    response = await fetch(`${stationApiBase(station)}/api/agent/events`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Device-Token": station.session.token,
+      },
+      body: JSON.stringify({ events }),
+    });
+  } catch (error) {
+    throw new TransientSendError(error?.message || "Sin conexion");
+  }
+  if ([400, 413, 422].includes(response.status)) {
+    return { invalid: true, status: response.status };
+  }
+  if (!response.ok) throw new TransientSendError(`HTTP ${response.status}`);
   return response.json();
 }
 
-async function flushQueue(station) {
-  const values = await storageGet(STORAGE_KEYS.queue);
-  const queue = values[STORAGE_KEYS.queue] || [];
-  if (!queue.length) return;
-  const pending = [];
-  for (const event of queue) {
-    try {
-      await postStationEvent(station, event);
-    } catch {
-      pending.push(event);
+// Envia un lote y devuelve los ids resueltos (aceptados o rechazados por el servidor).
+async function sendBatch(station, batch) {
+  const result = await postStationEvents(station, batch);
+  if (result?.invalid) {
+    if (batch.length === 1) return new Set([batch[0].id]);
+    const resolved = new Set();
+    for (const event of batch) {
+      for (const id of await sendBatch(station, [event])) resolved.add(id);
     }
+    return resolved;
   }
-  await storageSet({ [STORAGE_KEYS.queue]: pending.slice(-200) });
+  const resolved = new Set();
+  for (const item of result?.accepted || []) if (item?.id) resolved.add(item.id);
+  for (const item of result?.rejected || []) if (item?.id) resolved.add(item.id);
+  return resolved;
 }
 
-async function enqueue(event) {
-  const values = await storageGet(STORAGE_KEYS.queue);
-  const queue = values[STORAGE_KEYS.queue] || [];
-  await storageSet({ [STORAGE_KEYS.queue]: [...queue, event].slice(-200) });
+function flushQueue(station) {
+  return withQueueLock(async () => {
+    const values = await storageGet(STORAGE_KEYS.queue);
+    const queue = values[STORAGE_KEYS.queue] || [];
+    if (!queue.length || !station?.session?.token) return { sent: 0, pending: queue.length };
+    const resolved = new Set();
+    let failure = null;
+    for (let index = 0; index < queue.length; index += SEND_BATCH_SIZE) {
+      try {
+        for (const id of await sendBatch(station, queue.slice(index, index + SEND_BATCH_SIZE))) resolved.add(id);
+      } catch (error) {
+        failure = error;
+        break;
+      }
+    }
+    const pending = queue.filter((event) => !resolved.has(event.id));
+    await storageSet({ [STORAGE_KEYS.queue]: pending });
+    if (failure) throw failure;
+    return { sent: resolved.size, pending: pending.length };
+  });
 }
 
+// ---- reglas -----------------------------------------------------------------
 async function loadRules(station, { force = false } = {}) {
   const values = await storageGet(STORAGE_KEYS.rules);
   const cached = values[STORAGE_KEYS.rules];
@@ -187,24 +357,45 @@ async function loadRules(station, { force = false } = {}) {
   if (!station?.session?.token) return cached?.rules || [];
 
   try {
-    const response = await fetch(`${station.apiBase || "https://vyntralab.tech"}/api/agent/rules`, {
+    const response = await fetch(`${stationApiBase(station)}/api/agent/rules`, {
       headers: { "X-Device-Token": station.session.token },
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     const rules = Array.isArray(data?.rules) ? data.rules : [];
     await storageSet({ [STORAGE_KEYS.rules]: { rules, fetchedAt: nowIso() } });
+    await syncProductiveContentScript(rules);
     return rules;
   } catch {
     return cached?.rules || [];
   }
 }
 
+function isDomainPattern(pattern) {
+  const value = String(pattern || "").trim();
+  return Boolean(value) && !/\s/.test(value) && DOMAIN_PATTERN_RE.test(value);
+}
+
+// Un patron con forma de dominio coincide con el host exacto o con un subdominio
+// (".salesforce.com" / "salesforce.com"), nunca como subcadena arbitraria.
+function hostMatchesDomain(host, pattern) {
+  const domain = String(pattern || "").trim().replace(/^\./, "").toLowerCase();
+  const cleanHost = String(host || "").trim().replace(/\.$/, "").toLowerCase();
+  if (!domain || !cleanHost) return false;
+  return cleanHost === domain || cleanHost.endsWith(`.${domain}`);
+}
+
+function ruleMatchesTab(pattern, host, title) {
+  if (isDomainPattern(pattern)) return hostMatchesDomain(host, pattern);
+  const haystack = `${host} - ${title || ""}`.toLowerCase();
+  return haystack.includes(String(pattern).toLowerCase());
+}
+
 // Devuelve el identificador normalizado de la pestana, si el sitio esta en la
 // lista y si admite evidencia visual (solo sitios clasificados como productivos).
 function normalizeTab(tab, rules) {
-  const domain = getHost(tab?.url || "");
-  const haystack = `${domain} - ${tab?.title || ""}`.toLowerCase();
+  const host = getHost(tab?.url || "");
+  const title = tab?.title || "";
   const rank = (rule) => Number(rule.scope_score || 0) + Number(rule.priority || 0);
   let bestTitle = null;
   let bestAny = null;
@@ -214,7 +405,7 @@ function normalizeTab(tab, rules) {
     const pattern = String(rule?.title_contains || "").trim();
     if (!executable && !pattern) continue;
     if (executable && executable !== BROWSER_EXECUTABLE) continue;
-    if (pattern && !haystack.includes(pattern.toLowerCase())) continue;
+    if (pattern && !ruleMatchesTab(pattern, host, title)) continue;
     if (pattern) {
       if (!bestTitle || rank(rule) > rank(bestTitle)) bestTitle = rule;
     } else {
@@ -231,13 +422,86 @@ function normalizeTab(tab, rules) {
   return { identifier: UNLISTED_SITE_TITLE, listed: false, evidenceAllowed: false };
 }
 
+// Patrones de coincidencia para el content script dinamico: solo dominios de
+// reglas productivas del navegador. Los patrones que no son dominio no pueden
+// traducirse a hosts, asi que en esos sitios no se cuentan clics.
+function productiveMatchPatterns(rules) {
+  const patterns = new Set();
+  for (const rule of rules || []) {
+    if (rule?.classification !== "productive") continue;
+    const executable = String(rule?.executable_name || "").trim().toLowerCase();
+    if (executable && executable !== BROWSER_EXECUTABLE) continue;
+    const pattern = String(rule?.title_contains || "").trim().toLowerCase();
+    if (!pattern) {
+      if (executable === BROWSER_EXECUTABLE) return ["http://*/*", "https://*/*"];
+      continue;
+    }
+    if (!isDomainPattern(pattern)) continue;
+    const domain = pattern.replace(/^\./, "");
+    patterns.add(`*://${domain}/*`);
+    patterns.add(`*://*.${domain}/*`);
+  }
+  return [...patterns].sort();
+}
+
+let registeredPatternsKey = null;
+
+async function syncProductiveContentScript(rules) {
+  const scripting = chrome.scripting;
+  if (!scripting?.registerContentScripts) return;
+  const matches = productiveMatchPatterns(rules);
+  const key = matches.join("|");
+  if (key === registeredPatternsKey) return;
+  try {
+    const existing = await scripting.getRegisteredContentScripts({ ids: [PRODUCTIVE_SCRIPT_ID] });
+    if (!matches.length) {
+      if (existing.length) await scripting.unregisterContentScripts({ ids: [PRODUCTIVE_SCRIPT_ID] });
+    } else {
+      const script = {
+        id: PRODUCTIVE_SCRIPT_ID,
+        matches,
+        excludeMatches: stationUrlPatterns().map((pattern) => pattern.replace(/estacion\*$/, "*")),
+        js: ["content-script.js"],
+        runAt: "document_start",
+        allFrames: false,
+      };
+      if (existing.length) {
+        await scripting.updateContentScripts([script]);
+      } else {
+        await scripting.registerContentScripts([{ ...script, persistAcrossSessions: true }]);
+      }
+    }
+    registeredPatternsKey = key;
+  } catch (error) {
+    registeredPatternsKey = null;
+    console.warn("VYNTRA: no se pudo registrar el contador de sitios productivos", error);
+  }
+}
+
+async function unregisterProductiveContentScript() {
+  registeredPatternsKey = null;
+  try {
+    const existing = await chrome.scripting?.getRegisteredContentScripts?.({ ids: [PRODUCTIVE_SCRIPT_ID] });
+    if (existing?.length) await chrome.scripting.unregisterContentScripts({ ids: [PRODUCTIVE_SCRIPT_ID] });
+  } catch {
+    // Sin permisos o API no disponible: no hay nada registrado.
+  }
+}
+
+// ---- actividad de pagina ----------------------------------------------------
 async function recordPageActivity(message, sender) {
-  const values = await storageGet([STORAGE_KEYS.station, STORAGE_KEYS.activity]);
-  const station = values[STORAGE_KEYS.station];
+  const station = await loadStation();
   if (!station?.session?.token || !station.shiftActive || !station.consentAccepted || isStationStale(station)) {
     return { ok: true, ignored: true };
   }
+  if (!sender?.tab) return { ok: true, ignored: true };
+  // Solo se cuentan clics en la estacion y en sitios clasificados como productivos.
+  if (!isFromStationPage(sender)) {
+    const rules = await loadRules(station);
+    if (!normalizeTab(sender.tab, rules).evidenceAllowed) return { ok: true, ignored: true };
+  }
 
+  const values = await storageGet(STORAGE_KEYS.activity);
   const tabId = sender?.tab?.id ? String(sender.tab.id) : "unknown";
   const activity = {
     ...emptyPageActivity(),
@@ -252,8 +516,8 @@ async function recordPageActivity(message, sender) {
     lastInteractionAt: null,
     ...(activity.tabs[tabId] || {}),
   };
-  const clicks = Math.max(0, Number(message.clicks || 0));
-  const focusChanges = Math.max(0, Number(message.focusChanges || 0));
+  const clicks = Math.max(0, Math.min(10000, Number(message.clicks || 0)));
+  const focusChanges = Math.max(0, Math.min(10000, Number(message.focusChanges || 0)));
   const lastInteractionAt = message.lastInteractionAt || nowIso();
   activity.clicks += clicks;
   activity.focusChanges += focusChanges;
@@ -341,25 +605,28 @@ function buildActivityEvent(station, tab, idleState, pageActivity = emptyPageAct
 }
 
 async function sampleBrowserActivity() {
-  const values = await storageGet(STORAGE_KEYS.station);
-  const station = values[STORAGE_KEYS.station];
+  const station = await loadStation();
   if (!station?.session?.token || !station.shiftActive || !station.consentAccepted || isStationStale(station)) {
     await saveStatus(getStatus(station));
     return;
   }
 
+  let event;
   try {
     const [tab, idleState, rules] = await Promise.all([queryActiveTab(), queryIdleState(), loadRules(station)]);
     const pageActivity = await readPageActivitySummary(tab);
-    const event = buildActivityEvent(station, tab, idleState, pageActivity, rules);
-    await postStationEvent(station, event);
-    await clearPageActivity();
+    event = buildActivityEvent(station, tab, idleState, pageActivity, rules);
+  } catch {
+    const pageActivity = await readPageActivitySummary(null);
+    event = buildActivityEvent(station, null, "unknown", pageActivity);
+  }
+  // La muestra queda en la cola persistente antes de intentar enviarla.
+  await enqueue(event);
+  await clearPageActivity();
+  try {
     await flushQueue(station);
     await saveStatus(getStatus(station, { lastSync: nowIso() }));
   } catch (error) {
-    const pageActivity = await readPageActivitySummary(null);
-    const fallbackEvent = buildActivityEvent(station, null, "unknown", pageActivity);
-    await enqueue(fallbackEvent);
     await saveStatus(getStatus(station, { lastError: error?.message || "No se pudo sincronizar" }));
   }
 }
@@ -389,21 +656,39 @@ function canAutoCapture(station) {
   );
 }
 
+function sameTab(before, after) {
+  return Boolean(
+    before && after
+    && before.id === after.id
+    && before.windowId === after.windowId
+    && before.url === after.url,
+  );
+}
+
 async function uploadVisibleTabCapture(options = {}) {
-  const values = options.station ? {} : await storageGet(STORAGE_KEYS.station);
-  const station = options.station || values[STORAGE_KEYS.station];
+  const station = options.station || await loadStation();
   if (!station?.session?.token) throw new Error("Abre la estacion web e inicia sesion primero.");
 
-  const tab = await queryActiveTab();
+  // 1) Reglas primero; 2) pestana activa; 3) decision; 4) captura;
+  // 5) se vuelve a consultar la pestana activa y se descarta si cambio.
   const rules = await loadRules(station);
-  if (!normalizeTab(tab, rules).evidenceAllowed) {
+  const tab = await queryActiveTab();
+  if (!tab || !normalizeTab(tab, rules).evidenceAllowed) {
     const error = new Error("La pestana activa no es un sitio de trabajo permitido; no se captura evidencia.");
     error.code = "UNLISTED_SITE";
     throw error;
   }
   // captureVisibleTab solo dibuja el contenido de la pestana: nunca el escritorio ni la barra de tareas.
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab?.windowId, { format: "png" });
+  let dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" });
+  const tabAfter = await queryActiveTab();
+  if (!sameTab(tab, tabAfter) || !normalizeTab(tabAfter, rules).evidenceAllowed) {
+    dataUrl = null;
+    const error = new Error("La pestana activa cambio durante la captura; la imagen se descarto.");
+    error.code = "TAB_CHANGED";
+    throw error;
+  }
   const blob = dataUrlToBlob(dataUrl);
+  dataUrl = null;
   const sha = await sha256Hex(blob);
   const capturedAt = nowIso();
   const mode = options.mode || "manual";
@@ -417,7 +702,7 @@ async function uploadVisibleTabCapture(options = {}) {
   form.set("agent_version", VERSION);
   form.set("monitor_count", "1");
 
-  const response = await fetch(`${station.apiBase || "https://vyntralab.tech"}/api/evidence/upload`, {
+  const response = await fetch(`${stationApiBase(station)}/api/evidence/upload`, {
     method: "POST",
     headers: { "X-Device-Token": station.session.token },
     body: form,
@@ -428,13 +713,13 @@ async function uploadVisibleTabCapture(options = {}) {
 }
 
 async function autoCaptureVisibleTab() {
-  const values = await storageGet([STORAGE_KEYS.station, STORAGE_KEYS.status]);
-  const station = values[STORAGE_KEYS.station];
+  const station = await loadStation();
   if (!canAutoCapture(station)) {
     await saveStatus(getStatus(station));
     return;
   }
 
+  const values = await storageGet(STORAGE_KEYS.status);
   const status = values[STORAGE_KEYS.status] || {};
   const lastCaptureAt = Date.parse(status.lastCapture || "");
   const captureIntervalMs = AUTO_CAPTURE_MINUTES * 60 * 1000;
@@ -448,7 +733,7 @@ async function autoCaptureVisibleTab() {
       lastError: null,
     }));
   } catch (error) {
-    if (error?.code === "UNLISTED_SITE") {
+    if (error?.code === "UNLISTED_SITE" || error?.code === "TAB_CHANGED") {
       await saveStatus(getStatus(station, { lastCaptureSkipped: nowIso(), lastError: null }));
       return;
     }
@@ -463,36 +748,55 @@ function ensureAlarms() {
   chrome.alarms.create(AUTO_CAPTURE_ALARM, { periodInMinutes: AUTO_CAPTURE_MINUTES });
 }
 
+const NOT_ALLOWED = { ok: false, error: "Origen no permitido" };
+
 async function handleMessage(message, sender) {
   if (message?.type === "page_activity") {
+    if (!isFromThisExtension(sender) || !sender?.tab) return NOT_ALLOWED;
     return recordPageActivity(message, sender);
   }
 
   if (message?.type === "station_sync") {
+    if (!isFromStationPage(sender)) return NOT_ALLOWED;
+    const payload = message.payload && typeof message.payload === "object" ? message.payload : {};
+    const senderOrigin = getOrigin(sender.url);
+    const apiBase = String(payload.apiBase || "").replace(/\/+$/, "");
+    if (!isAllowedApiBase(apiBase) || apiBase !== senderOrigin) {
+      return { ok: false, error: "apiBase no permitido" };
+    }
     const station = {
-      ...message.payload,
+      ...payload,
+      apiBase,
       syncedAt: nowIso(),
     };
-    await storageSet({ [STORAGE_KEYS.station]: station });
+    await saveStation(station);
     loadRules(station, { force: true }).catch(() => undefined);
     const status = await saveStatus(getStatus(station, { lastSync: station.syncedAt }));
     return { ok: true, status };
   }
 
   if (message?.type === "station_clear") {
-    await storageRemove([STORAGE_KEYS.station, STORAGE_KEYS.rules]);
+    if (!isFromStationPage(sender)) return NOT_ALLOWED;
+    await clearStation();
+    await unregisterProductiveContentScript();
     const status = await saveStatus(getStatus(null, { lastSync: null, lastError: null }));
     return { ok: true, status };
   }
 
-  if (message?.type === "station_ping" || message?.type === "popup_status") {
+  if (message?.type === "station_ping") {
+    if (!isFromStationPage(sender) && !isFromExtensionPage(sender)) return NOT_ALLOWED;
+    return { ok: true, status: await currentStatus() };
+  }
+
+  if (message?.type === "popup_status") {
+    if (!isFromExtensionPage(sender)) return NOT_ALLOWED;
     return { ok: true, status: await currentStatus() };
   }
 
   if (message?.type === "capture_visible_tab") {
+    if (!isFromExtensionPage(sender)) return NOT_ALLOWED;
     const capture = await uploadVisibleTabCapture({ mode: "manual" });
-    const values = await storageGet(STORAGE_KEYS.station);
-    const status = await saveStatus(getStatus(values[STORAGE_KEYS.station], {
+    const status = await saveStatus(getStatus(await loadStation(), {
       lastCapture: capture.capturedAt,
       lastCaptureMode: "manual",
       lastError: null,
@@ -501,6 +805,7 @@ async function handleMessage(message, sender) {
   }
 
   if (message?.type === "sample_now") {
+    if (!isFromExtensionPage(sender)) return NOT_ALLOWED;
     await sampleBrowserActivity();
     return { ok: true, status: await currentStatus() };
   }

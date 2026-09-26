@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "VYNTRA Browser",
-  "description": "Extension que agrega a la estacion de marcaje web VYNTRA la actividad y las capturas de los sitios permitidos por la empresa.",
+  "name": "VYNTRA Browser (DEV)",
+  "description": "Build de desarrollo de VYNTRA Browser: acepta tambien la estacion en localhost. No distribuir.",
   "version": "0.3.1",
+  "version_name": "0.3.1-dev",
   "action": {
     "default_popup": "popup.html",
-    "default_title": "VYNTRA Browser"
+    "default_title": "VYNTRA Browser (DEV)"
   },
   "background": {
     "service_worker": "background.js"
@@ -14,7 +15,9 @@
     {
       "matches": [
         "https://vyntralab.tech/*",
-        "https://www.vyntralab.tech/*"
+        "https://www.vyntralab.tech/*",
+        "http://localhost:3000/*",
+        "http://localhost:3001/*"
       ],
       "js": ["content-script.js"],
       "run_at": "document_start"

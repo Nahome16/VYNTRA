@@ -6,24 +6,32 @@ This first ETL is intentionally simple and auditable:
 - idle: only the part of a continuous idle streak that exceeds idle_grace_seconds
 - idle grace seconds are counted as neutral focus time
 - break/lunch: calculated from shift events and kept outside active time
+- block_date/block_start are expressed in the company timezone
+  (Company.timezone, fallback America/Managua)
+- two runs for the same company cannot overlap: on PostgreSQL a
+  transaction-level advisory lock per company is taken before rebuilding
 """
 
 from collections import defaultdict
+from dataclasses import dataclass
 import argparse
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
+import hashlib
 import math
 from pathlib import Path
 import sys
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 
 from app.database import SessionLocal
 from app.models import (
     Activity,
+    Company,
     CompanySetting,
     Employee,
     ETLRunLog,
@@ -50,8 +58,52 @@ def setting_int(db, company_id: str, key: str, default: int) -> int:
         return default
 
 
-def block_start_for(ts: datetime, block_minutes: int) -> datetime:
-    ts = ts.astimezone(timezone.utc)
+DEFAULT_TIMEZONE = "America/Managua"
+
+
+@dataclass(frozen=True)
+class CompanyContext:
+    block_minutes: int
+    idle_grace: int
+    tz: tzinfo
+
+
+def company_zoneinfo(name: str | None) -> tzinfo:
+    try:
+        return ZoneInfo((name or "").strip() or DEFAULT_TIMEZONE)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo(DEFAULT_TIMEZONE)
+
+
+def company_context(db, company_id: str, cache: dict[str, CompanyContext]) -> CompanyContext:
+    """Configuracion por empresa leida una sola vez (no por actividad)."""
+    if company_id not in cache:
+        company = db.get(Company, company_id)
+        block_minutes = setting_int(db, company_id, "productivity_block_minutes", 30)
+        if block_minutes <= 0 or block_minutes > 1440:
+            block_minutes = 30
+        cache[company_id] = CompanyContext(
+            block_minutes=block_minutes,
+            idle_grace=setting_int(db, company_id, "idle_grace_seconds", 300),
+            tz=company_zoneinfo(company.timezone if company else None),
+        )
+    return cache[company_id]
+
+
+def advisory_lock_key(company_id: str) -> int:
+    digest = hashlib.sha256(f"vyntra-etl:{company_id}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+def lock_company_etl(db, company_id: str) -> None:
+    """Serializa ETLs de la misma empresa (PostgreSQL); no-op en otros motores."""
+    if db.get_bind().dialect.name != "postgresql":
+        return
+    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": advisory_lock_key(company_id)})
+
+
+def block_start_for(ts: datetime, block_minutes: int, tz: tzinfo | None = None) -> datetime:
+    ts = ts.astimezone(tz or timezone.utc)
     minute = (ts.minute // block_minutes) * block_minutes
     return ts.replace(minute=minute, second=0, microsecond=0)
 
@@ -89,8 +141,9 @@ def get_block(
     department_id: str | None,
     started_at: datetime,
     block_minutes: int,
+    tz: tzinfo | None = None,
 ) -> dict:
-    block_start = block_start_for(started_at, block_minutes)
+    block_start = block_start_for(started_at, block_minutes, tz)
     block_date = block_start.date().isoformat()
     block_time = block_start.strftime("%H:%M")
     block_key = (company_id, employee_id, block_date, block_time)
@@ -132,18 +185,19 @@ def add_interval_to_blocks(
     started_at: datetime,
     ended_at: datetime,
     field_name: str,
+    ctx: CompanyContext,
 ):
     if ended_at <= started_at:
         return
 
-    block_minutes = setting_int(db, shift.company_id, "productivity_block_minutes", 30)
+    block_minutes = ctx.block_minutes
     current = normalize_utc(started_at)
     interval_end = normalize_utc(ended_at)
     department_id = shift.employee.department_id if shift.employee else None
     remaining = max(0, int(round((interval_end - current).total_seconds())))
 
     while remaining > 0:
-        block_start = block_start_for(current, block_minutes)
+        block_start = block_start_for(current, block_minutes, ctx.tz)
         block_end = block_start + timedelta(minutes=block_minutes)
         seconds_to_boundary = (block_end - current).total_seconds()
         if seconds_to_boundary <= 0:
@@ -159,6 +213,7 @@ def add_interval_to_blocks(
                 department_id,
                 current,
                 block_minutes,
+                ctx.tz,
             )
             block["total_seconds"] += seconds
             block[field_name] += seconds
@@ -171,8 +226,11 @@ def add_shift_pause_intervals(
     db,
     blocks: dict[tuple[str, str, str, str], dict],
     shifts: list[Shift],
+    contexts: dict[str, CompanyContext] | None = None,
 ):
+    contexts = contexts if contexts is not None else {}
     for shift in shifts:
+        ctx = company_context(db, shift.company_id, contexts)
         events = db.execute(
             select(ShiftEvent)
             .where(ShiftEvent.shift_id == shift.id)
@@ -188,18 +246,18 @@ def add_shift_pause_intervals(
             if event.event_type == "break_started":
                 open_break = occurred_at
             elif event.event_type == "break_finished" and open_break:
-                add_interval_to_blocks(db, blocks, shift, open_break, occurred_at, "break_seconds")
+                add_interval_to_blocks(db, blocks, shift, open_break, occurred_at, "break_seconds", ctx)
                 open_break = None
             elif event.event_type == "lunch_started":
                 open_lunch = occurred_at
             elif event.event_type == "lunch_finished" and open_lunch:
-                add_interval_to_blocks(db, blocks, shift, open_lunch, occurred_at, "lunch_seconds")
+                add_interval_to_blocks(db, blocks, shift, open_lunch, occurred_at, "lunch_seconds", ctx)
                 open_lunch = None
 
         if open_break:
-            add_interval_to_blocks(db, blocks, shift, open_break, fallback_end, "break_seconds")
+            add_interval_to_blocks(db, blocks, shift, open_break, fallback_end, "break_seconds", ctx)
         if open_lunch:
-            add_interval_to_blocks(db, blocks, shift, open_lunch, fallback_end, "lunch_seconds")
+            add_interval_to_blocks(db, blocks, shift, open_lunch, fallback_end, "lunch_seconds", ctx)
 
 
 def add_activity_to_blocks(
@@ -208,13 +266,16 @@ def add_activity_to_blocks(
     activity: Activity,
     employee: Employee | None,
     idle_streak_by_shift: dict[tuple[str, str, str], int],
+    ctx: CompanyContext | None = None,
 ):
     duration = max(0, int(activity.duration_seconds or 0))
     if duration <= 0:
         return
 
-    block_minutes = setting_int(db, activity.company_id, "productivity_block_minutes", 30)
-    idle_grace = setting_int(db, activity.company_id, "idle_grace_seconds", 300)
+    if ctx is None:
+        ctx = company_context(db, activity.company_id, {})
+    block_minutes = ctx.block_minutes
+    idle_grace = ctx.idle_grace
     department_id = employee.department_id if employee else None
     current = normalize_utc(activity.started_at)
     interval_end = current + timedelta(seconds=duration)
@@ -230,7 +291,7 @@ def add_activity_to_blocks(
 
     remaining = duration
     while remaining > 0:
-        block_start = block_start_for(current, block_minutes)
+        block_start = block_start_for(current, block_minutes, ctx.tz)
         block_end = block_start + timedelta(minutes=block_minutes)
         seconds_to_boundary = (block_end - current).total_seconds()
         if seconds_to_boundary <= 0:
@@ -246,6 +307,7 @@ def add_activity_to_blocks(
             department_id,
             current,
             block_minutes,
+            ctx.tz,
         )
         block["total_seconds"] += seconds
 
@@ -270,6 +332,14 @@ def add_activity_to_blocks(
 
 def run(company_id: str | None = None):
     with SessionLocal() as db:
+        # Bloqueo por empresa antes de leer: una segunda ejecucion para la misma
+        # empresa espera a que la primera confirme (el lock se libera en commit).
+        if company_id:
+            lock_company_etl(db, company_id)
+        else:
+            for locked_company_id in sorted(db.execute(select(Company.id)).scalars().all()):
+                lock_company_etl(db, locked_company_id)
+
         activity_query = select(Activity)
         shift_query = select(Shift)
         if company_id:
@@ -315,12 +385,14 @@ def run(company_id: str | None = None):
         if company_id:
             employee_query = employee_query.where(Employee.company_id == company_id)
         employees = {row.id: row for row in db.execute(employee_query).scalars()}
+        contexts: dict[str, CompanyContext] = {}
 
         for activity in activities:
             employee = employees.get(activity.employee_id)
-            add_activity_to_blocks(db, blocks, activity, employee, idle_streak_by_shift)
+            ctx = company_context(db, activity.company_id, contexts)
+            add_activity_to_blocks(db, blocks, activity, employee, idle_streak_by_shift, ctx)
 
-        add_shift_pause_intervals(db, blocks, shifts)
+        add_shift_pause_intervals(db, blocks, shifts, contexts)
 
         now = now_utc()
         for block in blocks.values():

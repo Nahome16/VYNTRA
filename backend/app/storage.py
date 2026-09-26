@@ -67,6 +67,24 @@ def build_storage_path(
     )
 
 
+def resolve_storage_path(relative_path: str) -> str:
+    """Ruta absoluta dentro de STORAGE_DIR; ValueError si intenta salir de ella."""
+    storage_root = os.path.abspath(settings.storage_dir)
+    full_path = os.path.abspath(os.path.join(storage_root, relative_path or ""))
+    if full_path == storage_root or os.path.commonpath([full_path, storage_root]) != storage_root:
+        raise ValueError("Invalid storage path")
+    return full_path
+
+
+def delete_stored_file(relative_path: str) -> bool:
+    """Elimina un archivo de evidencia. Devuelve True si existia y se borro."""
+    full_path = resolve_storage_path(relative_path)
+    if os.path.isfile(full_path):
+        os.remove(full_path)
+        return True
+    return False
+
+
 def save_from_temp(temp_path: str, relative_path: str) -> str:
     full_path = os.path.abspath(os.path.join(settings.storage_dir, relative_path))
     storage_root = os.path.abspath(settings.storage_dir)

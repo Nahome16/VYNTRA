@@ -122,6 +122,14 @@ const en: Record<string, string> = {
   Volver: "Back",
   "Sesion activa": "Session active",
   "Credenciales incorrectas": "Invalid credentials",
+  "Demasiados intentos. Espera antes de volver a intentar.": "Too many attempts. Please wait before trying again.",
+  "El servidor no esta disponible. Intenta de nuevo en unos minutos.": "The server is unavailable. Try again in a few minutes.",
+  "Sin conexion con el servidor. Revisa tu red e intenta de nuevo.": "Cannot reach the server. Check your network and try again.",
+  "No se pudo iniciar sesion. Intenta de nuevo.": "Could not sign in. Please try again.",
+  "Acceso restringido": "Access restricted",
+  "Tu rol no tiene permiso para ver esta seccion.": "Your role does not have permission to view this section.",
+  "Acceso restringido: tu rol no tiene permiso para esta accion o recurso.": "Access restricted: your role does not have permission for this action or resource.",
+  "Cerrar aviso": "Dismiss notice",
   "Validando...": "Checking...",
 
   // === Ampliaciones de páginas (empleados, asistencia, ajustes, perfil) ===

@@ -30,6 +30,15 @@ function isSectionKey(value: string): value is SectionKey {
   return value in sectionLabels;
 }
 
+/** Permiso de lectura que necesita cada seccion (null = siempre visible). */
+const sectionPermissions: Record<SectionKey, string | null> = {
+  usuarios: "employees:read",
+  accesos: "access_codes:read",
+  incidencias: "incidents:read",
+  reglas: "rules:read",
+  cuenta: null,
+};
+
 const accessTypeLabels: Record<AccessType, string> = {
   station_reopen: "Reabrir",
   overtime: "Horas extra",
@@ -104,8 +113,19 @@ function deliveryStatusText(status?: string) {
 }
 
 export default function SettingsPage() {
-  const { apiGet, apiPatch, apiPost, activeCompanyId, changePassword, user } = useAuth();
+  const { apiGet, apiPatch, apiPost, activeCompanyId, changePassword, hasPermission, user } = useAuth();
   const [activeSection, setActiveSection] = useState<SectionKey>("usuarios");
+  const canReadEmployees = hasPermission("employees:read");
+  const canReadRules = hasPermission("rules:read");
+  const canReadAccessCodes = hasPermission("access_codes:read");
+  const visibleSections = useMemo(
+    () => (Object.keys(sectionLabels) as SectionKey[]).filter((key) => {
+      const permission = sectionPermissions[key];
+      return !permission || hasPermission(permission);
+    }),
+    [hasPermission],
+  );
+  const currentSection: SectionKey = visibleSections.includes(activeSection) ? activeSection : visibleSections[0] || "cuenta";
   const [catalogs, setCatalogs] = useState<CatalogsResponse | null>(null);
   const [rules, setRules] = useState<ProductivityRule[]>([]);
   const [uncategorized, setUncategorized] = useState<UncategorizedItem[]>([]);
@@ -179,11 +199,15 @@ export default function SettingsPage() {
       ? `?company_id=${encodeURIComponent(activeCompanyId)}&limit=30`
       : "?limit=30";
     try {
+      // Solo se consultan las secciones para las que el rol tiene permiso; asi no
+      // se provocan respuestas 403 (p. ej. un rol sin rules:read).
       const [nextCatalogs, nextRules, nextUncategorized, nextCodes] = await Promise.all([
-        apiGet<CatalogsResponse>(`/api/productivity/catalogs${companyQuery}`),
-        apiGet<{ rules: ProductivityRule[] }>(`/api/productivity/rules${companyQuery}`),
-        apiGet<{ items: UncategorizedItem[] }>(`/api/productivity/uncategorized${companyLimitQuery}`),
-        apiGet<{ codes: AccessCode[] }>(`/api/settings/access-codes${companyQuery}`),
+        canReadEmployees ? apiGet<CatalogsResponse>(`/api/productivity/catalogs${companyQuery}`) : Promise.resolve(null),
+        canReadRules ? apiGet<{ rules: ProductivityRule[] }>(`/api/productivity/rules${companyQuery}`) : Promise.resolve({ rules: [] }),
+        canReadRules
+          ? apiGet<{ items: UncategorizedItem[] }>(`/api/productivity/uncategorized${companyLimitQuery}`)
+          : Promise.resolve({ items: [] }),
+        canReadAccessCodes ? apiGet<{ codes: AccessCode[] }>(`/api/settings/access-codes${companyQuery}`) : Promise.resolve({ codes: [] }),
       ]);
       setCatalogs(nextCatalogs);
       setRules(nextRules.rules);
@@ -192,8 +216,8 @@ export default function SettingsPage() {
       setAccessEmployeeId(
         (current) =>
           current ||
-          nextCatalogs.employees.find((employee) => employee.status === "active")?.id ||
-          nextCatalogs.employees[0]?.id ||
+          nextCatalogs?.employees.find((employee) => employee.status === "active")?.id ||
+          nextCatalogs?.employees[0]?.id ||
           "",
       );
       setStatusText("Datos actualizados");
@@ -202,7 +226,7 @@ export default function SettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [activeCompanyId, apiGet, isSystemAdmin]);
+  }, [activeCompanyId, apiGet, canReadAccessCodes, canReadEmployees, canReadRules, isSystemAdmin]);
 
   useEffect(() => {
     if (!user) return;
@@ -719,10 +743,10 @@ export default function SettingsPage() {
             <p>{activeCompanyName} - usuarios, accesos, incidencias y reglas</p>
           </div>
           <div className="settings-board-tabs" role="tablist" aria-label="Secciones de ajustes">
-            {(Object.keys(sectionLabels) as SectionKey[]).map((key) => (
+            {visibleSections.map((key) => (
               <button
-                aria-selected={activeSection === key}
-                className={activeSection === key ? "active" : ""}
+                aria-selected={currentSection === key}
+                className={currentSection === key ? "active" : ""}
                 key={key}
                 onClick={() => selectSection(key)}
                 role="tab"
@@ -742,7 +766,7 @@ export default function SettingsPage() {
           ))}
         </div>
 
-        {activeSection === "usuarios" ? (
+        {currentSection === "usuarios" ? (
           <>
             <div className="settings-actionbar">
               <div className="settings-search">
@@ -855,7 +879,7 @@ export default function SettingsPage() {
           </>
         ) : null}
 
-        {activeSection === "accesos" ? (
+        {currentSection === "accesos" ? (
           <>
             <div className="settings-actionbar settings-access-bar">
               <div className="settings-search">
@@ -912,7 +936,7 @@ export default function SettingsPage() {
           </>
         ) : null}
 
-        {activeSection === "reglas" ? (
+        {currentSection === "reglas" ? (
           <>
             <div className="settings-actionbar settings-rules-bar">
               <div className="settings-search">
@@ -1127,11 +1151,11 @@ export default function SettingsPage() {
           </>
         ) : null}
 
-        {activeSection === "incidencias" ? (
-          <IncidentsPanel active={activeSection === "incidencias"} />
+        {currentSection === "incidencias" ? (
+          <IncidentsPanel active={currentSection === "incidencias"} />
         ) : null}
 
-        {activeSection === "cuenta" ? (
+        {currentSection === "cuenta" ? (
           <section className="settings-account-grid">
             <div className="settings-account-card">
               <div>
@@ -1189,7 +1213,7 @@ export default function SettingsPage() {
           </section>
         ) : null}
 
-        {activeSection !== "incidencias" ? <StatusLine>{statusText}</StatusLine> : null}
+        {currentSection !== "incidencias" ? <StatusLine>{statusText}</StatusLine> : null}
       </section>
 
       {showEmployeeModal ? (

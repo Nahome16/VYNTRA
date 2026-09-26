@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { AuthProvider } from "@/components/auth-provider";
 import { PreferencesProvider } from "@/components/preferences-provider";
+import { RouteGuard } from "@/components/route-guard";
 import { PREFERENCES_BOOT_SCRIPT } from "@/lib/i18n";
 import "./globals.css";
 
@@ -36,7 +37,9 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col">
         <PreferencesProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider>
+            <RouteGuard>{children}</RouteGuard>
+          </AuthProvider>
         </PreferencesProvider>
       </body>
     </html>

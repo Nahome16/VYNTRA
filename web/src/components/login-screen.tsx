@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
+import { classifyLoginError, retryAfterMinutes } from "@/lib/api";
 
 export function LoginScreen() {
   const router = useRouter();
@@ -26,8 +27,24 @@ export function LoginScreen() {
       await login(email, password);
       setStatusText(t("Sesion activa"));
       router.replace("/dashboard");
-    } catch {
-      setStatusText(t("Credenciales incorrectas"));
+    } catch (error) {
+      const kind = classifyLoginError(error);
+      if (kind === "rate_limited") {
+        const minutes = retryAfterMinutes(error);
+        setStatusText(
+          minutes
+            ? `${t("Demasiados intentos. Espera antes de volver a intentar.")} (${minutes} min)`
+            : t("Demasiados intentos. Espera antes de volver a intentar."),
+        );
+      } else if (kind === "server") {
+        setStatusText(t("El servidor no esta disponible. Intenta de nuevo en unos minutos."));
+      } else if (kind === "network") {
+        setStatusText(t("Sin conexion con el servidor. Revisa tu red e intenta de nuevo."));
+      } else if (kind === "credentials") {
+        setStatusText(t("Credenciales incorrectas"));
+      } else {
+        setStatusText(t("No se pudo iniciar sesion. Intenta de nuevo."));
+      }
     } finally {
       setLoading(false);
     }
@@ -60,14 +77,24 @@ export function LoginScreen() {
         <form onSubmit={handleLogin} className="login-form">
           <label>
             {t("Correo")}
-            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
+            <input
+              type="email"
+              name="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              autoComplete="username"
+              inputMode="email"
+              required
+            />
           </label>
           <label>
             {t("Contrasena")}
             <input
               type="password"
+              name="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
               required
             />
           </label>
@@ -75,7 +102,7 @@ export function LoginScreen() {
             {loading ? t("Validando...") : t("Iniciar sesion")}
           </button>
         </form>
-        <span className="status-line">{statusText || t("Sesion protegida por empresa y rol")}</span>
+        <span className="status-line" role="status" aria-live="polite">{statusText || t("Sesion protegida por empresa y rol")}</span>
       </section>
     </main>
   );

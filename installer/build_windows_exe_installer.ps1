@@ -11,10 +11,16 @@ param(
     [string]$CertificateThumbprint = "",
     [string]$TimestampServer = "http://timestamp.digicert.com",
     [string]$SignToolPath = "signtool.exe",
-    [switch]$BuildAgent
+    [string]$UpdateSignerThumbprint = "",
+    [switch]$BuildAgent,
+    [switch]$Release
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($Release -and ([string]::IsNullOrWhiteSpace($CertificateThumbprint) -or $CertificateThumbprint -eq "CERT_THUMBPRINT")) {
+    throw "Build -Release requiere -CertificateThumbprint con el thumbprint real del certificado de code signing."
+}
 
 function Safe-RemoveDirectory {
     param(
@@ -52,6 +58,9 @@ function Invoke-CodeSign {
         /td SHA256 `
         /sha1 $CertificateThumbprint `
         $Path
+    if ($LASTEXITCODE -ne 0) {
+        throw "signtool fallo (codigo $LASTEXITCODE) firmando $Path"
+    }
 }
 
 function Resolve-SignToolPath {
@@ -113,7 +122,9 @@ if ($BuildAgent -or -not (Test-Path -LiteralPath $zipPath)) {
         -CertificateThumbprint $CertificateThumbprint `
         -TimestampServer $TimestampServer `
         -SignToolPath $SignToolPath `
-        -Build:$BuildAgent
+        -UpdateSignerThumbprint $UpdateSignerThumbprint `
+        -Build:$BuildAgent `
+        -Release:$Release
 }
 
 if (-not (Test-Path -LiteralPath $zipPath)) {

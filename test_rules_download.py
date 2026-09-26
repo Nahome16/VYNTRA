@@ -5,7 +5,6 @@ Uso desde PowerShell:
     python test_rules_download.py
 """
 
-import json
 import sys
 from config import Config
 from rules_downloader import RulesDownloader
@@ -39,7 +38,7 @@ def main():
 
         if success:
             info = downloader.get_rules_info()
-            print(f"\n✓ Descarga exitosa!")
+            print("\n✓ Descarga exitosa!")
             print(f"   - Total de reglas: {info['count']}")
             print(f"   - Última actualización: {info['last_update']}")
             print(f"   - Cache guardado en: {info['cache_path']}")

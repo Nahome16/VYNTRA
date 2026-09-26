@@ -7,14 +7,17 @@ import hashlib
 import json
 import os
 import sqlite3
+import time
 import uuid
+
+from agent_runtime import data_dir, now_iso
+
+# Estados: pending (nuevo), failed (reintento pendiente), uploaded, missing
+# (el archivo local ya no existe; no se reintenta).
 
 
 def _base_dir() -> str:
-    base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))
-    folder = os.path.join(base, "VYNTRA")
-    os.makedirs(folder, exist_ok=True)
-    return folder
+    return data_dir()
 
 
 def default_queue_path() -> str:
@@ -89,7 +92,7 @@ class EvidenceQueue:
     ) -> dict:
         file_hash = sha256_file(filepath)
         file_size = os.path.getsize(filepath)
-        now = datetime.datetime.now().isoformat()
+        now = now_iso()
         record = {
             "id": str(uuid.uuid4()),
             "filepath": filepath,
@@ -159,7 +162,7 @@ class EvidenceQueue:
         return [self._row_to_dict(row) for row in rows]
 
     def mark_uploaded(self, record_id: str):
-        now = datetime.datetime.now().isoformat()
+        now = now_iso()
         with self._connect() as conn:
             conn.execute(
                 """
@@ -170,17 +173,66 @@ class EvidenceQueue:
                 (now, now, record_id),
             )
 
-    def mark_failed(self, record_id: str, error: str):
-        now = datetime.datetime.now().isoformat()
+    def mark_failed(self, record_id: str, error: str, count_attempt: bool = True):
+        """Registra un intento fallido.
+
+        `count_attempt=False` para errores de red/servidor: no consumen el
+        limite de reintentos (retry_limit) de la evidencia.
+        """
+        now = now_iso()
+        increment = 1 if count_attempt else 0
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE evidence_uploads
-                SET status = 'failed', attempts = attempts + 1, updated_at = ?, last_error = ?
+                SET status = 'failed', attempts = attempts + ?, updated_at = ?, last_error = ?
+                WHERE id = ?
+                """,
+                (increment, now, str(error)[:2000], record_id),
+            )
+
+    def mark_missing(self, record_id: str, error: str = ""):
+        now = now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE evidence_uploads
+                SET status = 'missing', updated_at = ?, last_error = ?
                 WHERE id = ?
                 """,
                 (now, str(error)[:2000], record_id),
             )
+
+    def count_pending(self, retry_limit: int = 50) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) FROM evidence_uploads
+                WHERE status IN ('pending', 'failed') AND attempts < ?
+                """,
+                (retry_limit,),
+            ).fetchone()
+        return int(row[0] if row else 0)
+
+    def prune_uploaded(self, days: int = 30) -> int:
+        """Elimina registros subidos o perdidos con mas de `days` dias."""
+        cutoff = time.time() - days * 86400
+        removed = 0
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, updated_at FROM evidence_uploads WHERE status IN ('uploaded', 'missing')"
+            ).fetchall()
+            for record_id, updated_at in rows:
+                try:
+                    stamp = datetime.datetime.fromisoformat(str(updated_at))
+                    if stamp.tzinfo is None:
+                        stamp = stamp.astimezone()
+                    if stamp.timestamp() < cutoff:
+                        conn.execute("DELETE FROM evidence_uploads WHERE id = ?", (record_id,))
+                        removed += 1
+                except (TypeError, ValueError):
+                    continue
+        return removed
 
     @staticmethod
     def _row_to_dict(row) -> dict:

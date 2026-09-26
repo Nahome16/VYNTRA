@@ -8,7 +8,6 @@ Flujo:
   4. La estacion controla jornada, break, lunch, capturas e incidencias.
 """
 
-import datetime
 import getpass
 import hashlib
 import json
@@ -16,11 +15,13 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import tkinter as tk
 
 import customtkinter as ctk
 
 from agent_event_uploader import AgentEventUploader
+from agent_runtime import get_logger, local_now, now_iso, setup_logging
 from agent_updater import AgentUpdater, run_startup_update
 import legal_docs
 import local_auth
@@ -29,6 +30,8 @@ from outbox import append_event, count_pending
 from rules_downloader import RulesDownloader
 from screenshots import ScreenshotEngine
 from shift import ShiftManager, fmt_hms
+
+log = get_logger("ui")
 
 
 VERSION = "1.2.3"
@@ -54,6 +57,9 @@ AGENT_I18N = {
         "No se pudo conectar con el servidor de VYNTRA. Intenta de nuevo.":
             "Could not connect to the VYNTRA server. Please try again.",
         "Correo o contrasena incorrectos.": "Incorrect email or password.",
+        "Verificando...": "Verifying...",
+        "Esta estacion no esta conectada al servidor de VYNTRA. Contacta a soporte.":
+            "This station is not connected to the VYNTRA server. Contact support.",
         "VYNTRA - Consentimiento": "VYNTRA - Consent",
         "Aviso de monitoreo y consentimiento": "Monitoring notice and consent",
         "Antes de continuar": "Before continuing",
@@ -83,6 +89,42 @@ def lang_for(cfg: Config) -> str:
 def tr(cfg: Config, text: str, **kwargs) -> str:
     value = AGENT_I18N.get(lang_for(cfg), {}).get(text, text)
     return value.format(**kwargs) if kwargs else value
+
+
+def run_async(widget, work, on_done, on_error=None, name="vyntra-ui-worker"):
+    """Ejecuta `work` (llamadas de red) en un hilo de trabajo y entrega el
+    resultado en el hilo de Tk con widget.after(), para no congelar la interfaz."""
+
+    def deliver(result, error):
+        try:
+            if not widget.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        try:
+            if error is not None:
+                if on_error:
+                    on_error(error)
+                else:
+                    log.error("Tarea en segundo plano fallo: %s", error)
+            else:
+                on_done(result)
+        except Exception:
+            log.exception("Error aplicando el resultado de una tarea en segundo plano")
+
+    def runner():
+        result, error = None, None
+        try:
+            result = work()
+        except Exception as exc:
+            log.exception("Tarea en segundo plano fallo")
+            error = exc
+        try:
+            widget.after(0, lambda: deliver(result, error))
+        except (RuntimeError, tk.TclError):
+            log.warning("La ventana se cerro antes de recibir el resultado de %s", name)
+
+    threading.Thread(target=runner, name=name, daemon=True).start()
 
 
 # ==========================================================================
@@ -137,11 +179,10 @@ class LoginWindow(ctk.CTk):
     """
     Primer paso al abrir VYNTRA: pide correo y contrasena para verificar
     quien esta operando el equipo. El agente de escritorio NO crea ni
-    administra usuarios (eso se hara desde la plataforma web mas adelante);
-    aqui solo se VERIFICAN credenciales. Mientras esa integracion no exista,
-    se valida contra un usuario de pruebas fijo (ver local_auth.py). Esto es
-    independiente del aviso de privacidad (que se muestra despues) y de la
-    sincronizacion con el backend.
+    administra usuarios; aqui solo se VERIFICAN credenciales contra la API de
+    VYNTRA (los usuarios de prueba locales solo existen en modo desarrollo,
+    ver local_auth.py). La verificacion corre en un hilo de trabajo para no
+    congelar la ventana.
     """
 
     def __init__(self, cfg: Config):
@@ -244,11 +285,13 @@ class LoginWindow(ctk.CTk):
                                       text_color=DANGER, wraplength=380, justify="left")
         self.error_lbl.pack(anchor="w", pady=(4, 0))
 
-        ctk.CTkButton(
+        self.btn_login = ctk.CTkButton(
             cont, text=tr(self.cfg, "Iniciar sesion"), command=self._iniciar_sesion,
             fg_color=PRIMARY, hover_color=PRIMARY_DARK, text_color="#FFFFFF",
             height=44, corner_radius=8, font=ctk.CTkFont(size=13, weight="bold"),
-        ).pack(fill="x", pady=(16, 8))
+        )
+        self.btn_login.pack(fill="x", pady=(16, 8))
+        self.entry_pass.bind("<Return>", lambda _event: self._iniciar_sesion())
 
         ctk.CTkButton(
             cont, text=tr(self.cfg, "Salir"), command=self._salir,
@@ -343,12 +386,37 @@ class LoginWindow(ctk.CTk):
         return visible_var
 
     def _iniciar_sesion(self):
+        if getattr(self, "_login_en_curso", False):
+            return
         correo = self.entry_correo.get().strip()
         pw = self.entry_pass.get()
         if not correo or not pw:
             self.error_lbl.configure(text=tr(self.cfg, "Ingresa tu correo y tu contrasena."), text_color=DANGER)
             return
-        auth_result = local_auth.autenticar_credenciales(correo, pw, self.cfg, VERSION)
+        self._login_en_curso = True
+        self.btn_login.configure(state="disabled", text=tr(self.cfg, "Verificando..."))
+        self.error_lbl.configure(text="")
+
+        def terminar(auth_result):
+            self._login_en_curso = False
+            try:
+                self.btn_login.configure(state="normal", text=tr(self.cfg, "Iniciar sesion"))
+            except tk.TclError:
+                return
+            self._procesar_resultado_login(correo, pw, auth_result or {})
+
+        def fallo(_error):
+            terminar({"ok": False, "source": "backend", "reason": "backend_unavailable"})
+
+        run_async(
+            self,
+            lambda: local_auth.autenticar_credenciales(correo, pw, self.cfg, VERSION),
+            terminar,
+            fallo,
+            name="vyntra-login",
+        )
+
+    def _procesar_resultado_login(self, correo: str, pw: str, auth_result: dict):
         if auth_result.get("ok"):
             self.authenticated_email = correo.lower()
             payload = auth_result.get("payload") or {}
@@ -362,7 +430,7 @@ class LoginWindow(ctk.CTk):
                     {
                         "email": self.authenticated_email,
                         "success": True,
-                        "occurred_at": datetime.datetime.now().isoformat(),
+                        "occurred_at": now_iso(),
                         "agent_version": VERSION,
                         "auth_source": auth_result.get("source", "local"),
                     },
@@ -378,7 +446,7 @@ class LoginWindow(ctk.CTk):
                         "email": correo.lower(),
                         "success": False,
                         "failure_reason": reason,
-                        "occurred_at": datetime.datetime.now().isoformat(),
+                        "occurred_at": now_iso(),
                         "agent_version": VERSION,
                         "auth_source": auth_result.get("source", "local"),
                     },
@@ -386,6 +454,11 @@ class LoginWindow(ctk.CTk):
             if reason == "backend_unavailable":
                 self.error_lbl.configure(
                     text=tr(self.cfg, "No se pudo conectar con el servidor de VYNTRA. Intenta de nuevo."),
+                    text_color=DANGER,
+                )
+            elif reason == "backend_not_configured":
+                self.error_lbl.configure(
+                    text=tr(self.cfg, "Esta estacion no esta conectada al servidor de VYNTRA. Contacta a soporte."),
                     text_color=DANGER,
                 )
             else:
@@ -548,12 +621,29 @@ class LoginWindow(ctk.CTk):
             if nueva.get() != confirmar.get():
                 error.configure(text="Las contrasenas no coinciden.")
                 return
-            result = local_auth.cambiar_password(correo, actual, nueva.get(), self.cfg)
-            if result.get("ok"):
-                top.destroy()
-                self._finish_authenticated_session()
-            else:
-                error.configure(text=result.get("message") or "No se pudo cambiar la contrasena.")
+            nueva_valor = nueva.get()
+            save_button.configure(state="disabled")
+            error.configure(text="Guardando...", text_color=TEXT_MUTED)
+
+            def terminar(result):
+                result = result or {}
+                if result.get("ok"):
+                    top.destroy()
+                    self._finish_authenticated_session()
+                else:
+                    save_button.configure(state="normal")
+                    error.configure(
+                        text=result.get("message") or "No se pudo cambiar la contrasena.",
+                        text_color=DANGER,
+                    )
+
+            run_async(
+                top,
+                lambda: local_auth.cambiar_password(correo, actual, nueva_valor, self.cfg),
+                terminar,
+                lambda _exc: terminar({}),
+                name="vyntra-password-change",
+            )
 
         save_button = ctk.CTkButton(
             footer,
@@ -639,7 +729,18 @@ class LoginWindow(ctk.CTk):
             if not correo.get().strip():
                 status.configure(text="Ingresa tu correo.", text_color=DANGER)
                 return
-            result = local_auth.solicitar_recuperacion_password(correo.get(), self.cfg)
+            correo_valor = correo.get()
+            status.configure(text="Solicitando codigo...", text_color=TEXT_MUTED)
+            run_async(
+                top,
+                lambda: local_auth.solicitar_recuperacion_password(correo_valor, self.cfg),
+                solicitud_terminada,
+                lambda _exc: solicitud_terminada({}),
+                name="vyntra-password-reset-request",
+            )
+
+        def solicitud_terminada(result):
+            result = result or {}
             if result.get("ok"):
                 testing_code = result.get("reset_code")
                 if testing_code:
@@ -661,12 +762,24 @@ class LoginWindow(ctk.CTk):
             if nueva.get() != confirmar.get():
                 status.configure(text="Las contrasenas no coinciden.", text_color=DANGER)
                 return
-            result = local_auth.confirmar_recuperacion_password(correo.get(), codigo.get(), nueva.get(), self.cfg)
+            correo_valor, codigo_valor, nueva_valor = correo.get(), codigo.get(), nueva.get()
+            status.configure(text="Guardando...", text_color=TEXT_MUTED)
+            run_async(
+                top,
+                lambda: local_auth.confirmar_recuperacion_password(
+                    correo_valor, codigo_valor, nueva_valor, self.cfg
+                ),
+                lambda result: reset_terminado(result or {}, correo_valor, nueva_valor),
+                lambda _exc: reset_terminado({}, correo_valor, nueva_valor),
+                name="vyntra-password-reset-confirm",
+            )
+
+        def reset_terminado(result, correo_valor, nueva_valor):
             if result.get("ok"):
                 self.entry_correo.delete(0, "end")
-                self.entry_correo.insert(0, correo.get().strip())
+                self.entry_correo.insert(0, correo_valor.strip())
                 self.entry_pass.delete(0, "end")
-                self.entry_pass.insert(0, nueva.get())
+                self.entry_pass.insert(0, nueva_valor)
                 top.destroy()
                 self.error_lbl.configure(text="Contrasena actualizada. Puedes iniciar sesion.", text_color=SUCCESS)
             else:
@@ -731,9 +844,12 @@ def _consent_path(auth_email: str = "") -> str:
 
 def load_consent(auth_email: str = "") -> dict | None:
     try:
-        with open(_consent_path(auth_email), "r", encoding="utf-8") as f:
+        with open(_consent_path(auth_email), "r", encoding="utf-8-sig") as f:
             return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        log.exception("Registro de consentimiento ilegible")
         return None
 
 
@@ -743,7 +859,7 @@ def save_consent(aceptado: bool, detalles: dict | None = None, auth_email: str =
         "auth_email": auth_email.strip().lower(),
         "empleado": getpass.getuser(),
         "equipo": socket.gethostname(),
-        "fechaHora": datetime.datetime.now().isoformat(),
+        "fechaHora": now_iso(),
         "version": VERSION,
         "autorizaciones": detalles or {},
     }
@@ -931,13 +1047,21 @@ class StationWindow(ctk.CTk):
         self.screens = ScreenshotEngine(cfg, on_event=self._on_screen_event)
         self.event_uploader = AgentEventUploader(cfg, on_event=self._on_sync_event)
         self.rules_downloader = RulesDownloader(cfg, on_event=self._on_rules_event)
-        self.updater = AgentUpdater(cfg, VERSION, on_event=self._on_sync_event)
+        self.updater = AgentUpdater(
+            cfg,
+            VERSION,
+            on_event=self._on_sync_event,
+            # Las actualizaciones solo se aplican fuera de jornada (FUERA/TERMINADO).
+            shift_state_provider=lambda: (self.shift.estado, self.shift.horas_extra_estado),
+        )
         self.shift.on_shift_start = self.screens.start
         self.shift.on_shift_pause = self.screens.pause
         self.shift.on_shift_resume = self.screens.resume
         self.shift.on_shift_end = self.screens.stop
+        self.shift.on_notice = self._on_shift_notice
         self._ultima_captura_txt = "--:--"
         self._ui_error = None
+        self._cerrando = False
 
         self.title("VYNTRA - Estacion de marcaje")
         self.geometry("1080x720")
@@ -951,12 +1075,16 @@ class StationWindow(ctk.CTk):
             self._pintar_estado_items()
             self.shift.resume_runtime_if_needed()
             self._refresh_sync_status()
-            self.after(200, lambda: self._draw_clock(0))
+            self.after(200, lambda: self._draw_clock(self.shift.seg_trabajado))
             self.event_uploader.start()
             self.rules_downloader.start()
+            # Sube evidencias pendientes de sesiones anteriores aunque no haya capturas nuevas.
+            self.screens.ensure_uploader_started()
             self.updater.start_background()
             self._start_healthcheck()
+            self.after(600, self._mostrar_avisos_pendientes)
         except Exception as exc:
+            log.exception("No se pudo construir la estacion de marcaje")
             self._ui_error = exc
             self._build_fallback_ui(str(exc))
 
@@ -1372,7 +1500,7 @@ class StationWindow(ctk.CTk):
                     c.delete("all")
                     c.create_text(10, 10, anchor="nw", text="Reloj no disponible", fill=TEXT_MUTED)
             except Exception:
-                pass
+                log.exception("No se pudo dibujar el reloj")
 
     def _pintar_estado_items(self):
         try:
@@ -1420,6 +1548,7 @@ class StationWindow(ctk.CTk):
                     text_color=PRIMARY if active else TEXT_MUTED,
                 ).pack(side="right")
         except Exception:
+            log.exception("No se pudo pintar el estado de la jornada")
             if hasattr(self, "estado_items") and self.estado_items.winfo_exists():
                 for w in self.estado_items.winfo_children():
                     w.destroy()
@@ -1552,6 +1681,7 @@ class StationWindow(ctk.CTk):
                 ).pack(anchor="w", pady=8)
 
         except Exception:
+            log.exception("No se pudieron cargar los botones de marcaje")
             for w in self.ctrl_inner.winfo_children():
                 w.destroy()
             ctk.CTkLabel(
@@ -1640,7 +1770,7 @@ class StationWindow(ctk.CTk):
                 else:
                     subprocess.Popen(["xdg-open", folder])
         except Exception:
-            pass
+            log.exception("No se pudo abrir la carpeta legal")
 
     def _schedule_windows_uninstall(self):
         install_dir = os.path.abspath(self.cfg.base_dir)
@@ -1708,6 +1838,7 @@ rm -rf "$HOME/Applications/VYNTRAAgentLegal"
                 ).pack(padx=24, pady=28)
                 self.after(1800, self.destroy)
             except Exception as exc:
+                log.exception("No se pudo iniciar la desinstalacion")
                 aviso = self._modal("VYNTRA", 460, 190)
                 ctk.CTkLabel(
                     aviso,
@@ -1910,8 +2041,8 @@ rm -rf "$HOME/Applications/VYNTRAAgentLegal"
                 corner_radius=8,
                 font=ctk.CTkFont(size=13, weight="bold"),
             ).pack(fill="x", pady=(20, 0))
-        except Exception as exc:
-            pass
+        except Exception:
+            log.exception("No se pudo mostrar el resultado de la descarga de reglas")
 
     def _modal_horas_extra(self):
         if self.shift.horas_extra_estado == "ACTIVA":
@@ -1957,16 +2088,33 @@ rm -rf "$HOME/Applications/VYNTRAAgentLegal"
                 top.destroy()
                 self._modal_cronometro_horas_extra()
                 return
-            if self.shift.activar_horas_extra_con_codigo(codigo.get().strip()):
-                top.destroy()
-                self._modal_cronometro_horas_extra()
-            else:
-                error.configure(
-                    text=self.shift.ultimo_error_codigo
-                    or "Codigo invalido, vencido o ya utilizado."
-                )
+            valor = codigo.get().strip()
+            boton.configure(state="disabled", text="Validando codigo...")
+            error.configure(text="")
 
-        ctk.CTkButton(
+            def terminar(ok):
+                try:
+                    boton.configure(state="normal", text="Activar horas extra")
+                except tk.TclError:
+                    return
+                if ok:
+                    top.destroy()
+                    self._modal_cronometro_horas_extra()
+                else:
+                    error.configure(
+                        text=self.shift.ultimo_error_codigo
+                        or "Codigo invalido, vencido o ya utilizado."
+                    )
+
+            run_async(
+                top,
+                lambda: self.shift.activar_horas_extra_con_codigo(valor),
+                terminar,
+                lambda _exc: terminar(False),
+                name="vyntra-overtime-code",
+            )
+
+        boton = ctk.CTkButton(
             cont,
             text="Activar horas extra",
             command=activar,
@@ -1976,7 +2124,8 @@ rm -rf "$HOME/Applications/VYNTRAAgentLegal"
             height=44,
             corner_radius=8,
             font=ctk.CTkFont(size=13, weight="bold"),
-        ).pack(side="bottom", fill="x", pady=(12, 0))
+        )
+        boton.pack(side="bottom", fill="x", pady=(12, 0))
 
     def _modal_cronometro_horas_extra(self):
         top = self._modal("Horas extra activas", 520, 340)
@@ -2041,7 +2190,7 @@ rm -rf "$HOME/Applications/VYNTRAAgentLegal"
         refrescar()
 
     def _technical_evidence_snapshot(self):
-        now = datetime.datetime.now()
+        now = local_now()
         last_capture = getattr(self.screens, "ultima", None)
         pending = count_pending()
         telemetry = getattr(self.shift, "ultimo_snapshot", {}) or {}
@@ -2053,14 +2202,7 @@ rm -rf "$HOME/Applications/VYNTRAAgentLegal"
             active_app = "(sin dato)"
         if not active_title or active_title == "(desconocido)":
             active_title = "(sin dato)"
-        sync_label = "Local"
-        try:
-            if getattr(self.cfg, "drive_upload_enabled", False):
-                sync_label = "Drive imagenes"
-            elif pending:
-                sync_label = f"{pending} eventos pendientes"
-        except Exception:
-            pass
+        sync_label = f"{pending} eventos pendientes" if pending else "Local"
         suggested_start = last_capture or self.shift.inicio_jornada or now
         if suggested_start > now:
             suggested_start = now
@@ -2378,15 +2520,32 @@ rm -rf "$HOME/Applications/VYNTRAAgentLegal"
         error.pack(anchor="w", pady=(6, 0))
 
         def validar():
-            if self.shift.restaurar_jornada_con_codigo(codigo.get().strip()):
-                top.destroy()
-            else:
-                error.configure(
-                    text=self.shift.ultimo_error_codigo
-                    or "Codigo invalido, vencido o ya utilizado."
-                )
+            valor = codigo.get().strip()
+            boton.configure(state="disabled", text="Validando codigo...")
+            error.configure(text="")
 
-        ctk.CTkButton(
+            def terminar(ok):
+                try:
+                    boton.configure(state="normal", text="Reabrir jornada")
+                except tk.TclError:
+                    return
+                if ok:
+                    top.destroy()
+                else:
+                    error.configure(
+                        text=self.shift.ultimo_error_codigo
+                        or "Codigo invalido, vencido o ya utilizado."
+                    )
+
+            run_async(
+                top,
+                lambda: self.shift.restaurar_jornada_con_codigo(valor),
+                terminar,
+                lambda _exc: terminar(False),
+                name="vyntra-restore-code",
+            )
+
+        boton = ctk.CTkButton(
             cont,
             text="Reabrir jornada",
             command=validar,
@@ -2396,7 +2555,8 @@ rm -rf "$HOME/Applications/VYNTRAAgentLegal"
             corner_radius=8,
             text_color="#FFFFFF",
             font=ctk.CTkFont(weight="bold"),
-        ).pack(fill="x", pady=(10, 0))
+        )
+        boton.pack(fill="x", pady=(10, 0))
 
     def _btn_restaurar(self, parent, texto, accion, top):
         def hacer():
@@ -2420,16 +2580,59 @@ rm -rf "$HOME/Applications/VYNTRAAgentLegal"
             self._ultima_captura_txt = msg.replace("Captura ", "", 1)[:5]
 
     def _on_sync_event(self, msg):
-        try:
-            self.after(0, self._refresh_sync_status)
-        except Exception:
-            pass
+        self._safe_after(self._refresh_sync_status)
 
     def _on_rules_event(self, msg):
+        self._safe_after(self._refresh_sync_status)
+
+    def _safe_after(self, fn, delay: int = 0):
+        """Programa `fn` en el hilo de Tk desde cualquier hilo."""
+        if self._cerrando:
+            return
         try:
-            self.after(0, self._refresh_sync_status)
+            self.after(delay, fn)
+        except (RuntimeError, tk.TclError) as exc:
+            log.debug("No se pudo programar una actualizacion de la interfaz: %s", exc)
+
+    def _on_shift_notice(self, mensaje):
+        self._safe_after(lambda: self._mostrar_aviso(mensaje))
+
+    def _mostrar_avisos_pendientes(self):
+        for mensaje in self.shift.tomar_avisos():
+            self._mostrar_aviso(mensaje)
+
+    def _mostrar_aviso(self, mensaje):
+        try:
+            top = self._modal("Aviso de jornada", 500, 260)
+            cont = ctk.CTkFrame(top, fg_color="transparent")
+            cont.pack(fill="both", expand=True, padx=22, pady=20)
+            ctk.CTkLabel(
+                cont,
+                text="Aviso de jornada",
+                font=ctk.CTkFont(size=17, weight="bold"),
+                text_color=WARNING,
+            ).pack(anchor="w")
+            ctk.CTkLabel(
+                cont,
+                text=mensaje,
+                font=ctk.CTkFont(size=12),
+                text_color=TEXT_BODY,
+                wraplength=440,
+                justify="left",
+            ).pack(anchor="w", pady=(8, 12))
+            ctk.CTkButton(
+                cont,
+                text="Entendido",
+                command=top.destroy,
+                fg_color=PRIMARY,
+                hover_color=PRIMARY_DARK,
+                height=40,
+                corner_radius=8,
+                text_color="#FFFFFF",
+                font=ctk.CTkFont(weight="bold"),
+            ).pack(side="bottom", fill="x")
         except Exception:
-            pass
+            log.exception("No se pudo mostrar el aviso: %s", mensaje)
 
     def _build_fallback_ui(self, error_text):
         self._clear_window_contents()
@@ -2486,8 +2689,9 @@ rm -rf "$HOME/Applications/VYNTRAAgentLegal"
             self._pintar_estado_items()
             self.shift.resume_runtime_if_needed()
             self._refresh_sync_status()
-            self.after(200, lambda: self._draw_clock(0))
+            self.after(200, lambda: self._draw_clock(self.shift.seg_trabajado))
         except Exception as exc:
+            log.exception("Reintento de inicializacion fallido")
             self._ui_error = exc
             self._build_fallback_ui(str(exc))
 
@@ -2516,10 +2720,7 @@ rm -rf "$HOME/Applications/VYNTRAAgentLegal"
             self.lbl_lunch.configure(text=fmt_hms(self.shift.seg_lunch))
             self.lbl_extra.configure(text=fmt_hms(self.shift.seg_horas_extra))
 
-        try:
-            self.after(0, _apply)
-        except Exception:
-            pass
+        self._safe_after(_apply)
 
     def _on_tick(self, info):
         def _apply():
@@ -2532,46 +2733,103 @@ rm -rf "$HOME/Applications/VYNTRAAgentLegal"
             self._pintar_estado_items()
             self._refresh_sync_status()
 
-        try:
-            self.after(0, _apply)
-        except Exception:
-            pass
+        self._safe_after(_apply)
 
     def _refresh_sync_status(self):
         pendientes = count_pending()
-        if getattr(self.cfg, "drive_upload_enabled", False):
-            self.lbl_sync.configure(text="Drive imagenes")
-        elif pendientes:
-            self.lbl_sync.configure(text=f"{pendientes} pendientes")
-        else:
-            self.lbl_sync.configure(text="Local")
+        try:
+            if pendientes:
+                self.lbl_sync.configure(text=f"{pendientes} pendientes")
+            else:
+                self.lbl_sync.configure(text="Local")
+        except (AttributeError, tk.TclError):
+            pass
 
     def _start_healthcheck(self):
-        """Verifica cada 60s que los threads críticos sigan vivos."""
+        """Cada 60 s supervisa los hilos criticos, reinicia los que murieron y
+        registra un evento `thread_restarted`."""
+
         def check():
             try:
-                shift_ok = self.shift._running or self.shift.estado == "FUERA"
-                tracker_ok = self.shift.tracker.activo or self.shift.estado == "FUERA"
-                screens_ok = self.screens._running or not self.screens.activo
-
-                if not (shift_ok and tracker_ok and screens_ok):
+                reiniciados = self._supervisar_hilos()
+                if reiniciados:
                     self._on_state(self.shift.estado)
             except Exception:
+                log.exception("Healthcheck fallo")
+            try:
+                if not self._cerrando and self.winfo_exists():
+                    self.after(60000, check)
+            except tk.TclError:
                 pass
-            if hasattr(self, "winfo_exists") and self.winfo_exists():
-                self.after(60000, check)
 
         self.after(60000, check)
 
+    def _supervisar_hilos(self) -> list[str]:
+        reiniciados = list(self.shift.restart_dead_threads())
+
+        jornada_activa = self.shift.estado in ("TRABAJANDO", "BREAK", "LUNCH")
+        if jornada_activa and self.screens.restart_if_dead():
+            reiniciados.append("screenshots")
+
+        uploader = getattr(self.screens, "backend_uploader", None)
+        if uploader is not None and uploader.enabled and not uploader.activo:
+            uploader.start()
+            reiniciados.append("evidence_uploader")
+
+        if self.event_uploader.is_expected_running() and not self.event_uploader.activo:
+            self.event_uploader.start()
+            reiniciados.append("event_uploader")
+
+        if self.rules_downloader.enabled and self.rules_downloader.device_token and not self.rules_downloader.activo:
+            self.rules_downloader.start()
+            reiniciados.append("rules_downloader")
+
+        for nombre in reiniciados:
+            log.warning("Hilo reiniciado por healthcheck: %s", nombre)
+            append_event(
+                "thread_restarted",
+                {
+                    "hilo": nombre,
+                    "estado_jornada": self.shift.estado,
+                    "shift_id": self.shift.shift_id,
+                    "empleado": getpass.getuser(),
+                    "equipo": socket.gethostname(),
+                    "agent_version": VERSION,
+                    "timestamp": now_iso(),
+                },
+            )
+        return reiniciados
+
     def _al_cerrar(self):
-        if self.shift.estado in ("TRABAJANDO", "BREAK", "LUNCH"):
+        if self._cerrando:
+            return
+        self._cerrando = True
+        if self.shift.estado in ("TRABAJANDO", "BREAK", "LUNCH") or self.shift.horas_extra_estado == "ACTIVA":
             self.shift.shutdown_runtime()
+        self.rules_downloader.stop()
+        self.updater.stop()
+        uploader = getattr(self.screens, "backend_uploader", None)
+        if uploader is not None:
+            uploader.stop()
         try:
-            self.event_uploader.process_pending(limit=100)
-        except Exception:
+            self.withdraw()
+        except tk.TclError:
             pass
+        # Ultimo intento de sincronizar eventos sin congelar la ventana: en un
+        # hilo de trabajo y con espera maxima.
+        flush = threading.Thread(
+            target=self._flush_eventos_al_cerrar, name="vyntra-close-flush", daemon=True
+        )
+        flush.start()
+        flush.join(8)
         self.event_uploader.stop()
         self.destroy()
+
+    def _flush_eventos_al_cerrar(self):
+        try:
+            self.event_uploader.process_pending(limit=100)
+        except Exception as exc:
+            log.info("Eventos pendientes al cerrar: %s", exc)
 
 
 def _mensaje_rechazo(cfg: Config):
@@ -2607,7 +2865,22 @@ def _mensaje_rechazo(cfg: Config):
     aviso.mainloop()
 
 
+def _log_unhandled(exc_type, exc, tb):
+    log.critical("Excepcion no controlada", exc_info=(exc_type, exc, tb))
+
+
 def main():
+    setup_logging()
+    sys.excepthook = _log_unhandled
+    threading.excepthook = lambda args: log.critical(
+        "Excepcion no controlada en hilo %s",
+        getattr(args.thread, "name", "?"),
+        exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+    )
+    tk.Tk.report_callback_exception = lambda _self, exc_type, exc, tb: log.error(
+        "Error en callback de interfaz", exc_info=(exc_type, exc, tb)
+    )
+    log.info("VYNTRA Agent %s iniciando", VERSION)
     ctk.set_appearance_mode("light")
     cfg = Config()
     if run_startup_update(cfg, VERSION):
@@ -2633,11 +2906,17 @@ def main():
 
         if ventana.decision is not True:
             save_consent(False, auth_email=auth_email)
-            try:
-                AgentEventUploader(cfg).process_pending(limit=20)
-            except Exception:
-                pass
+
+            def sincronizar_rechazo():
+                try:
+                    AgentEventUploader(cfg).process_pending(limit=20)
+                except Exception as exc:
+                    log.info("Rechazo de consentimiento pendiente de sincronizar: %s", exc)
+
+            envio = threading.Thread(target=sincronizar_rechazo, name="vyntra-consent-flush", daemon=True)
+            envio.start()
             _mensaje_rechazo(cfg)
+            envio.join(8)
             sys.exit(0)
 
         consentimiento = save_consent(True, ventana.detalles, auth_email=auth_email)

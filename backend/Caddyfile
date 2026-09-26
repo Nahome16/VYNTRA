@@ -2,8 +2,45 @@
 	email {$ACME_EMAIL}
 }
 
+# Cabeceras de seguridad comunes. No se define Content-Security-Policy aqui:
+# la CSP de la app web la define Next.js.
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+		-X-Powered-By
+	}
+}
+
+# Limites de cuerpo de peticion:
+# - 25 MB solo para la subida de evidencias.
+# - 10 MB para /api/agent/events: el agente de escritorio envia lotes de hasta
+#   50 eventos con telemetria; un lote rechazado por tamano se reintentaria sin fin.
+# - 2 MB para todo lo demas.
+(body_limits) {
+	@evidence_upload path /api/evidence/upload
+	request_body @evidence_upload {
+		max_size 25MB
+	}
+
+	@agent_events path /api/agent/events
+	request_body @agent_events {
+		max_size 10MB
+	}
+
+	@regular_body not path /api/evidence/upload /api/agent/events
+	request_body @regular_body {
+		max_size 2MB
+	}
+}
+
 {$APP_DOMAIN} {
 	encode gzip zstd
+	import security_headers
+	import body_limits
 
 	handle /api/* {
 		reverse_proxy api:8000
@@ -14,6 +51,8 @@
 
 {$STATION_DOMAIN}, www.{$STATION_DOMAIN} {
 	encode gzip zstd
+	import security_headers
+	import body_limits
 
 	handle /api/* {
 		reverse_proxy api:8000
@@ -28,13 +67,8 @@
 
 {$API_DOMAIN} {
 	encode gzip zstd
-
-	@large_uploads {
-		path /api/evidence/upload
-	}
-	request_body @large_uploads {
-		max_size 25MB
-	}
+	import security_headers
+	import body_limits
 
 	reverse_proxy api:8000
 }

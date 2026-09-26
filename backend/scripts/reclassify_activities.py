@@ -16,7 +16,12 @@ if str(ROOT) not in sys.path:
 from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.main import classification_to_bool, classify_activity, seed_productivity_rules
+from app.main import (
+    classification_to_bool,
+    classify_activity,
+    load_active_productivity_rules,
+    seed_productivity_rules,
+)
 from app.models import Activity, AppCatalog, Company, Employee, WindowTitleCatalog
 
 
@@ -30,6 +35,7 @@ def run():
         activities = db.execute(select(Activity).order_by(Activity.started_at)).scalars().all()
         changed = 0
         totals = Counter()
+        rules_by_company = {}
 
         for activity in activities:
             employee = db.get(Employee, activity.employee_id)
@@ -45,12 +51,15 @@ def run():
             executable_name = app_row.executable_name if app_row else ""
             title_text = title_row.title_text if title_row else ""
 
+            if activity.company_id not in rules_by_company:
+                rules_by_company[activity.company_id] = load_active_productivity_rules(db, activity.company_id)
             new_classification = classify_activity(
                 db,
                 activity.company_id,
                 employee,
                 executable_name,
                 title_text,
+                rules=rules_by_company[activity.company_id],
             )
             totals[new_classification] += 1
             if activity.classification != new_classification:

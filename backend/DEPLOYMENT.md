@@ -87,6 +87,7 @@ nano .env.production
 Valores obligatorios:
 
 ```text
+ENVIRONMENT=production
 APP_DOMAIN=app.tudominio.com
 API_DOMAIN=api.tudominio.com
 STATION_DOMAIN=marcaje.tudominio.com
@@ -114,6 +115,32 @@ BOOTSTRAP_EMPLOYEE_PASSWORD_HASH=...
 BOOTSTRAP_DEVICE_NAME=first-device
 BOOTSTRAP_DEVICE_TOKEN=...
 ```
+
+Reglas que la API valida al arrancar (si no se cumplen, el contenedor no inicia):
+
+- `ENVIRONMENT` distinto de `development`/`dev`/`local`/`test` (o vacio) se
+  trata como produccion: los codigos de recuperacion/acceso nunca se devuelven
+  en las respuestas.
+- `JWT_SECRET` de al menos 32 caracteres y sin valores de ejemplo
+  (`replace_with_...`, `changeme`, `example`...). Generarlo con
+  `openssl rand -base64 48`.
+- Los `BOOTSTRAP_*_PASSWORD_HASH` no pueden ser el hash de desarrollo local.
+
+Opcionales:
+
+```text
+# IPs desde las que uvicorn acepta X-Forwarded-For. En produccion el puerto 8000
+# de la API no se publica (solo Caddy/web la alcanzan por la red interna), por eso
+# el valor por defecto "*" es aceptable. Si se publica el puerto, restringirlo.
+FORWARDED_ALLOW_IPS=*
+# Retencion (ver seccion 13).
+RETENTION_EVIDENCE_DAYS=90
+RETENTION_TELEMETRY_DAYS=365
+LOG_LEVEL=INFO
+```
+
+`scripts/check_production_env.sh` comprueba estos valores (y rechaza
+placeholders) antes de desplegar.
 
 Para el primer arranque, si se necesita crear la empresa/admin/dispositivo
 inicial, usar:
@@ -151,6 +178,8 @@ docker compose -f docker-compose.prod.yml logs -f
 
 ```bash
 curl https://api.tudominio.com/health
+# Readiness: incluye SELECT 1 contra PostgreSQL (503 si la base no responde)
+curl https://api.tudominio.com/health/ready
 ```
 
 Abrir:
@@ -222,5 +251,43 @@ Respaldar el volumen `evidence_data` o migrar evidencias a storage externo.
 cd /opt/vyntra
 git pull
 cd backend
+./scripts/check_production_env.sh
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
 ```
+
+Notas de la version con endurecimiento de seguridad:
+
+- La API corre como usuario `vyntra` (uid 10001). El entrypoint corrige una
+  sola vez el propietario del volumen `evidence_data` si fue creado como root
+  por una version anterior (`chown -R` al arrancar; puede tardar si hay muchas
+  evidencias).
+- En el primer arranque se crean los indices nuevos (`CREATE INDEX IF NOT
+  EXISTS`) y la tabla `agent_event_receipts`. En tablas grandes (`activities`)
+  el arranque puede tardar y bloquear escrituras mientras se construye el
+  indice: desplegar fuera del horario laboral.
+- Usuarios del panel con `password_change_required` reciben HTTP 428 en todo
+  endpoint administrativo excepto `/api/admin/me`, `/api/admin/password/change`,
+  `/api/admin/logout` y `/api/admin/company-notice`.
+- Caddy limita el cuerpo de las peticiones a 2 MB (10 MB para
+  `/api/agent/events`, 25 MB para `/api/evidence/upload`) y agrega HSTS,
+  `nosniff`, `Referrer-Policy` y `X-Frame-Options: DENY`.
+
+## 13. Retencion de datos (RNF-13)
+
+`scripts/purge_retention.py` elimina evidencia visual con mas de 90 dias (filas
+y archivos) y telemetria con mas de 12 meses (`activities`, `shift_events`,
+`login_attempts`, `evidence_upload_attempts`, `agent_event_receipts`). Por
+defecto es un simulacro; solo borra con `--apply` y cada ejecucion real deja una
+entrada `retention_purge` en la auditoria.
+
+```bash
+# Simulacro (solo cuenta)
+docker compose -f docker-compose.prod.yml exec -T api python scripts/purge_retention.py
+# Borrado real
+docker compose -f docker-compose.prod.yml exec -T api python scripts/purge_retention.py --apply
+```
+
+Los plazos se configuran con `RETENTION_EVIDENCE_DAYS` /
+`RETENTION_TELEMETRY_DAYS` o por empresa con los `company_settings`
+`retention_evidence_days` / `retention_telemetry_days`. El cron diario queda
+comentado (opt-in) en `scripts/install_production_ops.sh`.

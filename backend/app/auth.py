@@ -10,7 +10,7 @@ import hmac
 import json
 import secrets
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -191,13 +191,50 @@ def decode_admin_access_token(token: str) -> dict:
         ) from exc
 
 
+PBKDF2_ALGORITHM = "pbkdf2_sha256"
+# OWASP 2023 para PBKDF2-HMAC-SHA256. Los hashes antiguos (200000/390000) se
+# siguen verificando y se re-hashean al iniciar sesion correctamente.
+PBKDF2_ITERATIONS = 600_000
+# Tope defensivo: un hash almacenado con iteraciones absurdas no debe bloquear la API.
+PBKDF2_MAX_ITERATIONS = 5_000_000
+
+
+def hash_password(password: str, iterations: int = PBKDF2_ITERATIONS) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", (password or "").encode("utf-8"), salt, iterations)
+    return "{}:{}:{}:{}".format(
+        PBKDF2_ALGORITHM,
+        iterations,
+        base64.b64encode(salt).decode("ascii"),
+        base64.b64encode(digest).decode("ascii"),
+    )
+
+
+def password_hash_iterations(stored_hash: str) -> int:
+    try:
+        algorithm, iterations_text, _salt, _digest = (stored_hash or "").split(":", 3)
+        if algorithm != PBKDF2_ALGORITHM:
+            return 0
+        return int(iterations_text)
+    except (ValueError, AttributeError):
+        return 0
+
+
+def password_needs_rehash(stored_hash: str) -> bool:
+    """True si el hash es PBKDF2 valido pero con menos iteraciones que las actuales."""
+    iterations = password_hash_iterations(stored_hash)
+    return 0 < iterations < PBKDF2_ITERATIONS
+
+
 def verify_password_hash(password: str, stored_hash: str) -> bool:
     """Validate the PBKDF2 hash format used by employee credentials."""
     try:
         algorithm, iterations_text, salt_text, hash_text = (stored_hash or "").split(":", 3)
-        if algorithm != "pbkdf2_sha256":
+        if algorithm != PBKDF2_ALGORITHM:
             return False
         iterations = int(iterations_text)
+        if iterations <= 0 or iterations > PBKDF2_MAX_ITERATIONS:
+            return False
         salt = base64.b64decode(salt_text)
         expected = base64.b64decode(hash_text)
         calculated = hashlib.pbkdf2_hmac(
@@ -209,6 +246,47 @@ def verify_password_hash(password: str, stored_hash: str) -> bool:
         return secrets.compare_digest(calculated, expected)
     except Exception:
         return False
+
+
+_DUMMY_PASSWORD_HASH: str | None = None
+
+
+def dummy_password_hash() -> str:
+    """Hash descartable para igualar el tiempo de respuesta cuando el usuario no existe."""
+    global _DUMMY_PASSWORD_HASH
+    if _DUMMY_PASSWORD_HASH is None:
+        _DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(24))
+    return _DUMMY_PASSWORD_HASH
+
+
+def verify_password_constant_time(password: str, stored_hash: str | None) -> bool:
+    """Verifica contra el hash real o, si no existe, contra un hash ficticio."""
+    if not stored_hash:
+        verify_password_hash(password, dummy_password_hash())
+        return False
+    return verify_password_hash(password, stored_hash)
+
+
+def _as_aware(value: datetime) -> datetime:
+    """PostgreSQL devuelve fechas con zona; SQLite (pruebas) sin zona: se asume UTC."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
+DEVICE_LAST_SEEN_UPDATE_SECONDS = 60
+
+# Endpoints permitidos mientras el usuario del panel debe cambiar su contrasena.
+PASSWORD_CHANGE_EXEMPT_PATHS = frozenset(
+    {
+        "/api/admin/me",
+        "/api/admin/password/change",
+        "/api/admin/logout",
+        "/api/admin/company-notice",
+    }
+)
+# 428 (Precondition Required) y no 403: el panel web cierra la sesion ante
+# cualquier 401/403, lo que romperia el flujo de cambio obligatorio.
+PASSWORD_CHANGE_REQUIRED_STATUS = 428
+PASSWORD_CHANGE_REQUIRED_DETAIL = "Debes cambiar tu contrasena temporal antes de continuar."
 
 
 def require_device(
@@ -230,9 +308,14 @@ def require_device(
         )
     ).scalar_one_or_none()
     if device and secrets.compare_digest(device.token_sha256, token_hash):
-        device.last_seen_at = now_utc()
-        db.commit()
-        db.refresh(device)
+        current_time = now_utc()
+        last_seen = _as_aware(device.last_seen_at) if device.last_seen_at is not None else None
+        # Evita una escritura por cada peticion del agente: como maximo una por minuto.
+        elapsed = (current_time - last_seen).total_seconds() if last_seen is not None else None
+        if elapsed is None or elapsed < 0 or elapsed >= DEVICE_LAST_SEEN_UPDATE_SECONDS:
+            device.last_seen_at = current_time
+            db.commit()
+            db.refresh(device)
         return device
 
     raise HTTPException(
@@ -242,6 +325,7 @@ def require_device(
 
 
 def require_admin(
+    request: Request,
     authorization: str = Header(default="", alias="Authorization"),
     x_admin_token: str = Header(default="", alias="X-Admin-Token"),
     db: Session = Depends(get_db),
@@ -270,7 +354,7 @@ def require_admin(
             or session.user_id != user.id
             or session.company_id != user.company_id
             or session.revoked_at is not None
-            or session.expires_at <= current_time
+            or _as_aware(session.expires_at) <= current_time
         ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -283,6 +367,12 @@ def require_admin(
             )
         session.last_seen_at = current_time
         db.commit()
+        if user.password_change_required and request.url.path not in PASSWORD_CHANGE_EXEMPT_PATHS:
+            raise HTTPException(
+                status_code=PASSWORD_CHANGE_REQUIRED_STATUS,
+                detail=PASSWORD_CHANGE_REQUIRED_DETAIL,
+                headers={"X-Password-Change-Required": "true"},
+            )
         return AdminPrincipal(
             user_id=user.id,
             company_id=user.company_id,

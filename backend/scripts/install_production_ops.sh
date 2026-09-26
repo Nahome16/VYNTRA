@@ -30,6 +30,10 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 15 2 * * * root cd $BACKEND_DIR && VYNTRA_ENV_FILE=$ENV_FILE BACKUP_DIR=$BACKUP_DIR ./scripts/backup_postgres.sh >> $LOG_DIR/backup.log 2>&1
 */5 * * * * root cd $BACKEND_DIR && ./scripts/healthcheck_vyntra.sh >> $LOG_DIR/health.log 2>&1
+# Retencion RNF-13 (evidencia 90 dias, telemetria 12 meses). Opt-in: revisar primero
+# un simulacro con "docker compose -f docker-compose.prod.yml exec -T api python scripts/purge_retention.py"
+# y luego descomentar la linea siguiente.
+# 45 3 * * * root cd $BACKEND_DIR && docker compose --env-file $ENV_FILE -f docker-compose.prod.yml exec -T api python scripts/purge_retention.py --apply >> $LOG_DIR/retention.log 2>&1
 EOF
 
 chmod 644 "$CRON_FILE"

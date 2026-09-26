@@ -5,6 +5,7 @@ Backend minimo para recibir evidencias del agente VYNTRA.
 ## Endpoints
 
 - `GET /health`
+- `GET /health/ready` (tambien `/api/health/ready`): verifica la base con `SELECT 1`
 - `POST /api/admin/login`
 - `GET /api/admin/me`
 - `POST /api/station/login`
@@ -90,6 +91,32 @@ La API queda en:
 ```text
 http://localhost:8000
 ```
+
+`.env.example` usa `ENVIRONMENT=development`: solo `development`, `dev`,
+`local` y `test` habilitan los secretos de prueba (codigos devueltos en la
+respuesta, hash demo). Cualquier otro valor, o vacio, se trata como produccion.
+Los puertos solo se publican en `127.0.0.1`; Adminer es opcional:
+
+```powershell
+docker compose --profile tools up -d adminer
+```
+
+## Pruebas
+
+```powershell
+cd backend
+py -3.13 -m pip install -r requirements.txt -r requirements-dev.txt
+py -3.13 -m pytest tests
+```
+
+Las pruebas usan SQLite (no requieren PostgreSQL) y no ejecutan el arranque de
+la aplicacion.
+
+## Retencion
+
+`scripts/purge_retention.py` aplica la retencion RNF-13 (evidencia 90 dias,
+telemetria 12 meses). Es un simulacro salvo que se pase `--apply`. Ver
+`DEPLOYMENT.md`, seccion 13.
 
 ## Produccion
 

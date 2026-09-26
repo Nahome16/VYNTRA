@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import Script from "next/script";
 import { AuthProvider } from "@/components/auth-provider";
 import { PreferencesProvider } from "@/components/preferences-provider";
@@ -18,11 +19,14 @@ export const metadata: Metadata = {
   description: "Panel administrativo de productividad y control operativo VYNTRA.",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Nonce de la Content-Security-Policy generado en src/proxy.ts. Leer las
+  // cabeceras hace que las paginas se rendericen por peticion (requisito del nonce).
+  const nonce = (await headers()).get("x-nonce") || undefined;
   return (
     <html
       lang="es"
@@ -31,7 +35,7 @@ export default function RootLayout({
       className="h-full antialiased"
     >
       <head>
-        <Script id="vyntra-preferences" strategy="beforeInteractive">
+        <Script id="vyntra-preferences" strategy="beforeInteractive" nonce={nonce}>
           {PREFERENCES_BOOT_SCRIPT}
         </Script>
       </head>

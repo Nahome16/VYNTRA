@@ -4786,29 +4786,61 @@ def station_change_password(
     return {"ok": True, "password_change_required": False}
 
 
+PASSWORD_RESET_CODE_MINUTES = 10
+PASSWORD_RESET_MIN_INTERVAL_SECONDS = 60
+PASSWORD_RESET_ATTEMPT_WINDOW = timedelta(hours=1)
+PASSWORD_RESET_MAX_ATTEMPTS = 5
+
+
+def issue_password_reset_code(credential: EmployeeCredential) -> str:
+    """
+    Genera un codigo de recuperacion nuevo o devuelve "" si se pidio otro hace menos
+    de PASSWORD_RESET_MIN_INTERVAL_SECONDS.
+
+    El contador de intentos fallidos NO se reinicia en cada solicitud (asi no se
+    pueden obtener 5 intentos nuevos por codigo); solo vuelve a 0 cuando la ultima
+    solicitud tiene mas de PASSWORD_RESET_ATTEMPT_WINDOW o tras un cambio exitoso.
+    """
+    current_time = now_utc()
+    last_request = _as_aware_utc(credential.reset_requested_at) if credential.reset_requested_at else None
+    if last_request and (current_time - last_request).total_seconds() < PASSWORD_RESET_MIN_INTERVAL_SECONDS:
+        return ""
+    if last_request is None or current_time - last_request > PASSWORD_RESET_ATTEMPT_WINDOW:
+        credential.reset_attempts = 0
+    reset_code = generate_reset_code()
+    credential.reset_code_hash = hash_token(reset_code)
+    credential.reset_code_expires_at = current_time + timedelta(minutes=PASSWORD_RESET_CODE_MINUTES)
+    credential.reset_requested_at = current_time
+    credential.reset_verified_at = None
+    return reset_code
+
+
+def password_reset_response(reset_code: str) -> dict:
+    # Respuesta identica exista o no la cuenta: el envio ocurre en segundo plano y
+    # el resultado real solo queda en la auditoria.
+    response = {
+        "ok": True,
+        "delivery_status": "queued",
+        "message": "If the account exists, a verification code was sent.",
+    }
+    if reset_code and allow_local_testing_secrets():
+        response["reset_code"] = reset_code
+        response["note"] = "Local testing environment: reset code is returned in the response."
+    return response
+
+
 @app.post("/api/station-web/password-reset/request")
 def station_web_password_reset_request(
     request: Request,
+    background_tasks: BackgroundTasks,
     payload: StationPasswordResetRequestPayload,
     db: Session = Depends(get_db),
 ):
     email = clean_email(payload.email)
     credential, employee, company = find_unique_web_station_credential(db, email)
     reset_code = ""
-    delivery_status = "not_configured"
     if credential and employee and company:
-        reset_code = generate_reset_code()
-        credential.reset_code_hash = hash_token(reset_code)
-        credential.reset_code_expires_at = now_utc() + timedelta(minutes=10)
-        credential.reset_requested_at = now_utc()
-        credential.reset_verified_at = None
-        credential.reset_attempts = 0
-        db.commit()
-        delivery_status = send_plain_email(
-            credential.email,
-            "Codigo de recuperacion VYNTRA",
-            reset_code_email_body(company, reset_code),
-        )
+        reset_code = issue_password_reset_code(credential)
         db.add(
             AuditLog(
                 company_id=company.id,
@@ -4816,9 +4848,22 @@ def station_web_password_reset_request(
                 entity_type="employee_credential",
                 entity_id=credential.id,
                 ip_address=client_ip(request)[:80],
-                payload_json=json_text({"email": email, "delivery_status": delivery_status}),
+                payload_json=json_text({"email": email, "throttled": not reset_code}),
             )
         )
+        if reset_code:
+            background_tasks.add_task(
+                send_plain_email_audit_task,
+                credential.email,
+                "Codigo de recuperacion VYNTRA",
+                reset_code_email_body(company, reset_code),
+                company.id,
+                None,
+                "station_web_password_reset_email",
+                "employee_credential",
+                credential.id,
+                {"email": email},
+            )
     else:
         db.add(
             AuditLog(
@@ -4831,15 +4876,7 @@ def station_web_password_reset_request(
             )
         )
     db.commit()
-    response = {
-        "ok": True,
-        "delivery_status": delivery_status,
-        "message": "If the account exists, a verification code was sent.",
-    }
-    if reset_code and allow_local_testing_secrets():
-        response["reset_code"] = reset_code
-        response["note"] = "SMTP is not configured; reset code is returned for local testing."
-    return response
+    return password_reset_response(reset_code)
 
 
 @app.post("/api/station-web/password-reset/confirm")
@@ -4858,7 +4895,7 @@ def station_web_password_reset_confirm(
         not credential.reset_code_hash
         or expires_at is None
         or now_utc() > _as_aware_utc(expires_at)
-        or credential.reset_attempts >= 5
+        or credential.reset_attempts >= PASSWORD_RESET_MAX_ATTEMPTS
     ):
         raise HTTPException(status_code=400, detail="Invalid or expired verification code")
 
@@ -4892,6 +4929,7 @@ def station_web_password_reset_confirm(
 
 @app.post("/api/station/password-reset/request")
 def station_password_reset_request(
+    background_tasks: BackgroundTasks,
     payload: StationPasswordResetRequestPayload,
     device: Device = Depends(require_device),
     db: Session = Depends(get_db),
@@ -4899,22 +4937,9 @@ def station_password_reset_request(
     email = clean_email(payload.email)
     credential = find_employee_credential(db, device.company_id, email)
     reset_code = ""
-    delivery_status = "not_configured"
     if credential and credential.status == "active":
-        reset_code = generate_reset_code()
-        credential.reset_code_hash = hash_token(reset_code)
-        credential.reset_code_expires_at = now_utc() + timedelta(minutes=10)
-        credential.reset_requested_at = now_utc()
-        credential.reset_verified_at = None
-        credential.reset_attempts = 0
-        db.commit()
+        reset_code = issue_password_reset_code(credential)
         company = db.get(Company, device.company_id)
-        if company:
-            delivery_status = send_plain_email(
-                credential.email,
-                "Codigo de recuperacion VYNTRA",
-                reset_code_email_body(company, reset_code),
-            )
         db.add(
             AuditLog(
                 company_id=device.company_id,
@@ -4922,9 +4947,22 @@ def station_password_reset_request(
                 action="station_password_reset_requested",
                 entity_type="employee_credential",
                 entity_id=credential.id,
-                payload_json=json_text({"email": email, "delivery_status": delivery_status}),
+                payload_json=json_text({"email": email, "throttled": not reset_code}),
             )
         )
+        if reset_code and company:
+            background_tasks.add_task(
+                send_plain_email_audit_task,
+                credential.email,
+                "Codigo de recuperacion VYNTRA",
+                reset_code_email_body(company, reset_code),
+                company.id,
+                None,
+                "station_password_reset_email",
+                "employee_credential",
+                credential.id,
+                {"email": email, "device_id": device.id},
+            )
     else:
         db.add(
             AuditLog(
@@ -4937,15 +4975,7 @@ def station_password_reset_request(
             )
         )
     db.commit()
-    response = {
-        "ok": True,
-        "delivery_status": delivery_status,
-        "message": "If the account exists, a verification code was sent.",
-    }
-    if reset_code and allow_local_testing_secrets():
-        response["reset_code"] = reset_code
-        response["note"] = "SMTP is not configured; reset code is returned for local testing."
-    return response
+    return password_reset_response(reset_code)
 
 
 @app.post("/api/station/password-reset/confirm")
@@ -4965,7 +4995,7 @@ def station_password_reset_confirm(
         not credential.reset_code_hash
         or expires_at is None
         or now_utc() > _as_aware_utc(expires_at)
-        or credential.reset_attempts >= 5
+        or credential.reset_attempts >= PASSWORD_RESET_MAX_ATTEMPTS
     ):
         raise HTTPException(status_code=400, detail="Invalid or expired verification code")
 

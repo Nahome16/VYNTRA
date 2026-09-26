@@ -1,15 +1,76 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EmptyState, Panel, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { EmployeeDetailResponse } from "@/lib/types";
+import { apiFetch } from "@/lib/api";
 import { downloadCsv } from "@/lib/csv";
+import { useDialog } from "@/lib/use-dialog";
 import { monthStartISO, todayISO } from "@/lib/dates";
 import { formatDuration } from "@/lib/format";
 
 const activityHours = [9, 10, 11, 12, 13, 14, 15, 16, 17];
+const EMPTY_PREVIEWS: Record<string, string> = {};
+
+type EvidenceItem = EmployeeDetailResponse["evidence"][number];
+
+/**
+ * Miniatura de evidencia que pide su vista previa solo cuando entra (o esta por
+ * entrar) en pantalla, en lugar de descargar todas las capturas a la vez.
+ */
+function LazyEvidenceThumb({
+  resetKey,
+  onVisible,
+  className,
+  disabled,
+  title,
+  onClick,
+  children,
+}: {
+  /** Al cambiar (nueva lista de evidencias) se vuelve a observar la miniatura. */
+  resetKey: unknown;
+  onVisible: () => void;
+  className: string;
+  disabled: boolean;
+  title: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const onVisibleRef = useRef(onVisible);
+
+  useEffect(() => {
+    onVisibleRef.current = onVisible;
+  }, [onVisible]);
+
+  useEffect(() => {
+    const element = buttonRef.current;
+    if (!element) return undefined;
+    if (typeof IntersectionObserver === "undefined") {
+      onVisibleRef.current();
+      return undefined;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          observer.disconnect();
+          onVisibleRef.current();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [resetKey]);
+
+  return (
+    <button ref={buttonRef} type="button" className={className} onClick={onClick} disabled={disabled} title={title}>
+      {children}
+    </button>
+  );
+}
 
 type HourBucket = {
   productive: number;
@@ -94,7 +155,13 @@ export function EmployeeProfile({
   const { apiGet, token } = useAuth();
   const { t } = usePreferences();
   const [employeeDetail, setEmployeeDetail] = useState<EmployeeDetailResponse | null>(null);
-  const [evidencePreviews, setEvidencePreviews] = useState<Record<string, string>>({});
+  const [previewState, setPreviewState] = useState<{ source: EvidenceItem[] | null; urls: Record<string, string> }>({
+    source: null,
+    urls: {},
+  });
+  const previewUrlsRef = useRef<string[]>([]);
+  const previewRequestedRef = useRef<Set<string>>(new Set());
+  const previewGenerationRef = useRef(0);
   const [selectedEvidenceId, setSelectedEvidenceId] = useState("");
   const [dateFrom, setDateFrom] = useState(initialDateFrom || monthStartISO());
   const [dateTo, setDateTo] = useState(initialDateTo || todayISO());
@@ -129,50 +196,43 @@ export function EmployeeProfile({
     return () => window.clearTimeout(timer);
   }, [initialDateFrom, initialDateTo, loadProfile]);
 
+  const evidenceList = employeeDetail?.evidence;
+  // Las vistas previas pertenecen a la lista de evidencias actual; al cambiar de
+  // rango o empleado se descartan (y sus object URLs se liberan abajo).
+  const evidencePreviews = previewState.source === evidenceList ? previewState.urls : EMPTY_PREVIEWS;
+
   useEffect(() => {
-    let cancelled = false;
-    const urls: string[] = [];
-
-    async function loadEvidencePreviews() {
-      const evidence = (employeeDetail?.evidence || []).filter((item) => item.content_type.includes("image"));
-      if (!token || !evidence.length) {
-        setEvidencePreviews({});
-        return;
-      }
-
-      const entries = await Promise.all(
-        evidence.map(async (item) => {
-          try {
-            const response = await fetch(item.view_url, {
-              headers: { Authorization: `Bearer ${token}` },
-              cache: "no-store",
-            });
-            if (!response.ok) return null;
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            urls.push(url);
-            return [item.id, url] as const;
-          } catch {
-            return null;
-          }
-        }),
-      );
-
-      if (cancelled) {
-        urls.forEach((url) => URL.revokeObjectURL(url));
-        return;
-      }
-
-      setEvidencePreviews(Object.fromEntries(entries.filter(Boolean) as Array<readonly [string, string]>));
-    }
-
-    void loadEvidencePreviews();
-
+    const requested = previewRequestedRef.current;
     return () => {
-      cancelled = true;
-      urls.forEach((url) => URL.revokeObjectURL(url));
+      previewGenerationRef.current += 1;
+      previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      previewUrlsRef.current = [];
+      requested.clear();
     };
-  }, [employeeDetail?.evidence, token]);
+  }, [evidenceList, token]);
+
+  const requestEvidencePreview = useCallback(
+    async (item: EvidenceItem) => {
+      if (!token || !evidenceList || !item.content_type.includes("image")) return;
+      if (previewRequestedRef.current.has(item.id)) return;
+      previewRequestedRef.current.add(item.id);
+      const generation = previewGenerationRef.current;
+      try {
+        const response = await apiFetch(item.view_url, { token, timeoutMs: 60_000 });
+        const blob = await response.blob();
+        if (generation !== previewGenerationRef.current) return;
+        const url = URL.createObjectURL(blob);
+        previewUrlsRef.current.push(url);
+        setPreviewState((current) => ({
+          source: evidenceList,
+          urls: current.source === evidenceList ? { ...current.urls, [item.id]: url } : { [item.id]: url },
+        }));
+      } catch {
+        // Sin vista previa: la miniatura queda como "IMG" deshabilitada.
+      }
+    },
+    [evidenceList, token],
+  );
 
   const productiveApps = useMemo(
     () => (employeeDetail?.apps || []).filter((app) => app.classification === "productive").slice(0, 5),
@@ -187,6 +247,8 @@ export function EmployeeProfile({
     () => employeeDetail?.evidence.find((item) => item.id === selectedEvidenceId) || null,
     [employeeDetail?.evidence, selectedEvidenceId],
   );
+  const evidenceDialogOpen = Boolean(selectedEvidence && evidencePreviews[selectedEvidence.id]);
+  const evidenceDialogRef = useDialog<HTMLDivElement>(evidenceDialogOpen, () => setSelectedEvidenceId(""));
   const activityMap = useMemo(() => {
     if (!employeeDetail) return [];
     const dayLabels = new Map(employeeDetail.days.slice(-7).map((day) => [day.date, shortDay(day.date)]));
@@ -441,9 +503,10 @@ export function EmployeeProfile({
               <div className="evidence-grid">
                 {employeeDetail.evidence.map((item) => (
                   <article className="evidence-tile" key={item.id}>
-                    <button
-                      type="button"
+                    <LazyEvidenceThumb
                       className="evidence-thumb evidence-open"
+                      resetKey={evidenceList}
+                      onVisible={() => void requestEvidencePreview(item)}
                       onClick={() => setSelectedEvidenceId(item.id)}
                       disabled={!evidencePreviews[item.id]}
                       title={evidencePreviews[item.id] ? t("Abrir captura") : t("Vista previa no disponible")}
@@ -456,7 +519,7 @@ export function EmployeeProfile({
                       ) : (
                         "FILE"
                       )}
-                    </button>
+                    </LazyEvidenceThumb>
                     <strong>{item.original_filename}</strong>
                     <span>{new Date(item.captured_at).toLocaleString("es-NI")}</span>
                     <small>
@@ -481,11 +544,18 @@ export function EmployeeProfile({
       ) : null}
 
       {selectedEvidence && evidencePreviews[selectedEvidence.id] ? (
-        <div className="evidence-modal" role="dialog" aria-modal="true" onClick={() => setSelectedEvidenceId("")}>
+        <div
+          className="evidence-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="evidence-dialog-title"
+          ref={evidenceDialogRef}
+          onClick={() => setSelectedEvidenceId("")}
+        >
           <section className="evidence-modal-panel" onClick={(event) => event.stopPropagation()}>
             <header>
               <div>
-                <h2>{t("Evidencia")}</h2>
+                <h2 id="evidence-dialog-title">{t("Evidencia")}</h2>
                 <p>{selectedEvidence.original_filename}</p>
               </div>
               <button type="button" className="row-action" onClick={() => setSelectedEvidenceId("")}>

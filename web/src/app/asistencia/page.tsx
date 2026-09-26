@@ -9,6 +9,7 @@ import { AttendanceEmployee, AttendanceOverviewResponse, AttendanceShift } from 
 import { DEFAULT_TIME_ZONE, isValidTimeZone, monthStartISO, todayISO } from "@/lib/dates";
 import { formatDuration, fullDate } from "@/lib/format";
 import { downloadAuthenticatedFile } from "@/lib/download-file";
+import { useDialog } from "@/lib/use-dialog";
 
 type AttendanceView = "live" | "history" | "groups" | "summary";
 type MetricDetailKey = "punctual" | "tardy" | "justified" | "break" | "lunch";
@@ -209,12 +210,36 @@ export default function AttendancePage() {
     return () => window.clearTimeout(timer);
   }, [loadAttendance, user]);
 
+  // Refresco en vivo cada 30 s, pausado mientras la pestana no esta visible; al
+  // volver a la pestana se refresca de inmediato y se reanuda el intervalo.
   useEffect(() => {
     if (!user || view !== "live") return;
-    const timer = window.setInterval(() => {
+    let timer: number | undefined;
+    const start = () => {
+      if (timer !== undefined) return;
+      timer = window.setInterval(() => {
+        void loadAttendance({ silent: true });
+      }, 30000);
+    };
+    const stop = () => {
+      if (timer === undefined) return;
+      window.clearInterval(timer);
+      timer = undefined;
+    };
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        stop();
+        return;
+      }
       void loadAttendance({ silent: true });
-    }, 30000);
-    return () => window.clearInterval(timer);
+      start();
+    };
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [loadAttendance, user, view]);
 
   useEffect(() => {
@@ -265,6 +290,7 @@ export default function AttendancePage() {
     () => employees.find((employee) => employee.id === selectedAssociateId) || null,
     [employees, selectedAssociateId],
   );
+  const associateDialogRef = useDialog<HTMLDivElement>(Boolean(selectedAssociate), () => setSelectedAssociateId(""));
   const selectedAssociateShifts = useMemo(
     () =>
       selectedAssociate
@@ -759,11 +785,18 @@ export default function AttendancePage() {
           ) : null}
           <StatusLine>{statusText}</StatusLine>
           {selectedAssociate ? (
-            <div className="detail-modal" role="dialog" aria-modal="true" onClick={() => setSelectedAssociateId("")}>
+            <div
+              className="detail-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="attendance-detail-dialog-title"
+              ref={associateDialogRef}
+              onClick={() => setSelectedAssociateId("")}
+            >
               <section className="detail-modal-panel" onClick={(event) => event.stopPropagation()}>
                 <header className="detail-modal-header">
-                  <h2>{t("Detalles del asociado")}</h2>
-                  <button aria-label={t("Cerrar detalle")} onClick={() => setSelectedAssociateId("")}>x</button>
+                  <h2 id="attendance-detail-dialog-title">{t("Detalles del asociado")}</h2>
+                  <button type="button" aria-label={t("Cerrar detalle")} data-autofocus onClick={() => setSelectedAssociateId("")}>x</button>
                 </header>
                 <div className="detail-modal-body">
                   <aside className="associate-panel">

@@ -6,6 +6,7 @@ import { EmptyState, RefreshButton, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { IncidentsPanel } from "@/components/incidents-panel";
 import { zonedDateISO } from "@/lib/dates";
+import { useDialog } from "@/lib/use-dialog";
 import { AccessCode, CatalogsResponse, Employee, ProductivityRule, UncategorizedItem } from "@/lib/types";
 
 const sectionLabels = {
@@ -183,6 +184,10 @@ export default function SettingsPage() {
   const [ruleTitle, setRuleTitle] = useState("");
   const [ruleClassification, setRuleClassification] = useState<RuleClassification>("productive");
   const [ruleNotes, setRuleNotes] = useState("");
+
+  const employeeDialogRef = useDialog<HTMLDivElement>(showEmployeeModal, closeEmployeeModal);
+  const accessDialogRef = useDialog<HTMLDivElement>(showAccessModal, closeAccessModal);
+  const ruleDialogRef = useDialog<HTMLDivElement>(showRuleModal, closeRuleModal);
 
   const loadSettings = useCallback(async () => {
     if (isSystemAdmin && !activeCompanyId) {
@@ -1218,10 +1223,10 @@ export default function SettingsPage() {
       </section>
 
       {showEmployeeModal ? (
-        <div className="settings-modal" role="dialog" aria-modal="true" onClick={closeEmployeeModal}>
+        <div className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-employee-dialog-title" ref={employeeDialogRef} onClick={closeEmployeeModal}>
           <form className="settings-modal-panel" onSubmit={handleSaveEmployee} onClick={(event) => event.stopPropagation()}>
             <header>
-              <h2>{editingEmployee ? "Editar usuario" : "Agregar usuario"}</h2>
+              <h2 id="settings-employee-dialog-title">{editingEmployee ? "Editar usuario" : "Agregar usuario"}</h2>
               <button type="button" onClick={closeEmployeeModal} aria-label="Cerrar">x</button>
             </header>
             <label>Nombre completo<input value={employeeName} onChange={(event) => setEmployeeName(event.target.value)} placeholder="Empleado nuevo" required /></label>
@@ -1256,10 +1261,10 @@ export default function SettingsPage() {
       ) : null}
 
       {showAccessModal ? (
-        <div className="settings-modal" role="dialog" aria-modal="true" onClick={closeAccessModal}>
+        <div className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-access-dialog-title" ref={accessDialogRef} onClick={closeAccessModal}>
           <form className="settings-modal-panel" onSubmit={handleCreateAccessCode} onClick={(event) => event.stopPropagation()}>
             <header>
-              <h2>{accessTypeLabels[accessDraftType]}</h2>
+              <h2 id="settings-access-dialog-title">{accessTypeLabels[accessDraftType]}</h2>
               <button type="button" onClick={closeAccessModal} aria-label="Cerrar">x</button>
             </header>
             <label>Usuario
@@ -1305,10 +1310,10 @@ export default function SettingsPage() {
       ) : null}
 
       {showRuleModal ? (
-        <div className="settings-modal" role="dialog" aria-modal="true" onClick={closeRuleModal}>
+        <div className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-rule-dialog-title" ref={ruleDialogRef} onClick={closeRuleModal}>
           <form className="settings-modal-panel" onSubmit={handleSaveRule} onClick={(event) => event.stopPropagation()}>
             <header>
-              <h2>{editingRule ? "Editar regla" : "Nueva regla"}</h2>
+              <h2 id="settings-rule-dialog-title">{editingRule ? "Editar regla" : "Nueva regla"}</h2>
               <button type="button" onClick={closeRuleModal} aria-label="Cerrar">x</button>
             </header>
             <label>Aplicar a

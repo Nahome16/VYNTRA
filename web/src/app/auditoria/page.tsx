@@ -14,6 +14,8 @@ function dateOnly(value: string | null) {
   return new Date(value).toLocaleString("es-NI");
 }
 
+const AUDIT_PAGE_SIZE = 50;
+
 function payloadText(payload: AuditLogEntry["payload"]) {
   if (!payload) return "{}";
   if (typeof payload === "string") return payload;
@@ -35,12 +37,20 @@ export default function AuditPage() {
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [page, setPage] = useState(1);
 
   const isSystemAdmin = user?.role === "system_admin";
   const canReadAudit = isSystemAdmin && Boolean(user?.permissions?.includes("audit:read"));
   const actorsCount = useMemo(() => new Set(logs.map((log) => log.actor_email || log.actor).filter(Boolean)).size, [logs]);
   const actionsCount = useMemo(() => new Set(logs.map((log) => log.action).filter(Boolean)).size, [logs]);
   const companiesCount = useMemo(() => new Set(logs.map((log) => log.company || log.company_id).filter(Boolean)).size, [logs]);
+  // La API puede devolver hasta 1000 filas: se paginan en el cliente para no renderizarlas todas.
+  const pageCount = Math.max(1, Math.ceil(logs.length / AUDIT_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const visibleLogs = useMemo(
+    () => logs.slice((currentPage - 1) * AUDIT_PAGE_SIZE, currentPage * AUDIT_PAGE_SIZE),
+    [currentPage, logs],
+  );
 
   const queryString = useCallback(
     (exportMode: "json" | "csv" = "json") => {
@@ -66,6 +76,7 @@ export default function AuditPage() {
     try {
       const response = await apiGet<AuditLogsResponse>(`/api/audit/logs?${queryString()}`);
       setLogs(response.items);
+      setPage(1);
       setStatusText(`${response.count} eventos cargados`);
     } catch {
       setStatusText("No se pudo cargar la auditoria");
@@ -207,7 +218,7 @@ export default function AuditPage() {
                 </tr>
               </thead>
               <tbody>
-                {logs.map((log) => (
+                {visibleLogs.map((log) => (
                   <tr key={log.id}>
                     <td>{dateOnly(log.created_at)}</td>
                     <td>
@@ -228,6 +239,17 @@ export default function AuditPage() {
             </table>
             {!logs.length ? <EmptyState>No hay eventos para el filtro actual.</EmptyState> : null}
           </div>
+          {pageCount > 1 ? (
+            <div className="settings-pagination">
+              <button type="button" disabled={currentPage <= 1} onClick={() => setPage(Math.max(1, currentPage - 1))}>
+                Anterior
+              </button>
+              <span>{currentPage} / {pageCount}</span>
+              <button type="button" disabled={currentPage >= pageCount} onClick={() => setPage(Math.min(pageCount, currentPage + 1))}>
+                Siguiente
+              </button>
+            </div>
+          ) : null}
         </Panel>
       </section>
     </AppShell>

@@ -50,8 +50,46 @@ export function LoginScreen() {
     }
   }
 
+  const previewRows = [
+    { name: "Ana L.", work: 62, brk: 8, lunch: 12, idle: 6 },
+    { name: "Luis G.", work: 70, brk: 6, lunch: 12, idle: 4 },
+    { name: "Marta R.", work: 48, brk: 10, lunch: 12, idle: 14 },
+  ];
+
   return (
     <main className="login-shell">
+      <aside className="login-aside" aria-hidden>
+        <div className="login-aside-brand">
+          <span className="brand-mark">V</span>
+          <strong>VYNTRA</strong>
+        </div>
+        <div className="login-aside-copy">
+          <h2>{t("La jornada de tu equipo, clara y verificable.")}</h2>
+          <ul>
+            <li>{t("Registro de jornada igual para modalidad presencial, remota e hibrida")}</li>
+            <li>{t("Productividad medida con reglas por departamento y rol")}</li>
+            <li>{t("Privacidad por diseno: sin teclas, sin camara, sin titulos de ventana")}</li>
+          </ul>
+        </div>
+        <div className="login-aside-preview">
+          <div className="login-aside-preview-head">
+            <span className="live-dot" />
+            <span>{t("Jornada de hoy")}</span>
+          </div>
+          {previewRows.map((row) => (
+            <div className="login-aside-row" key={row.name}>
+              <span>{row.name}</span>
+              <div className="shift-bar">
+                <i className="seg-work" style={{ width: `${row.work}%` }} />
+                <i className="seg-break" style={{ width: `${row.brk}%` }} />
+                <i className="seg-lunch" style={{ width: `${row.lunch}%` }} />
+                <i className="seg-idle" style={{ width: `${row.idle}%` }} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </aside>
+
       <section className="login-panel">
         <div className="login-pref-row">
           <button
@@ -72,7 +110,7 @@ export function LoginScreen() {
           </button>
         </div>
         <div className="brand-mark">V</div>
-        <h1>VYNTRA Control</h1>
+        <h1>{t("Inicia sesion")}</h1>
         <p>{t("Ingreso administrativo por empresa para revisar operaciones, equipos y reporteria.")}</p>
         <form onSubmit={handleLogin} className="login-form">
           <label>
@@ -84,6 +122,7 @@ export function LoginScreen() {
               onChange={(event) => setEmail(event.target.value)}
               autoComplete="username"
               inputMode="email"
+              placeholder="nombre@empresa.com"
               required
             />
           </label>

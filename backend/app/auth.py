@@ -267,6 +267,11 @@ def verify_password_constant_time(password: str, stored_hash: str | None) -> boo
     return verify_password_hash(password, stored_hash)
 
 
+def _as_aware(value: datetime) -> datetime:
+    """PostgreSQL devuelve fechas con zona; SQLite (pruebas) sin zona: se asume UTC."""
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
 DEVICE_LAST_SEEN_UPDATE_SECONDS = 60
 
 # Endpoints permitidos mientras el usuario del panel debe cambiar su contrasena.
@@ -304,9 +309,7 @@ def require_device(
     ).scalar_one_or_none()
     if device and secrets.compare_digest(device.token_sha256, token_hash):
         current_time = now_utc()
-        last_seen = device.last_seen_at
-        if last_seen is not None and last_seen.tzinfo is None:
-            last_seen = last_seen.replace(tzinfo=timezone.utc)
+        last_seen = _as_aware(device.last_seen_at) if device.last_seen_at is not None else None
         # Evita una escritura por cada peticion del agente: como maximo una por minuto.
         elapsed = (current_time - last_seen).total_seconds() if last_seen is not None else None
         if elapsed is None or elapsed < 0 or elapsed >= DEVICE_LAST_SEEN_UPDATE_SECONDS:
@@ -351,7 +354,7 @@ def require_admin(
             or session.user_id != user.id
             or session.company_id != user.company_id
             or session.revoked_at is not None
-            or session.expires_at <= current_time
+            or _as_aware(session.expires_at) <= current_time
         ):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

@@ -5,35 +5,34 @@ Antes de mostrar el aviso de privacidad o la estacion de marcaje, VYNTRA pide
 correo y contrasena para confirmar quien esta operando el equipo.
 
 IMPORTANTE: el agente de escritorio NO crea ni administra usuarios. Este
-modulo solo VERIFICA credenciales; la creacion de cuentas se hara mas
-adelante desde la plataforma web.
+modulo solo VERIFICA credenciales contra la API de VYNTRA.
 
-Cuando el backend de evidencias esta configurado, la verificacion ocurre en
-la API. El usuario local fijo queda solo como fallback de desarrollo cuando
-no hay backend configurado o cuando se permite explicitamente en config.ini.
+Usuarios de prueba locales: solo existen en modo desarrollo
+(VYNTRA_DEV_MODE=1 ejecutando desde codigo fuente; ver agent_runtime.is_dev_mode).
+Un ejecutable empaquetado nunca los acepta, ni siquiera con
+[StationAuth] AllowLocalFallback = true. Las credenciales de prueba se
+documentan fuera del codigo de produccion.
 
-Usuarios de pruebas:
-    correo:     test@vyntra.com
-    contrasena: Vyntra2026
-
-    correo:     empleado@vyntra.local
-    contrasena: Vyntra2026
+Todas las funciones de este modulo hacen peticiones de red: la interfaz debe
+llamarlas desde un hilo de trabajo, no desde el hilo principal de Tk.
 """
 
 import base64
 import hashlib
-import datetime
 import getpass
 import socket
 
 import requests
 
+from agent_runtime import get_logger, is_dev_mode, now_iso
+
+log = get_logger("auth")
 
 _ITERATIONS = 200_000
 
-# Usuarios de pruebas temporales (sin base de datos). Sustituir por la
-# verificacion contra la plataforma web cuando ese backend este listo.
-_TEST_USERS = {
+# Usuarios de pruebas SOLO para desarrollo (ver is_dev_mode). Nunca se consultan
+# en un ejecutable empaquetado.
+_DEV_TEST_USERS = {
     "test@vyntra.com": {
         "salt": "/lZV/m0SF5D+pksiiPC19Q==",
         "hash": "M187IVtrUnKIdrQbmXr0Os7WGbz8/JGT27S95xFvhnI=",
@@ -55,13 +54,11 @@ def _comparacion_segura(a: str, b: str) -> bool:
 
 
 def verificar_credenciales(correo: str, password: str) -> bool:
-    """Verifica correo y contrasena contra el usuario de pruebas fijo.
-
-    Sin base de datos ni almacenamiento local: es solo un chequeo de
-    verificacion mientras no exista la integracion con la plataforma web.
-    """
+    """Verifica contra los usuarios de prueba locales (solo en modo desarrollo)."""
+    if not is_dev_mode():
+        return False
     correo = (correo or "").strip().lower()
-    user = _TEST_USERS.get(correo)
+    user = _DEV_TEST_USERS.get(correo)
     if user is None:
         return False
     try:
@@ -72,7 +69,12 @@ def verificar_credenciales(correo: str, password: str) -> bool:
         calculado = base64.b64encode(derivado).decode("ascii")
         return _comparacion_segura(calculado, user["hash"])
     except Exception:
+        log.exception("Error verificando usuario de prueba")
         return False
+
+
+def _local_fallback_allowed(cfg) -> bool:
+    return is_dev_mode() and bool(getattr(cfg, "station_auth_allow_local_fallback", False))
 
 
 def autenticar_credenciales(correo: str, password: str, cfg, agent_version: str = "unknown") -> dict:
@@ -82,7 +84,7 @@ def autenticar_credenciales(correo: str, password: str, cfg, agent_version: str 
     base_url = str(getattr(cfg, "evidence_backend_url", "") or "").rstrip("/")
     device_token = str(getattr(cfg, "evidence_device_token", "") or "").strip()
     timeout = int(getattr(cfg, "evidence_request_timeout", 30) or 30)
-    allow_local_fallback = bool(getattr(cfg, "station_auth_allow_local_fallback", False))
+    allow_local_fallback = _local_fallback_allowed(cfg)
 
     if backend_enabled and base_url and not device_token:
         try:
@@ -91,7 +93,7 @@ def autenticar_credenciales(correo: str, password: str, cfg, agent_version: str 
                 json={
                     "email": correo,
                     "password": password or "",
-                    "occurred_at": datetime.datetime.now().isoformat(),
+                    "occurred_at": now_iso(),
                     "agent_version": agent_version,
                     "hostname": socket.gethostname(),
                     "windows_user": getpass.getuser(),
@@ -141,7 +143,7 @@ def autenticar_credenciales(correo: str, password: str, cfg, agent_version: str 
                 json={
                     "email": correo,
                     "password": password or "",
-                    "occurred_at": datetime.datetime.now().isoformat(),
+                    "occurred_at": now_iso(),
                     "agent_version": agent_version,
                 },
                 timeout=timeout,
@@ -176,12 +178,20 @@ def autenticar_credenciales(correo: str, password: str, cfg, agent_version: str 
             "status_code": response.status_code,
         }
 
-    local_ok = verificar_credenciales(correo, password)
+    if is_dev_mode():
+        local_ok = verificar_credenciales(correo, password)
+        return {
+            "ok": local_ok,
+            "source": "local",
+            "email": correo,
+            "reason": "" if local_ok else "invalid_credentials",
+        }
+    log.error("Inicio de sesion sin backend configurado: no se aceptan credenciales locales.")
     return {
-        "ok": local_ok,
+        "ok": False,
         "source": "local",
         "email": correo,
-        "reason": "" if local_ok else "invalid_credentials",
+        "reason": "backend_not_configured",
     }
 
 

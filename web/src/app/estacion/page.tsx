@@ -1,14 +1,28 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState, type CSSProperties } from "react";
+import { classifyLoginError, isApiError, requestJson, retryAfterMinutes } from "@/lib/api";
+import { zonedDateISO } from "@/lib/dates";
+import { useDialog } from "@/lib/use-dialog";
 
 const STATION_VERSION = "web-station-1.0.0";
 const sessionKey = "vyntra.station.session";
-const stateKey = "vyntra.station.state";
+// Claves globales de versiones anteriores (compartidas entre usuarios del mismo
+// navegador). Se migran o descartan al iniciar sesion; ver migrateLegacyStorage.
+const legacyStateKey = "vyntra.station.state";
+const legacyQueueKey = "vyntra.station.queue";
+// Estado, cola y rechazados quedan aislados por empleado.
+const stateKeyPrefix = "vyntra.station.state.";
+const queueKeyPrefix = "vyntra.station.queue.";
+const rejectedKeyPrefix = "vyntra.station.rejected.";
 const consentPrefix = "vyntra.station.consent.";
-const queueKey = "vyntra.station.queue";
 const timeZoneKey = "vyntra.station.timezone";
 const loginLanguageKey = "vyntra.station.loginLanguage";
+const rememberEmailKey = "vyntra.station.rememberEmail";
+const QUEUE_LIMIT = 100;
+const REJECTED_LIMIT = 20;
+const MAX_TRANSITION_ATTEMPTS = 3;
+const TRANSITION_EVENT_PREFIXES = ["shift_", "break_", "lunch_", "overtime_"];
 // 0.3.0 aplica la politica de captura minima (sin URL ni titulos; evidencia solo en sitios productivos).
 // Se ofrece como actualizacion opcional; subir requiredExtensionVersion cuando se decida exigirla.
 const requiredExtensionVersion = "0.2.3";
@@ -109,6 +123,13 @@ const stationLoginCopy = {
       resetRequestFailed: "No se pudo solicitar recuperacion.",
       resetConfirmed: "Contrasena restablecida. Ingresa con la nueva contrasena.",
       resetInvalid: "Codigo invalido o vencido.",
+      tooManyAttempts: (minutes: number | null) =>
+        minutes
+          ? `Demasiados intentos. Espera ${minutes} min antes de volver a intentar.`
+          : "Demasiados intentos. Espera unos minutos antes de volver a intentar.",
+      serverError: "El servidor no esta disponible. Intenta de nuevo en unos minutos.",
+      networkError: "Sin conexion con el servidor. Revisa tu red e intenta de nuevo.",
+      unknownError: "No se pudo iniciar sesion. Intenta de nuevo.",
     },
   },
   en: {
@@ -172,6 +193,13 @@ const stationLoginCopy = {
       resetRequestFailed: "Could not request password recovery.",
       resetConfirmed: "Password reset. Sign in with the new password.",
       resetInvalid: "Invalid or expired code.",
+      tooManyAttempts: (minutes: number | null) =>
+        minutes
+          ? `Too many attempts. Wait ${minutes} min before trying again.`
+          : "Too many attempts. Wait a few minutes before trying again.",
+      serverError: "The server is unavailable. Try again in a few minutes.",
+      networkError: "Cannot reach the server. Check your network and try again.",
+      unknownError: "Could not sign in. Please try again.",
     },
   },
 } satisfies Record<LoginLanguage, {
@@ -223,6 +251,10 @@ const stationLoginCopy = {
     resetRequestFailed: string;
     resetConfirmed: string;
     resetInvalid: string;
+    tooManyAttempts: (minutes: number | null) => string;
+    serverError: string;
+    networkError: string;
+    unknownError: string;
   };
 }>;
 
@@ -271,12 +303,30 @@ type QueuedEvent = {
   tipo: string;
   created_at: string;
   payload: Record<string, unknown>;
+  /** Solo local: intentos rechazados por el servidor (no se envia). */
+  attempts?: number;
+};
+
+type RejectedEvent = {
+  id: string;
+  tipo: string;
+  created_at: string;
+  error: string;
+  rejected_at: string;
 };
 
 type SendEventResult = {
   status: "sent" | "queued" | "rejected" | "skipped";
   error?: string;
 };
+
+type AgentEventsResponse = {
+  ok?: boolean;
+  accepted?: Array<{ id?: string; duplicate?: boolean }>;
+  rejected?: Array<{ id?: string; error?: string }>;
+};
+
+type QueueStats = { pending: number; rejected: number; lastRejectedError: string };
 
 type ExtensionStatus = {
   available: boolean;
@@ -286,8 +336,6 @@ type ExtensionStatus = {
   lastError: string | null;
   lastSeenAt: number | null;
 };
-
-class StationEventRejected extends Error {}
 
 const emptyState: StationState = {
   status: "FUERA",
@@ -319,7 +367,93 @@ function loadJson<T>(key: string): T | null {
 }
 
 function saveJson(key: string, value: unknown) {
-  window.localStorage.setItem(key, JSON.stringify(value));
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Almacenamiento lleno o no disponible: se conserva el estado en memoria.
+  }
+}
+
+function removeKey(key: string) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    // Almacenamiento no disponible.
+  }
+}
+
+const stateKeyFor = (employeeId: string) => `${stateKeyPrefix}${employeeId}`;
+const queueKeyFor = (employeeId: string) => `${queueKeyPrefix}${employeeId}`;
+const rejectedKeyFor = (employeeId: string) => `${rejectedKeyPrefix}${employeeId}`;
+
+function isTransitionEvent(tipo: string) {
+  return TRANSITION_EVENT_PREFIXES.some((prefix) => tipo.startsWith(prefix));
+}
+
+/**
+ * Limita la cola a QUEUE_LIMIT eventos descartando primero los eventos mas
+ * antiguos que NO son transiciones de jornada. Las transiciones
+ * (shift_*, break_*, lunch_*, overtime_*) nunca se descartan.
+ */
+function trimQueue(events: QueuedEvent[]) {
+  if (events.length <= QUEUE_LIMIT) return events;
+  let excess = events.length - QUEUE_LIMIT;
+  const dropIds = new Set<string>();
+  for (const event of events) {
+    if (excess <= 0) break;
+    if (isTransitionEvent(event.tipo)) continue;
+    dropIds.add(event.id);
+    excess -= 1;
+  }
+  return events.filter((event) => !dropIds.has(event.id));
+}
+
+function loadQueue(employeeId: string) {
+  const events = loadJson<QueuedEvent[]>(queueKeyFor(employeeId));
+  return Array.isArray(events) ? events.filter((event) => event && typeof event.id === "string") : [];
+}
+
+function enqueueEvents(employeeId: string, events: QueuedEvent[]) {
+  const current = loadQueue(employeeId);
+  const known = new Set(current.map((event) => event.id));
+  const merged = [...current, ...events.filter((event) => !known.has(event.id))];
+  saveJson(queueKeyFor(employeeId), trimQueue(merged));
+}
+
+function loadRejected(employeeId: string) {
+  const items = loadJson<RejectedEvent[]>(rejectedKeyFor(employeeId));
+  return Array.isArray(items) ? items : [];
+}
+
+function storeRejected(employeeId: string, items: Array<{ event: QueuedEvent; error: string }>) {
+  if (!items.length) return;
+  const rejectedAt = nowIso();
+  const next = [
+    ...loadRejected(employeeId),
+    ...items.map(({ event, error }) => ({
+      id: event.id,
+      tipo: event.tipo,
+      created_at: event.created_at,
+      error: error.slice(0, 300),
+      rejected_at: rejectedAt,
+    })),
+  ].slice(-REJECTED_LIMIT);
+  saveJson(rejectedKeyFor(employeeId), next);
+}
+
+function readQueueStats(employeeId: string | null | undefined): QueueStats {
+  if (!employeeId) return { pending: 0, rejected: 0, lastRejectedError: "" };
+  const rejected = loadRejected(employeeId);
+  return {
+    pending: loadQueue(employeeId).length,
+    rejected: rejected.length,
+    lastRejectedError: rejected.at(-1)?.error || "",
+  };
+}
+
+function wireEvent(event: QueuedEvent) {
+  // Solo los campos que espera el backend (attempts es local).
+  return { id: event.id, tipo: event.tipo, created_at: event.created_at, payload: event.payload };
 }
 
 function eventId() {
@@ -346,21 +480,7 @@ function timeZoneLocationLabel(timeZone: string) {
 }
 
 function zonedDateIso(timeZone: string, value: Date | string | number = new Date()) {
-  const date = value instanceof Date ? value : new Date(value);
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(date);
-    const year = parts.find((part) => part.type === "year")?.value || "0000";
-    const month = parts.find((part) => part.type === "month")?.value || "01";
-    const day = parts.find((part) => part.type === "day")?.value || "01";
-    return `${year}-${month}-${day}`;
-  } catch {
-    return date.toISOString().slice(0, 10);
-  }
+  return zonedDateISO(timeZone, value);
 }
 
 function formatZonedTime(value: string | number | Date, timeZone: string, withSeconds = false) {
@@ -458,38 +578,97 @@ function freezeAccruingState(state: StationState): StationState {
   };
 }
 
-async function requestJson<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init.headers || {}),
-    },
-    cache: "no-store",
-  });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json();
-}
-
 async function postStation<T>(token: string, path: string, body: unknown): Promise<T> {
   return requestJson<T>(path, {
     method: "POST",
-    headers: { "X-Device-Token": token },
+    deviceToken: token,
     body: JSON.stringify(body),
   });
 }
 
-function queueEvents(events: QueuedEvent[]) {
-  const current = loadJson<QueuedEvent[]>(queueKey) || [];
-  saveJson(queueKey, [...current, ...events].slice(-100));
+/** Envia eventos y devuelve los ids aceptados (o duplicados) y los rechazados. */
+async function postAgentEvents(token: string, events: QueuedEvent[]) {
+  const response = await postStation<AgentEventsResponse>(token, "/api/agent/events", { events: events.map(wireEvent) });
+  const accepted = new Set<string>();
+  (response.accepted || []).forEach((item) => {
+    if (item?.id) accepted.add(item.id);
+  });
+  const rejected = new Map<string, string>();
+  (response.rejected || []).forEach((item) => {
+    if (item?.id) rejected.set(item.id, item.error || "Evento rechazado");
+  });
+  return { accepted, rejected };
 }
 
-async function flushQueue(token: string) {
-  const events = loadJson<QueuedEvent[]>(queueKey) || [];
-  if (!events.length) return;
-  const response = await postStation<{ ok?: boolean; rejected?: { error?: string }[] }>(token, "/api/agent/events", { events });
-  if (response.ok === false) throw new Error(response.rejected?.[0]?.error || "Evento rechazado");
-  saveJson(queueKey, []);
+/**
+ * Migra las claves globales de versiones anteriores al almacenamiento del
+ * empleado indicado. `trustLegacyState` es true cuando la sesion guardada
+ * garantiza que los datos globales eran de este empleado. Si no, solo se
+ * conservan los eventos que el propio empleado genero (payload.empleado) y el
+ * estado solo se adopta si hay evidencia de que era suyo. Lo demas se descarta:
+ * nunca debe enviarse con el token de otro usuario.
+ */
+function migrateLegacyStorage(employee: { id: string; full_name: string }, trustLegacyState: boolean) {
+  const legacyState = loadJson<Partial<StationState>>(legacyStateKey);
+  const legacyQueue = loadJson<QueuedEvent[]>(legacyQueueKey);
+  if (!legacyState && !legacyQueue) return;
+  const events = Array.isArray(legacyQueue) ? legacyQueue.filter((event) => event && typeof event.id === "string") : [];
+  const ownEvents = trustLegacyState
+    ? events
+    : events.filter((event) => event.payload?.empleado === employee.full_name);
+  if (ownEvents.length) enqueueEvents(employee.id, ownEvents);
+  const adoptState = trustLegacyState || ownEvents.length > 0;
+  if (legacyState && adoptState && !loadJson(stateKeyFor(employee.id))) {
+    saveJson(stateKeyFor(employee.id), legacyState);
+  }
+  removeKey(legacyStateKey);
+  removeKey(legacyQueueKey);
+}
+
+function loadEmployeeState(employeeId: string, fallbackTimeZone: string) {
+  return normalizeState(loadJson<Partial<StationState>>(stateKeyFor(employeeId)), fallbackTimeZone);
+}
+
+// Un solo envio de la cola a la vez (por pestana).
+let flushInFlight: Promise<void> | null = null;
+
+/**
+ * Envia la cola pendiente del empleado. Solo quita de la cola los ids que el
+ * servidor acepto (o marco como duplicados). Los rechazados pasan al almacen
+ * de rechazados (las transiciones de jornada se reintentan hasta
+ * MAX_TRANSITION_ATTEMPTS veces). Los eventos encolados mientras la peticion
+ * estaba en curso se conservan porque la cola se relee y se fusiona al final.
+ */
+function flushQueue(token: string, employeeId: string): Promise<void> {
+  if (flushInFlight) return flushInFlight;
+  flushInFlight = (async () => {
+    const batch = loadQueue(employeeId).slice(0, QUEUE_LIMIT);
+    if (!batch.length) return;
+    const { accepted, rejected } = await postAgentEvents(token, batch);
+    const batchById = new Map(batch.map((event) => [event.id, event]));
+    const toRejectedStore: Array<{ event: QueuedEvent; error: string }> = [];
+    const retryAttempts = new Map<string, number>();
+    rejected.forEach((error, id) => {
+      const event = batchById.get(id);
+      if (!event) return;
+      const attempts = (event.attempts || 0) + 1;
+      if (isTransitionEvent(event.tipo) && attempts < MAX_TRANSITION_ATTEMPTS) {
+        retryAttempts.set(id, attempts);
+      } else {
+        toRejectedStore.push({ event, error });
+      }
+    });
+    const removeIds = new Set([...accepted, ...toRejectedStore.map((item) => item.event.id)]);
+    const current = loadQueue(employeeId);
+    const next = current
+      .filter((event) => !removeIds.has(event.id))
+      .map((event) => (retryAttempts.has(event.id) ? { ...event, attempts: retryAttempts.get(event.id) } : event));
+    saveJson(queueKeyFor(employeeId), next);
+    storeRejected(employeeId, toRejectedStore);
+  })().finally(() => {
+    flushInFlight = null;
+  });
+  return flushInFlight;
 }
 
 function ExtensionDownloadCard({ compact = false }: { compact?: boolean }) {
@@ -519,20 +698,90 @@ function TimeZoneSelect({
   value,
   onChange,
   compact = false,
+  disabled = false,
+  disabledReason = "",
 }: {
   value: string;
   onChange: (value: string) => void;
   compact?: boolean;
+  disabled?: boolean;
+  disabledReason?: string;
 }) {
   const options = stationTimeZones.includes(value) ? stationTimeZones : [value, ...stationTimeZones];
   return (
-    <label className={compact ? "station-timezone compact" : "station-timezone"}>Zona horaria
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
+    <label className={compact ? "station-timezone compact" : "station-timezone"} title={disabled ? disabledReason : undefined}>Zona horaria
+      <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled}>
         {options.map((timeZone) => (
           <option value={timeZone} key={timeZone}>{timeZone}</option>
         ))}
       </select>
     </label>
+  );
+}
+
+/** Re-renderiza solo al componente que lo usa, una vez por segundo; devuelve la hora actual. */
+function useSecondTick() {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return now;
+}
+
+/**
+ * Cronometro de la jornada. Es el unico (junto con StationLiveMetrics) que se
+ * actualiza cada segundo, para no re-renderizar toda la estacion.
+ */
+function StationClockFace({ state }: { state: StationState }) {
+  useSecondTick();
+  const workdayElapsed = workdayElapsedSeconds(state);
+  const dailyProgress = Math.min(100, Math.max(0, (workdayElapsed / (8 * 60 * 60)) * 100));
+  return (
+    <div className="station-clock-face" style={{ "--station-progress": `${dailyProgress}%` } as CSSProperties}>
+      <div>
+        <strong>{formatHms(workdayElapsed)}</strong>
+        <span>Jornada completa hoy</span>
+        <small>Meta diaria: 8h</small>
+      </div>
+    </div>
+  );
+}
+
+function StationLiveMetrics({
+  state,
+  timeZone,
+  canAccrueTime,
+}: {
+  state: StationState;
+  timeZone: string;
+  canAccrueTime: boolean;
+}) {
+  const now = useSecondTick();
+  const liveTotals = totals(state, canAccrueTime);
+  return (
+    <div className="station-metric-grid">
+      <article>
+        <span>HORA ACTUAL</span>
+        <strong>{formatZonedTime(now, timeZone, true)}</strong>
+      </article>
+      <article>
+        <span>DIA LABORAL</span>
+        <strong>{zonedDateIso(timeZone, now)}</strong>
+      </article>
+      <article>
+        <span>BREAK USADO</span>
+        <strong>{formatHms(liveTotals.breakSeconds)}</strong>
+      </article>
+      <article>
+        <span>ALMUERZO USADO</span>
+        <strong>{formatHms(liveTotals.lunch)}</strong>
+      </article>
+      <article>
+        <span>HORAS EXTRA</span>
+        <strong>{formatHms(liveTotals.overtime)}</strong>
+      </article>
+    </div>
   );
 }
 
@@ -543,6 +792,7 @@ export default function StationPage() {
   const [statusText, setStatusText] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [rememberEmail, setRememberEmail] = useState(false);
   const [loginLanguage, setLoginLanguage] = useState<LoginLanguage>("es");
   const [busy, setBusy] = useState(false);
   const [consentAccepted, setConsentAccepted] = useState(false);
@@ -552,12 +802,14 @@ export default function StationPage() {
   const [resetOpen, setResetOpen] = useState(false);
   const [howWorksDialogOpen, setHowWorksDialogOpen] = useState(false);
   const [extensionDialogOpen, setExtensionDialogOpen] = useState(false);
+  const [legalDialogOpen, setLegalDialogOpen] = useState(false);
   const [incidentOpen, setIncidentOpen] = useState(false);
   const [incident, setIncident] = useState({ type: "correccion_marcaje", description: "" });
   const [accessCode, setAccessCode] = useState("");
   const [overtimeRequest, setOvertimeRequest] = useState({ exitTime: "", reason: "" });
   const [stationTimeZone, setStationTimeZone] = useState("America/Managua");
   const [isOnline, setIsOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
+  const [queueStats, setQueueStats] = useState<QueueStats>({ pending: 0, rejected: 0, lastRejectedError: "" });
   const [extensionStatus, setExtensionStatus] = useState<ExtensionStatus>({
     available: false,
     tracking: false,
@@ -566,14 +818,30 @@ export default function StationPage() {
     lastError: null,
     lastSeenAt: null,
   });
-  const [, setTicks] = useState(0);
+  // Re-render "grueso" de la estacion (cambio de dia, caducidad de la extension).
+  // El reloj y los contadores por segundo viven en StationClockFace/StationLiveMetrics.
+  const [, setRenderTick] = useState(0);
   const activityRef = useRef({ clicks: 0, focusChanges: 0, lastInteraction: Date.now() });
   const extensionProbeStartedAtRef = useRef(Date.now());
   const extensionWasBlockedRef = useRef(false);
+  const howWorksDialogRef = useDialog<HTMLElement>(howWorksDialogOpen, () => setHowWorksDialogOpen(false));
+  const extensionDialogRef = useDialog<HTMLElement>(extensionDialogOpen, () => setExtensionDialogOpen(false));
+  const legalDialogRef = useDialog<HTMLElement>(legalDialogOpen, () => setLegalDialogOpen(false));
 
-  const currentWorkDate = zonedDateIso(stationTimeZone);
-  const closedWorkDate = stationState.workDate || (stationState.endedAt ? zonedDateIso(stationTimeZone, stationState.endedAt) : null);
-  const closedToday = stationState.status === "TERMINADO" && closedWorkDate === currentWorkDate;
+  const employeeId = session?.employee.id || "";
+  const shiftActive = stationState.status === "TRABAJANDO" || stationState.status === "BREAK" || stationState.status === "LUNCH";
+  // Zona horaria con la que se inicio la jornada: rige las fechas mientras la
+  // jornada esta activa o cerrada hoy, para que cambiar el selector no permita
+  // saltarse el bloqueo de "jornada cerrada hoy".
+  const shiftTimeZone = stationState.timeZone || stationTimeZone;
+  const closedWorkDate = stationState.status === "TERMINADO"
+    ? stationState.workDate || (stationState.endedAt ? zonedDateIso(shiftTimeZone, stationState.endedAt) : null)
+    : null;
+  const closedToday = closedWorkDate !== null
+    && (closedWorkDate >= zonedDateIso(shiftTimeZone) || closedWorkDate >= zonedDateIso(stationTimeZone));
+  const timeZoneLocked = shiftActive || closedToday;
+  const effectiveTimeZone = timeZoneLocked ? shiftTimeZone : stationTimeZone;
+  const currentWorkDate = zonedDateIso(effectiveTimeZone);
   const extensionReachable = Boolean(extensionStatus.available && extensionStatus.lastSeenAt && Date.now() - extensionStatus.lastSeenAt < 15000);
   const extensionMeetsMinimum = versionAtLeast(extensionStatus.extensionVersion, requiredExtensionVersion);
   const extensionUpToDate = versionAtLeast(extensionStatus.extensionVersion, latestExtensionVersion);
@@ -582,41 +850,65 @@ export default function StationPage() {
   const extensionConnected = extensionReachable && extensionMeetsMinimum;
   const extensionMissing = !extensionReachable;
   const extensionGraceActive = !extensionStatus.lastSeenAt && Date.now() - extensionProbeStartedAtRef.current < 3000;
-  const currentTotals = totals(stationState, extensionConnected || extensionGraceActive);
+  const canAccrueTime = extensionConnected || extensionGraceActive;
   const canAcceptConsent = consentChecks.every(Boolean);
   const needsPasswordChange = Boolean(session?.credential.password_change_required);
   const consentKey = session ? `${consentPrefix}${session.email}` : "";
-  const shiftActive = stationState.status === "TRABAJANDO" || stationState.status === "BREAK" || stationState.status === "LUNCH";
   const loginText = stationLoginCopy[loginLanguage];
-  const stationLocationLabel = timeZoneLocationLabel(stationTimeZone);
+  const stationLocationLabel = timeZoneLocationLabel(effectiveTimeZone);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const savedTimeZone = window.localStorage.getItem(timeZoneKey) || defaultTimeZone();
       const savedLoginLanguage = window.localStorage.getItem(loginLanguageKey);
       const savedSession = loadJson<StationSession>(sessionKey);
-      const savedState = normalizeState(loadJson<Partial<StationState>>(stateKey), savedTimeZone);
+      const rememberedEmail = window.localStorage.getItem(rememberEmailKey) || "";
       setStationTimeZone(savedTimeZone);
       if (savedLoginLanguage === "es" || savedLoginLanguage === "en") setLoginLanguage(savedLoginLanguage);
-      if (savedSession) {
+      if (rememberedEmail) {
+        setLoginEmail(rememberedEmail);
+        setRememberEmail(true);
+      }
+      if (savedSession?.employee?.id && savedSession.token) {
+        // La sesion guardada es del mismo usuario que dejo los datos globales antiguos.
+        migrateLegacyStorage(savedSession.employee, true);
         setSession(savedSession);
         setLoginEmail(savedSession.email);
         setConsentAccepted(window.localStorage.getItem(`${consentPrefix}${savedSession.email}`) === "accepted");
+        setStationState(loadEmployeeState(savedSession.employee.id, savedTimeZone));
+        setQueueStats(readQueueStats(savedSession.employee.id));
+      } else {
+        if (savedSession) removeKey(sessionKey);
+        setStationState({ ...emptyState, timeZone: savedTimeZone });
       }
-      setStationState(savedState);
       setReady(true);
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
-    if (!ready) return;
-    saveJson(stateKey, { ...stationState, timeZone: stationTimeZone });
-  }, [ready, stationState, stationTimeZone]);
+    if (!ready || !employeeId) return;
+    saveJson(stateKeyFor(employeeId), stationState);
+  }, [ready, employeeId, stationState]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setTicks((value) => value + 1), 1000);
+    const timer = window.setInterval(() => setRenderTick((value) => value + 1), 30000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  // Re-render exacto cuando la ultima senal de la extension caduca (15 s) y
+  // cuando termina el periodo de gracia inicial (3 s).
+  useEffect(() => {
+    if (!extensionStatus.lastSeenAt) return undefined;
+    const delay = Math.max(0, extensionStatus.lastSeenAt + 15000 - Date.now() + 50);
+    const timer = window.setTimeout(() => setRenderTick((value) => value + 1), delay);
+    return () => window.clearTimeout(timer);
+  }, [extensionStatus.lastSeenAt]);
+
+  useEffect(() => {
+    const delay = Math.max(0, extensionProbeStartedAtRef.current + 3000 - Date.now() + 50);
+    const timer = window.setTimeout(() => setRenderTick((value) => value + 1), delay);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -674,18 +966,6 @@ export default function StationPage() {
   }, []);
 
   useEffect(() => {
-    if (!extensionDialogOpen && !howWorksDialogOpen) return undefined;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setExtensionDialogOpen(false);
-        setHowWorksDialogOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [extensionDialogOpen, howWorksDialogOpen]);
-
-  useEffect(() => {
     if (!ready || !shiftActive) {
       extensionWasBlockedRef.current = false;
       return;
@@ -719,13 +999,22 @@ export default function StationPage() {
     if (!session?.token) return;
     const timer = window.setInterval(() => {
       if (shiftActive && extensionConnected) void sendEvent("activity_snapshot", stationState, false);
-      void flushQueue(session.token).catch(() => undefined);
+      void runFlush(session);
       syncBrowserExtension();
     }, 30000);
     return () => window.clearInterval(timer);
     // The timer intentionally samples the current station state every time this effect is renewed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.token, shiftActive, stationState]);
+
+  // Al iniciar sesion o recuperar la conexion se envia la cola pendiente.
+  useEffect(() => {
+    if (!session?.token || !isOnline) return undefined;
+    const timer = window.setTimeout(() => void runFlush(session), 0);
+    return () => window.clearTimeout(timer);
+    // runFlush only depends on the session captured here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.token, isOnline]);
 
   useEffect(() => {
     if (!shiftActive) return undefined;
@@ -755,7 +1044,7 @@ export default function StationPage() {
     const idle = Math.floor((Date.now() - activityRef.current.lastInteraction) / 1000);
     const hidden = document.visibilityState !== "visible";
     return {
-      seg_activo: Math.max(0, currentTotals.work - idle),
+      seg_activo: Math.max(0, totals(stationState, canAccrueTime).work - idle),
       seg_idle: idle >= 60 || hidden ? idle : 0,
       clics: activityRef.current.clicks,
       cambios_ventana: activityRef.current.focusChanges,
@@ -776,12 +1065,13 @@ export default function StationPage() {
 
   function snapshot(state: StationState) {
     const current = totals(state);
+    const snapshotTimeZone = state.status === "FUERA" ? effectiveTimeZone : state.timeZone || effectiveTimeZone;
     return {
       estado: state.status,
       empleado: session?.employee.full_name || "",
       equipo: session?.device.name || "Estacion web",
       fecha: state.workDate || currentWorkDate,
-      zona_horaria: stationTimeZone,
+      zona_horaria: snapshotTimeZone,
       inicio_jornada: state.startedAt,
       fin_jornada: state.endedAt,
       seg_trabajado: current.work,
@@ -829,9 +1119,11 @@ export default function StationPage() {
   }
 
   function updateTimeZone(nextTimeZone: string) {
+    // Bloqueado durante una jornada activa o cerrada hoy (ver timeZoneLocked).
+    if (timeZoneLocked) return;
     setStationTimeZone(nextTimeZone);
     window.localStorage.setItem(timeZoneKey, nextTimeZone);
-    setStationState((current) => ({ ...current, timeZone: nextTimeZone }));
+    setStationState((current) => (current.status === "FUERA" ? { ...current, timeZone: nextTimeZone } : current));
   }
 
   function toggleLoginLanguage() {
@@ -850,8 +1142,35 @@ export default function StationPage() {
     return false;
   }
 
+  /** Envia la cola del empleado de `activeSession` con su propio token. */
+  async function runFlush(activeSession: StationSession | null) {
+    if (!activeSession?.token || !activeSession.employee?.id) return;
+    try {
+      await flushQueue(activeSession.token, activeSession.employee.id);
+    } catch {
+      // Sin conexion o error del servidor: la cola se reintenta en el siguiente ciclo.
+    }
+    setQueueStats(readQueueStats(activeSession.employee.id));
+  }
+
+  function sendErrorText(error: unknown) {
+    if (isApiError(error) && (error.kind === "network" || error.kind === "timeout")) {
+      return "Sin conexion. El evento quedo pendiente.";
+    }
+    if (isApiError(error)) return `No se pudo sincronizar (HTTP ${error.status}). El evento quedo pendiente.`;
+    return "Sin conexion. El evento quedo pendiente.";
+  }
+
   async function sendEvent(type: string, nextState: StationState, showStatus = true, extra: Record<string, unknown> = {}) {
-    if (!session?.token) return { status: "skipped", error: "Sesion no disponible" } satisfies SendEventResult;
+    const activeSession = session;
+    if (!activeSession?.token) return { status: "skipped", error: "Sesion no disponible" } satisfies SendEventResult;
+    const activeEmployeeId = activeSession.employee.id;
+    // Las muestras de actividad solo tienen sentido en tiempo real: no se envian
+    // ni se encolan sin conexion.
+    const isActivitySnapshot = type === "activity_snapshot";
+    if (isActivitySnapshot && typeof navigator !== "undefined" && !navigator.onLine) {
+      return { status: "skipped", error: "Sin conexion" } satisfies SendEventResult;
+    }
     const event: QueuedEvent = {
       id: eventId(),
       tipo: type,
@@ -859,17 +1178,32 @@ export default function StationPage() {
       payload: { ...snapshot(nextState), ...extra },
     };
     try {
-      const response = await postStation<{ ok?: boolean; rejected?: { error?: string }[] }>(session.token, "/api/agent/events", { events: [event] });
-      if (response.ok === false) throw new StationEventRejected(response.rejected?.[0]?.error || "Evento rechazado");
-      await flushQueue(session.token);
+      const { accepted, rejected } = await postAgentEvents(activeSession.token, [event]);
+      if (rejected.has(event.id)) {
+        const errorMessage = rejected.get(event.id) || "Evento rechazado";
+        storeRejected(activeEmployeeId, [{ event, error: errorMessage }]);
+        setQueueStats(readQueueStats(activeEmployeeId));
+        if (showStatus) setStatusText(errorMessage);
+        return { status: "rejected", error: errorMessage } satisfies SendEventResult;
+      }
+      if (!accepted.has(event.id)) {
+        // El servidor no confirmo este id: se conserva para reintentar.
+        if (!isActivitySnapshot) enqueueEvents(activeEmployeeId, [event]);
+        setQueueStats(readQueueStats(activeEmployeeId));
+        if (showStatus) setStatusText("Sin confirmacion del servidor. El evento quedo pendiente.");
+        return { status: isActivitySnapshot ? "skipped" : "queued" } satisfies SendEventResult;
+      }
       if (showStatus) setStatusText("Sincronizado");
+      // La cola pendiente se envia aparte: si falla no afecta a este evento ya aceptado.
+      void runFlush(activeSession);
       return { status: "sent" } satisfies SendEventResult;
     } catch (error) {
-      if (!(error instanceof StationEventRejected)) queueEvents([event]);
-      const errorMessage = error instanceof Error ? error.message : "Sin conexion. El evento quedo pendiente.";
+      if (!isActivitySnapshot) enqueueEvents(activeEmployeeId, [event]);
+      setQueueStats(readQueueStats(activeEmployeeId));
+      const errorMessage = sendErrorText(error);
       if (showStatus) setStatusText(errorMessage);
       return {
-        status: error instanceof StationEventRejected ? "rejected" : "queued",
+        status: isActivitySnapshot ? "skipped" : "queued",
         error: errorMessage,
       } satisfies SendEventResult;
     }
@@ -894,13 +1228,22 @@ export default function StationPage() {
           "Content-Type": "application/json",
           "X-Device-Token": session.token,
         },
-        body: JSON.stringify({ events: [event] }),
+        body: JSON.stringify({ events: [wireEvent(event)] }),
         cache: "no-store",
         keepalive: true,
-      });
+      }).catch(() => undefined);
     } catch {
       // Browsers may abort unload work. The warning still protects the main flow.
     }
+  }
+
+  function loginErrorText(error: unknown) {
+    const kind = classifyLoginError(error);
+    if (kind === "credentials") return loginText.status.invalidCredentials;
+    if (kind === "rate_limited") return loginText.status.tooManyAttempts(retryAfterMinutes(error));
+    if (kind === "server") return loginText.status.serverError;
+    if (kind === "network") return loginText.status.networkError;
+    return loginText.status.unknownError;
   }
 
   async function login(event: FormEvent<HTMLFormElement>) {
@@ -913,6 +1256,7 @@ export default function StationPage() {
     setBusy(true);
     setStatusText(loginText.status.verifyingCredentials);
     try {
+      const cleanEmail = loginEmail.trim().toLowerCase();
       const payload = await requestJson<{
         ok: boolean;
         company: { id: string };
@@ -922,7 +1266,7 @@ export default function StationPage() {
       }>("/api/station/enroll", {
         method: "POST",
         body: JSON.stringify({
-          email: loginEmail.trim().toLowerCase(),
+          email: cleanEmail,
           password: loginPassword,
           occurred_at: nowIso(),
           agent_version: STATION_VERSION,
@@ -939,13 +1283,20 @@ export default function StationPage() {
         credential: payload.credential,
         device: { id: payload.device.id, name: payload.device.name },
       };
+      // Datos de versiones anteriores sin dueno conocido: solo se conserva lo
+      // que pertenece a este empleado.
+      migrateLegacyStorage(nextSession.employee, false);
       setSession(nextSession);
       saveJson(sessionKey, nextSession);
+      setStationState(loadEmployeeState(nextSession.employee.id, stationTimeZone));
+      setQueueStats(readQueueStats(nextSession.employee.id));
       setConsentAccepted(window.localStorage.getItem(`${consentPrefix}${nextSession.email}`) === "accepted");
+      if (rememberEmail) window.localStorage.setItem(rememberEmailKey, cleanEmail);
+      else removeKey(rememberEmailKey);
       setLoginPassword("");
       setStatusText(loginText.status.signedIn);
-    } catch {
-      setStatusText(loginText.status.invalidCredentials);
+    } catch (error) {
+      setStatusText(loginErrorText(error));
     } finally {
       setBusy(false);
     }
@@ -1045,7 +1396,7 @@ export default function StationPage() {
     await transition("shift_started", () => ({
       ...emptyState,
       status: "TRABAJANDO",
-      workDate: currentWorkDate,
+      workDate: zonedDateIso(stationTimeZone),
       timeZone: stationTimeZone,
       startedAt: nowIso(),
       phaseStartedAt: Date.now(),
@@ -1055,11 +1406,12 @@ export default function StationPage() {
   async function finishShift() {
     await transition("shift_finished", (state) => {
       const closed = closeCurrentPhase(state);
+      const closedTimeZone = closed.timeZone || effectiveTimeZone;
       return {
         ...closed,
         status: "TERMINADO",
-        workDate: closed.workDate || currentWorkDate,
-        timeZone: stationTimeZone,
+        workDate: closed.workDate || zonedDateIso(closedTimeZone),
+        timeZone: closedTimeZone,
         endedAt: nowIso(),
         overtimeStatus: closed.overtimeStatus === "ACTIVA" ? "FINALIZADA" : closed.overtimeStatus,
         overtimeStartedAt: null,
@@ -1119,11 +1471,12 @@ export default function StationPage() {
         code: accessCode.trim(),
         type: "station_reopen",
       });
+      const restoredTimeZone = stationState.timeZone || effectiveTimeZone;
       const next = {
         ...stationState,
         status: "TRABAJANDO" as StationStatus,
-        workDate: stationState.workDate || currentWorkDate,
-        timeZone: stationTimeZone,
+        workDate: stationState.workDate || zonedDateIso(restoredTimeZone),
+        timeZone: restoredTimeZone,
         endedAt: null,
         phaseStartedAt: Date.now(),
       };
@@ -1142,7 +1495,7 @@ export default function StationPage() {
     if (!overtimeRequest.reason.trim()) return;
     await sendEvent("overtime_requested", stationState, true, {
       dia: stationState.workDate || currentWorkDate,
-      zona_horaria: stationTimeZone,
+      zona_horaria: effectiveTimeZone,
       hora_salida: overtimeRequest.exitTime,
       motivo: overtimeRequest.reason.trim(),
       estado: "pendiente_autorizacion",
@@ -1166,18 +1519,18 @@ export default function StationPage() {
       problema: incidentTypeLabel[incident.type] || incident.type,
       motivo: incident.description.trim(),
       dia: stationState.workDate || currentWorkDate,
-      zona_horaria: stationTimeZone,
+      zona_horaria: effectiveTimeZone,
       estado_jornada: stationState.status,
       web_station_incident: true,
       evidencia_tecnica: {
-        periodo_sugerido: stationState.startedAt ? `${formatZonedTime(stationState.startedAt, stationTimeZone)} - ${formatZonedTime(Date.now(), stationTimeZone)}` : "Jornada web",
+        periodo_sugerido: stationState.startedAt ? `${formatZonedTime(stationState.startedAt, effectiveTimeZone)} - ${formatZonedTime(Date.now(), effectiveTimeZone)}` : "Jornada web",
         minutos_estimados: 15,
         app_activa: "Estacion web",
         ventana_activa: "Estacion de marcaje",
         estado_jornada: stationState.status,
         sincronizacion: isOnline ? "En linea" : "Sin conexion",
         equipo: session?.device.name || "Estacion web",
-        zona_horaria: stationTimeZone,
+        zona_horaria: effectiveTimeZone,
         extension: extensionConnected ? "Conectada" : "No conectada",
       },
       requested_at: nowIso(),
@@ -1188,11 +1541,42 @@ export default function StationPage() {
     setStatusText(result.status === "queued" ? "Incidencia guardada pendiente de sincronizacion" : "Incidencia enviada");
   }
 
-  function logout() {
-    window.localStorage.removeItem(sessionKey);
+  async function logout() {
+    const activeSession = session;
+    const hadActiveShift = shiftActive;
+    if (activeSession && hadActiveShift) {
+      const confirmed = window.confirm(
+        "Tienes una jornada activa. Si sales, la jornada queda guardada en este equipo y podras continuarla al volver a iniciar sesion, "
+          + "pero no podras marcar break, almuerzo ni salida hasta que regreses. ¿Deseas salir?",
+      );
+      if (!confirmed) return;
+    }
+    setBusy(true);
+    if (activeSession?.token && activeSession.employee?.id) {
+      // Ultimo intento de enviar la cola con el token de ESTE usuario. Lo que no
+      // se pueda enviar queda guardado bajo su empleado y solo se enviara cuando
+      // el vuelva a iniciar sesion; nunca con el token de otra persona.
+      await Promise.race([
+        flushQueue(activeSession.token, activeSession.employee.id).catch(() => undefined),
+        new Promise((resolve) => window.setTimeout(resolve, 4000)),
+      ]);
+      saveJson(stateKeyFor(activeSession.employee.id), stationState);
+    }
+    removeKey(sessionKey);
     window.postMessage({ type: "VYNTRA_STATION_CLEAR" }, window.location.origin);
     setSession(null);
-    setStatusText("Sesion cerrada");
+    setStationState({ ...emptyState, timeZone: stationTimeZone });
+    setQueueStats(readQueueStats(null));
+    setConsentAccepted(false);
+    setConsentChecks([false, false, false, false]);
+    setPasswordForm({ current: "", next: "", confirm: "" });
+    setIncident({ type: "correccion_marcaje", description: "" });
+    setIncidentOpen(false);
+    setLegalDialogOpen(false);
+    setAccessCode("");
+    setOvertimeRequest({ exitTime: "", reason: "" });
+    setBusy(false);
+    setStatusText(hadActiveShift ? "Sesion cerrada. La jornada activa quedo guardada para cuando vuelvas a iniciar sesion." : "Sesion cerrada");
   }
 
   if (!ready) {
@@ -1262,7 +1646,14 @@ export default function StationPage() {
               </label>
               <div className="station-login-options">
                 <label>
-                  <input type="checkbox" />
+                  <input
+                    type="checkbox"
+                    checked={rememberEmail}
+                    onChange={(event) => {
+                      setRememberEmail(event.target.checked);
+                      if (!event.target.checked) removeKey(rememberEmailKey);
+                    }}
+                  />
                   {loginText.remember}
                 </label>
                 <button type="button" onClick={() => { setResetOpen(true); setResetForm((form) => ({ ...form, email: loginEmail })); }}>
@@ -1294,7 +1685,7 @@ export default function StationPage() {
                 <button type="submit" className="station-primary" disabled={busy}>{loginText.resetSubmit}</button>
               </form>
             ) : null}
-            {statusText ? <p className="station-status-line">{statusText}</p> : null}
+            {statusText ? <p className="station-status-line" role="status" aria-live="polite">{statusText}</p> : null}
           </section>
         </div>
         {howWorksDialogOpen ? (
@@ -1304,6 +1695,7 @@ export default function StationPage() {
               role="dialog"
               aria-modal="true"
               aria-labelledby="station-how-dialog-title"
+              ref={howWorksDialogRef}
               onClick={(event) => event.stopPropagation()}
             >
               <button
@@ -1333,6 +1725,7 @@ export default function StationPage() {
               role="dialog"
               aria-modal="true"
               aria-labelledby="station-extension-dialog-title"
+              ref={extensionDialogRef}
               onClick={(event) => event.stopPropagation()}
             >
               <button
@@ -1386,7 +1779,7 @@ export default function StationPage() {
             <small>Minimo 8 caracteres, mayuscula, minuscula, numero y signo.</small>
             <button type="submit" className="station-primary" disabled={busy}>Guardar</button>
           </form>
-          {statusText ? <p className="station-status-line">{statusText}</p> : null}
+          {statusText ? <p className="station-status-line" role="status" aria-live="polite">{statusText}</p> : null}
         </section>
       </main>
     );
@@ -1426,16 +1819,14 @@ export default function StationPage() {
           </div>
           <div className="station-consent-actions">
             <button type="button" className="station-primary" disabled={!canAcceptConsent} onClick={() => void acceptConsent()}>Aceptar y continuar</button>
-            <button type="button" className="station-secondary" onClick={logout}>Salir</button>
+            <button type="button" className="station-secondary" onClick={() => void logout()} disabled={busy}>Salir</button>
           </div>
-          {statusText ? <p className="station-status-line">{statusText}</p> : null}
+          {statusText ? <p className="station-status-line" role="status" aria-live="polite">{statusText}</p> : null}
         </section>
       </main>
     );
   }
 
-  const workdayElapsed = workdayElapsedSeconds(stationState);
-  const dailyProgress = Math.min(100, Math.max(0, (workdayElapsed / (8 * 60 * 60)) * 100));
   const canMark = extensionConnected && !busy;
   const canStartNewShift = stationState.status === "FUERA" || (stationState.status === "TERMINADO" && !closedToday);
   const extensionBlockText = extensionNeedsUpdate
@@ -1479,7 +1870,7 @@ export default function StationPage() {
     {
       number: "1",
       label: "Inicio de jornada",
-      detail: stationState.startedAt ? formatZonedTime(stationState.startedAt, stationTimeZone) : "--:--",
+      detail: stationState.startedAt ? formatZonedTime(stationState.startedAt, effectiveTimeZone) : "--:--",
       active: Boolean(stationState.startedAt),
     },
     {
@@ -1503,7 +1894,7 @@ export default function StationPage() {
     {
       number: "5",
       label: "Fin de jornada",
-      detail: stationState.endedAt ? formatZonedTime(stationState.endedAt, stationTimeZone) : "--:--",
+      detail: stationState.endedAt ? formatZonedTime(stationState.endedAt, effectiveTimeZone) : "--:--",
       active: stationState.status === "TERMINADO",
     },
   ];
@@ -1541,8 +1932,8 @@ export default function StationPage() {
         <div className="station-topbar-actions">
           <span className={`station-pill station-pill-${stationState.status.toLowerCase()}`}>{statusCopy[stationState.status].label}</span>
           <span className="station-user-chip">{session.employee.full_name}</span>
-          <button type="button" className="station-help-button" aria-label="Abrir informacion legal">?</button>
-          <button type="button" className="station-secondary" onClick={logout}>Salir</button>
+          <button type="button" className="station-help-button" aria-label="Abrir informacion legal" aria-haspopup="dialog" onClick={() => setLegalDialogOpen(true)}>?</button>
+          <button type="button" className="station-secondary" onClick={() => void logout()} disabled={busy}>Salir</button>
         </div>
       </header>
 
@@ -1558,13 +1949,7 @@ export default function StationPage() {
             </strong>
           </div>
 
-          <div className="station-clock-face" style={{ "--station-progress": `${dailyProgress}%` } as CSSProperties}>
-            <div>
-              <strong>{formatHms(workdayElapsed)}</strong>
-              <span>Jornada completa hoy</span>
-              <small>Meta diaria: 8h</small>
-            </div>
-          </div>
+          <StationClockFace state={stationState} />
 
           <p className="station-action-hint">{statusCopy[stationState.status].detail}</p>
           {shiftActive ? (
@@ -1579,28 +1964,7 @@ export default function StationPage() {
             {closedToday ? <p className="station-ended-copy">Jornada finalizada. Ingresa codigo de reactivacion en ajustes.</p> : null}
           </div>
 
-          <div className="station-metric-grid">
-            <article>
-              <span>HORA ACTUAL</span>
-              <strong>{formatZonedTime(Date.now(), stationTimeZone, true)}</strong>
-            </article>
-            <article>
-              <span>DIA LABORAL</span>
-              <strong>{currentWorkDate}</strong>
-            </article>
-            <article>
-              <span>BREAK USADO</span>
-              <strong>{formatHms(currentTotals.breakSeconds)}</strong>
-            </article>
-            <article>
-              <span>ALMUERZO USADO</span>
-              <strong>{formatHms(currentTotals.lunch)}</strong>
-            </article>
-            <article>
-              <span>HORAS EXTRA</span>
-              <strong>{formatHms(currentTotals.overtime)}</strong>
-            </article>
-          </div>
+          <StationLiveMetrics state={stationState} timeZone={effectiveTimeZone} canAccrueTime={canAccrueTime} />
         </div>
 
         <aside className="station-side-panel">
@@ -1638,8 +2002,17 @@ export default function StationPage() {
               <article>
                 <span>S</span>
                 <div>
-                  <strong>{isOnline ? "Sincronizado" : "Pendiente"}</strong>
-                  <small>{isOnline ? "En linea" : "Sin conexion"}</small>
+                  <strong>{isOnline && !queueStats.pending ? "Sincronizado" : "Pendiente"}</strong>
+                  <small>
+                    {queueStats.pending
+                      ? `${queueStats.pending} ${queueStats.pending === 1 ? "evento" : "eventos"} por sincronizar`
+                      : isOnline ? "En linea" : "Sin conexion"}
+                  </small>
+                  {queueStats.rejected ? (
+                    <small title={queueStats.lastRejectedError || undefined}>
+                      {queueStats.rejected} {queueStats.rejected === 1 ? "evento rechazado" : "eventos rechazados"} por el servidor
+                    </small>
+                  ) : null}
                 </div>
               </article>
               <article>
@@ -1650,7 +2023,13 @@ export default function StationPage() {
                 </div>
               </article>
             </div>
-            <TimeZoneSelect value={stationTimeZone} onChange={updateTimeZone} compact />
+            <TimeZoneSelect
+              value={effectiveTimeZone}
+              onChange={updateTimeZone}
+              compact
+              disabled={timeZoneLocked}
+              disabledReason="La zona horaria queda fija mientras la jornada esta activa o cerrada hoy."
+            />
             <button type="button" className="station-primary wide" onClick={() => setIncidentOpen((value) => !value)}>Abrir incidencias</button>
 
             <div className="station-code-box">
@@ -1699,7 +2078,41 @@ export default function StationPage() {
         </form>
       ) : null}
 
-      {statusText ? <p className="station-floating-status">{statusText}</p> : null}
+      {legalDialogOpen ? (
+        <div className="station-extension-dialog-backdrop" role="presentation" onClick={() => setLegalDialogOpen(false)}>
+          <section
+            className="station-extension-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="station-legal-dialog-title"
+            ref={legalDialogRef}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="station-extension-dialog-close"
+              aria-label="Cerrar"
+              onClick={() => setLegalDialogOpen(false)}
+            >
+              ×
+            </button>
+            <header>
+              <span>Informacion legal</span>
+              <h2 id="station-legal-dialog-title">Aviso de estacion web</h2>
+              <p>Esta estacion registra tu jornada laboral, pausas, almuerzo, horas extra, incidencias y actividad dentro de esta pagina mientras tu jornada este activa.</p>
+            </header>
+            <ul className="station-info-list">
+              <li>La extension VYNTRA Browser es requerida para marcar. Registra actividad autorizada del navegador, no aplicaciones externas, teclas globales, camara, microfono ni archivos personales.</li>
+              <li>Durante la jornada activa toma capturas autorizadas cada 5 minutos como respaldo de trabajo.</li>
+            </ul>
+            <a className="station-download-button" href="/privacy" target="_blank" rel="noopener noreferrer">
+              Ver aviso de privacidad completo
+            </a>
+          </section>
+        </div>
+      ) : null}
+
+      {statusText ? <p className="station-floating-status" role="status" aria-live="polite">{statusText}</p> : null}
     </main>
   );
 }

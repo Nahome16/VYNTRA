@@ -29,6 +29,9 @@ services:
   web:
     build:
       context: ../web
+      args:
+        # El destino del proxy /api queda fijado al construir la imagen (rewrites de Next).
+        VYNTRA_API_URL: http://api:8000
     restart: unless-stopped
     environment:
       VYNTRA_API_URL: http://api:8000

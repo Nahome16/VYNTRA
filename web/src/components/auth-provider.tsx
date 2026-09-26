@@ -217,6 +217,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           logout();
         } else if (error instanceof ApiError && error.status === 403) {
           setAccessNotice(ACCESS_RESTRICTED_MESSAGE);
+        } else if (error instanceof ApiError && error.status === 428) {
+          // 428: el backend exige cambiar la contrasena temporal antes de
+          // continuar -> mostrar el formulario obligatorio de cambio.
+          setUser((current) => (current ? { ...current, password_change_required: true } : current));
         }
         throw error;
       }

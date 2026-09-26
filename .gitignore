@@ -29,3 +29,6 @@ dist/
 release/
 web.zip
 *.spec.bak
+
+# Copias de trabajo temporales de Claude Code
+.claude/worktrees/

@@ -26,7 +26,7 @@ const TRANSITION_EVENT_PREFIXES = ["shift_", "break_", "lunch_", "overtime_"];
 // 0.3.0 aplica la politica de captura minima (sin URL ni titulos; evidencia solo en sitios productivos).
 // Se ofrece como actualizacion opcional; subir requiredExtensionVersion cuando se decida exigirla.
 const requiredExtensionVersion = "0.2.3";
-const latestExtensionVersion = "0.3.0";
+const latestExtensionVersion = "0.3.1";
 const extensionDownloadHref = `/extensions/vyntra-browser-extension.zip?v=${latestExtensionVersion}`;
 
 const stationTimeZones = [

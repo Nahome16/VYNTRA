@@ -4,7 +4,7 @@ main.py - VYNTRA Evidence API.
 
 from collections import defaultdict, deque
 import csv
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from email.message import EmailMessage
 import base64
 import io
@@ -50,6 +50,7 @@ from app.database import Base, engine, get_db, SessionLocal
 from app.models import (
     Activity,
     AdminSession,
+    AgentEventReceipt,
     AppCatalog,
     AuditLog,
     Company,
@@ -337,20 +338,25 @@ RATE_LIMITS = {
 }
 _rate_buckets: dict[tuple[str, str, str], deque[float]] = defaultdict(deque)
 
-IP_SCOPES = (
-    ("/api/admin", settings.admin_allowed_ips),
-    ("/api/audit", settings.admin_allowed_ips),
-    ("/api/devices", settings.admin_allowed_ips),
-    ("/api/system", settings.admin_allowed_ips),
-    ("/api/settings", settings.admin_allowed_ips),
-    ("/api/productivity", settings.admin_allowed_ips),
-    ("/api/employees", settings.admin_allowed_ips),
-    ("/api/attendance", settings.admin_allowed_ips),
-    ("/api/incidents", settings.admin_allowed_ips),
-    ("/api/station", settings.agent_allowed_ips),
-    ("/api/agent", settings.agent_allowed_ips),
-    ("/api/evidence", settings.agent_allowed_ips),
+# Alcances de IP (ADMIN_ALLOWED_IPS / AGENT_ALLOWED_IPS). Deny-by-default: toda ruta
+# /api/* que no sea publica ni de agente/estacion pertenece al alcance admin
+# (incluye /api/reports, /api/downloads y /api/evidence/{id}/content).
+PUBLIC_PATH_PREFIXES = ("/health", "/api/health/")
+AGENT_PATH_PREFIXES = (
+    "/api/station",  # incluye /api/station-web/* (estacion web)
+    "/api/agent",
+    "/api/evidence/upload",
 )
+
+
+def ip_scope_for_path(path: str) -> str | None:
+    if path.startswith(PUBLIC_PATH_PREFIXES):
+        return None
+    if path.startswith(AGENT_PATH_PREFIXES):
+        return "agent"
+    if path.startswith("/api/"):
+        return "admin"
+    return None
 
 
 def client_ip(request: Request) -> str:
@@ -406,10 +412,15 @@ def send_plain_email(to_email: str, subject: str, body: str) -> str:
 
 
 def ip_allowed(path: str, ip_address: str) -> bool:
-    for prefix, allowed_ips in IP_SCOPES:
-        if path.startswith(prefix) and allowed_ips:
-            return ip_address in allowed_ips
-    return True
+    scope = ip_scope_for_path(path)
+    if scope == "agent":
+        allowed_ips = settings.agent_allowed_ips
+    elif scope == "admin":
+        allowed_ips = settings.admin_allowed_ips
+    else:
+        return True
+    # Lista vacia = sin restriccion para ese alcance (comportamiento anterior).
+    return not allowed_ips or ip_address in allowed_ips
 
 
 def rate_limit_exceeded(method: str, path: str, ip_address: str) -> tuple[bool, int]:
@@ -446,20 +457,48 @@ async def security_rate_limiter(request: Request, call_next):
     return await call_next(request)
 
 
-def parse_client_datetime(value: str) -> datetime:
+DEFAULT_COMPANY_TIMEZONE = "America/Managua"
+
+
+def zoneinfo_or_default(name: str | None, fallback: str = DEFAULT_COMPANY_TIMEZONE) -> ZoneInfo:
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return ZoneInfo((name or "").strip() or fallback)
+    except (ZoneInfoNotFoundError, ValueError):
+        return ZoneInfo(fallback)
+
+
+def company_zoneinfo(company: Company | None) -> ZoneInfo:
+    """Zona horaria de la empresa (Company.timezone valida) o America/Managua."""
+    return zoneinfo_or_default(getattr(company, "timezone", None))
+
+
+def company_zoneinfo_for_id(db: Session, company_id: str | None) -> ZoneInfo:
+    return company_zoneinfo(db.get(Company, company_id) if company_id else None)
+
+
+def parse_client_datetime(value: str, tz: tzinfo | None = None) -> datetime:
+    """
+    Convierte una fecha ISO del cliente a UTC.
+
+    Las fechas con zona se respetan. Las fechas sin zona (el agente de escritorio
+    envia hora LOCAL sin offset) se interpretan en `tz` (zona de la empresa) y,
+    si no se indica, en UTC como antes.
+    """
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail="Invalid captured_at datetime")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid captured_at datetime") from exc
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=tz or timezone.utc)
     return parsed.astimezone(timezone.utc)
 
 
-def parse_optional_client_datetime(value: str | None) -> datetime | None:
+def parse_optional_client_datetime(value: str | None, tz: tzinfo | None = None) -> datetime | None:
     if not value:
         return None
-    return parse_client_datetime(value)
+    return parse_client_datetime(value, tz)
 
 
 def json_text(value: dict | list | str | None) -> str:
@@ -468,6 +507,64 @@ def json_text(value: dict | list | str | None) -> str:
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False)
+
+
+# Limites de tamano para eventos del agente (ver sync_agent_events).
+MAX_AGENT_EVENT_BYTES = 256 * 1024
+MAX_SAMPLES_PER_EVENT = 500
+MAX_STORED_PAYLOAD_BYTES = 64 * 1024
+SAMPLE_LIST_KEYS = {"muestras_recientes"}
+
+
+def cap_sample_lists(node, max_samples: int = MAX_SAMPLES_PER_EVENT):
+    """Recorta (en sitio) cualquier lista `muestras_recientes` a las ultimas N muestras."""
+    if isinstance(node, dict):
+        for key, value in list(node.items()):
+            if key in SAMPLE_LIST_KEYS and isinstance(value, list) and len(value) > max_samples:
+                node[key] = value[-max_samples:]
+            else:
+                cap_sample_lists(value, max_samples)
+    elif isinstance(node, list):
+        for item in node:
+            cap_sample_lists(item, max_samples)
+    return node
+
+
+def _without_sample_lists(node):
+    if isinstance(node, dict):
+        return {key: _without_sample_lists(value) for key, value in node.items() if key not in SAMPLE_LIST_KEYS}
+    if isinstance(node, list):
+        return [_without_sample_lists(item) for item in node]
+    return node
+
+
+def bounded_json_text(value: dict | list | str | None, max_bytes: int = MAX_STORED_PAYLOAD_BYTES) -> str:
+    """
+    Serializa `value` garantizando JSON valido de como maximo `max_bytes`.
+
+    Si no cabe, primero se quitan las listas de muestras (ya se guardan como
+    actividades), luego se conservan solo los campos escalares cortos y, en ultimo
+    caso, se guarda un marcador. Siempre se marca con "_truncated": true.
+    """
+    text_value = json_text(value)
+    if len(text_value.encode("utf-8")) <= max_bytes:
+        return text_value
+    if isinstance(value, dict):
+        reduced = _without_sample_lists(value)
+        reduced["_truncated"] = True
+        text_value = json_text(reduced)
+        if len(text_value.encode("utf-8")) <= max_bytes:
+            return text_value
+        minimal = {
+            key: item
+            for key, item in value.items()
+            if item is None or (isinstance(item, (bool, int, float)) or (isinstance(item, str) and len(item) <= 500))
+        }
+        minimal["_truncated"] = True
+        text_value = json_text(minimal)
+        if len(text_value.encode("utf-8")) <= max_bytes:
+            return text_value
+    return json_text({"_truncated": True})
 
 
 def send_plain_email_audit_task(
@@ -500,6 +597,21 @@ def send_plain_email_audit_task(
         db.rollback()
     finally:
         db.close()
+
+
+CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_safe_cell(value) -> str:
+    """Neutraliza inyeccion de formulas (CSV/Excel) anteponiendo un apostrofo."""
+    text_value = "" if value is None else str(value)
+    if text_value.startswith(CSV_FORMULA_PREFIXES):
+        return "'" + text_value
+    return text_value
+
+
+def csv_safe_row(values) -> list[str]:
+    return [csv_safe_cell(value) for value in values]
 
 
 def title_hash(title: str) -> str:
@@ -1494,17 +1606,26 @@ def setting_int(db: Session, company_id: str, key: str, default: int) -> int:
         return default
 
 
-def block_start_for(ts: datetime, block_minutes: int) -> datetime:
+def block_start_for(ts: datetime, block_minutes: int, tz: tzinfo | None = None) -> datetime:
+    """Inicio del bloque de productividad; en hora local de la empresa si se da `tz`."""
     ts = _as_aware_utc(ts)
+    if tz is not None:
+        ts = ts.astimezone(tz)
     minute = (ts.minute // block_minutes) * block_minutes
     return ts.replace(minute=minute, second=0, microsecond=0)
 
 
-def incident_adjustment_window(incident: Incident) -> tuple[datetime, datetime, int]:
+def incident_adjustment_window(incident: Incident, tz: tzinfo | None = None) -> tuple[datetime, datetime, int]:
     try:
         payload = json.loads(incident.payload_json or "{}")
     except json.JSONDecodeError:
         payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    # Las fechas sin zona del agente son hora local: se usa la zona guardada en la
+    # incidencia o, si no existe, la de la empresa.
+    if payload.get("zona_horaria"):
+        tz = zoneinfo_or_default(str(payload.get("zona_horaria")))
     evidence = payload.get("evidencia_tecnica") or {}
     if not isinstance(evidence, dict):
         evidence = {}
@@ -1514,12 +1635,12 @@ def incident_adjustment_window(incident: Incident) -> tuple[datetime, datetime, 
         minutes = 0
     minutes = max(1, min(minutes or 15, 1440))
     started_at = (
-        parse_optional_client_datetime(evidence.get("inicio_sugerido"))
-        or parse_optional_client_datetime(payload.get("inicio_sugerido"))
+        parse_optional_client_datetime(evidence.get("inicio_sugerido"), tz)
+        or parse_optional_client_datetime(payload.get("inicio_sugerido"), tz)
     )
     ended_at = (
-        parse_optional_client_datetime(evidence.get("fin_sugerido"))
-        or parse_optional_client_datetime(payload.get("fin_sugerido"))
+        parse_optional_client_datetime(evidence.get("fin_sugerido"), tz)
+        or parse_optional_client_datetime(payload.get("fin_sugerido"), tz)
     )
     if not started_at and incident.requested_at:
         started_at = _as_aware_utc(incident.requested_at) - timedelta(minutes=minutes)
@@ -1542,7 +1663,9 @@ def upsert_time_adjustment_for_incident(
     admin: AdminPrincipal,
     resolution_notes: str,
 ) -> TimeAdjustment:
-    started_at, ended_at, seconds = incident_adjustment_window(incident)
+    started_at, ended_at, seconds = incident_adjustment_window(
+        incident, company_zoneinfo_for_id(db, incident.company_id)
+    )
     adjustment = db.execute(
         select(TimeAdjustment).where(TimeAdjustment.incident_id == incident.id)
     ).scalar_one_or_none()
@@ -1618,15 +1741,23 @@ def adjustment_virtual_blocks(
     employees: dict[str, Employee],
 ) -> list[dict]:
     rows: list[dict] = []
+    block_minutes_by_company: dict[str, int] = {}
+    tz_by_company: dict[str, tzinfo] = {}
     for adjustment in adjustments:
-        block_minutes = setting_int(db, adjustment.company_id, "productivity_block_minutes", 30)
+        if adjustment.company_id not in block_minutes_by_company:
+            block_minutes_by_company[adjustment.company_id] = setting_int(
+                db, adjustment.company_id, "productivity_block_minutes", 30
+            )
+            tz_by_company[adjustment.company_id] = company_zoneinfo_for_id(db, adjustment.company_id)
+        block_minutes = block_minutes_by_company[adjustment.company_id]
+        company_tz = tz_by_company[adjustment.company_id]
         current = _as_aware_utc(adjustment.started_at)
         interval_end = _as_aware_utc(adjustment.ended_at)
         remaining = max(0, int((interval_end - current).total_seconds()))
         employee = employees.get(adjustment.employee_id)
         department_id = employee.department_id if employee else None
         while remaining > 0:
-            block_start = block_start_for(current, block_minutes)
+            block_start = block_start_for(current, block_minutes, company_tz)
             block_end = block_start + timedelta(minutes=block_minutes)
             seconds_to_boundary = (block_end - current).total_seconds()
             if seconds_to_boundary <= 0:
@@ -2102,26 +2233,71 @@ def seed_organization_catalogs(db: Session, company_id: str):
 def agent_event_already_received(db: Session, event_id: str) -> bool:
     if not event_id:
         return False
-    existing = db.execute(
-        select(AuditLog).where(
-            AuditLog.action == "agent_event_received",
+    receipt = db.get(AgentEventReceipt, event_id)
+    if receipt is not None:
+        return True
+    # Compatibilidad: antes la idempotencia se guardaba en audit_logs. Los eventos
+    # recibidos antes de agent_event_receipts se siguen reconociendo como duplicados
+    # (consulta indexada por ix_audit_logs_entity).
+    legacy = db.execute(
+        select(AuditLog.id)
+        .where(
             AuditLog.entity_type == "agent_event",
             AuditLog.entity_id == event_id,
+            AuditLog.action == "agent_event_received",
         )
-    ).scalar_one_or_none()
-    return existing is not None
+        .limit(1)
+    ).first()
+    return legacy is not None
 
 
-def get_or_create_shift(db: Session, device: Device, payload: dict) -> Shift | None:
-    if not device.employee_id:
+# Controles de plausibilidad del snapshot de jornada (ver apply_shift_snapshot).
+SHIFT_START_MAX_FUTURE = timedelta(minutes=5)
+SHIFT_START_MAX_PAST = timedelta(hours=24)
+SHIFT_SNAPSHOT_TOLERANCE_SECONDS = 300
+OVERTIME_TOLERANCE_SECONDS = 300
+
+
+def local_today(tz: tzinfo | None) -> str:
+    return datetime.now(tz or timezone.utc).date().isoformat()
+
+
+def shift_date_for_payload(payload: dict, tz: tzinfo | None = None) -> str:
+    fecha = payload.get("fecha")
+    if isinstance(fecha, str) and fecha.strip():
+        return fecha.strip()[:10]
+    for key in ("inicio_jornada", "timestamp"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:10]
+    return local_today(tz)
+
+
+def plausible_client_instant(
+    value,
+    received_at: datetime,
+    tz: tzinfo | None = None,
+    max_past: timedelta | None = SHIFT_START_MAX_PAST,
+) -> datetime | None:
+    """
+    Parsea un instante reportado por el cliente y lo descarta (None) si esta mas de
+    5 minutos en el futuro o, con `max_past`, demasiado en el pasado respecto de la
+    recepcion en el servidor. Formatos invalidos siguen rechazando el evento (400).
+    """
+    parsed = parse_optional_client_datetime(value, tz)
+    if parsed is None:
         return None
+    if parsed > received_at + SHIFT_START_MAX_FUTURE:
+        return None
+    if max_past is not None and parsed < received_at - max_past:
+        return None
+    return parsed
 
-    shift_date = (
-        payload.get("fecha")
-        or (payload.get("inicio_jornada") or payload.get("timestamp") or "")[:10]
-        or datetime.now(timezone.utc).date().isoformat()
-    )
-    shift = db.execute(
+
+def latest_shift_for_day(db: Session, device: Device, shift_date: str) -> Shift | None:
+    # .first() y no scalar_one_or_none(): si por una carrera existen dos jornadas del
+    # mismo dia, se usa la mas reciente en vez de fallar con MultipleResultsFound.
+    return db.execute(
         select(Shift)
         .where(
             Shift.company_id == device.company_id,
@@ -2129,8 +2305,23 @@ def get_or_create_shift(db: Session, device: Device, payload: dict) -> Shift | N
             Shift.device_id == device.id,
             Shift.shift_date == shift_date,
         )
-        .order_by(Shift.created_at.desc())
-    ).scalar_one_or_none()
+        .order_by(Shift.created_at.desc(), Shift.id.desc())
+        .limit(1)
+    ).scalars().first()
+
+
+def get_or_create_shift(
+    db: Session,
+    device: Device,
+    payload: dict,
+    tz: tzinfo | None = None,
+    received_at: datetime | None = None,
+) -> Shift | None:
+    if not device.employee_id:
+        return None
+
+    shift_date = shift_date_for_payload(payload, tz)
+    shift = latest_shift_for_day(db, device, shift_date)
     if shift:
         return shift
 
@@ -2140,18 +2331,77 @@ def get_or_create_shift(db: Session, device: Device, payload: dict) -> Shift | N
         device_id=device.id,
         shift_date=shift_date,
         status="open",
-        started_at=parse_optional_client_datetime(payload.get("inicio_jornada")),
+        started_at=plausible_client_instant(payload.get("inicio_jornada"), received_at or now_utc(), tz),
     )
     db.add(shift)
     db.flush()
     return shift
 
 
-def apply_shift_snapshot(shift: Shift, event_type: str, payload: dict):
+def _non_negative_int(value, fallback: int = 0) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return max(0, int(fallback or 0))
+
+
+def active_overtime_authorization(
+    db: Session,
+    company_id: str,
+    employee_id: str,
+    received_at: datetime,
+) -> OvertimeAuthorization | None:
+    return db.execute(
+        select(OvertimeAuthorization)
+        .where(
+            OvertimeAuthorization.company_id == company_id,
+            OvertimeAuthorization.employee_id == employee_id,
+            OvertimeAuthorization.started_at.is_not(None),
+            OvertimeAuthorization.started_at >= received_at - SHIFT_START_MAX_PAST,
+        )
+        .order_by(OvertimeAuthorization.started_at.desc())
+        .limit(1)
+    ).scalars().first()
+
+
+def apply_shift_snapshot(
+    shift: Shift,
+    event_type: str,
+    payload: dict,
+    tz: tzinfo | None = None,
+    received_at: datetime | None = None,
+    overtime_limit_seconds: int | None = None,
+) -> dict:
+    """
+    Aplica el snapshot de jornada enviado por el cliente con controles minimos del
+    servidor (no es un rediseno del calculo de horas):
+
+    - inicio_jornada se ignora si esta >5 min en el futuro o >24 h en el pasado
+      respecto de la recepcion; fin_jornada se ignora si esta >5 min en el futuro.
+    - seg_trabajado/seg_break/seg_lunch/seg_horas_extra y telemetria.seg_idle nunca
+      superan el tiempo transcurrido desde el inicio conocido por el servidor
+      (shift.started_at, o 24 h si no hay inicio) + 5 min de tolerancia.
+    - seg_horas_extra se limita a los minutos autorizados (+5 min) cuando existe una
+      autorizacion de horas extra activa.
+
+    Los valores recortados se reflejan en `payload` (que luego se guarda en
+    shift_events) y se devuelven en un dict con el valor original para auditoria.
+    """
+    received_at = received_at or now_utc()
+    adjustments: dict[str, dict] = {}
+
     if payload.get("inicio_jornada"):
-        shift.started_at = parse_optional_client_datetime(payload.get("inicio_jornada"))
+        started_at = plausible_client_instant(payload.get("inicio_jornada"), received_at, tz)
+        if started_at is not None:
+            shift.started_at = started_at
+        else:
+            adjustments["inicio_jornada"] = {"reported": str(payload.get("inicio_jornada"))[:40], "ignored": True}
     if payload.get("fin_jornada"):
-        shift.ended_at = parse_optional_client_datetime(payload.get("fin_jornada"))
+        ended_at = plausible_client_instant(payload.get("fin_jornada"), received_at, tz, max_past=None)
+        if ended_at is not None:
+            shift.ended_at = ended_at
+        else:
+            adjustments["fin_jornada"] = {"reported": str(payload.get("fin_jornada"))[:40], "ignored": True}
 
     if event_type == "shift_started":
         shift.status = "open"
@@ -2170,66 +2420,116 @@ def apply_shift_snapshot(shift: Shift, event_type: str, payload: dict):
     elif payload_status == "TRABAJANDO":
         shift.status = "open"
 
-    shift.work_seconds = int(payload.get("seg_trabajado") or shift.work_seconds or 0)
-    shift.break_seconds = int(payload.get("seg_break") or shift.break_seconds or 0)
-    shift.lunch_seconds = int(payload.get("seg_lunch") or shift.lunch_seconds or 0)
-    telemetry = payload.get("telemetria") or {}
-    shift.idle_seconds = int(telemetry.get("seg_idle") or shift.idle_seconds or 0)
+    server_start = _as_aware_utc(shift.started_at) if shift.started_at else None
+    if server_start is not None:
+        elapsed_limit = max(0, int((received_at - server_start).total_seconds())) + SHIFT_SNAPSHOT_TOLERANCE_SECONDS
+    else:
+        elapsed_limit = int(SHIFT_START_MAX_PAST.total_seconds()) + SHIFT_SNAPSHOT_TOLERANCE_SECONDS
+
+    def bounded(key: str, container: dict, limit: int) -> int | None:
+        if key not in container or container.get(key) in (None, ""):
+            return None
+        reported = _non_negative_int(container.get(key))
+        if reported > limit:
+            adjustments[key] = {"reported": reported, "accepted": limit}
+            container[key] = limit
+            return limit
+        container[key] = reported
+        return reported
+
+    work = bounded("seg_trabajado", payload, elapsed_limit)
+    breaks = bounded("seg_break", payload, elapsed_limit)
+    lunch = bounded("seg_lunch", payload, elapsed_limit)
+    overtime_limit = elapsed_limit
+    if overtime_limit_seconds is not None:
+        overtime_limit = min(overtime_limit, overtime_limit_seconds + OVERTIME_TOLERANCE_SECONDS)
+    bounded("seg_horas_extra", payload, overtime_limit)
+    telemetry = payload.get("telemetria") if isinstance(payload.get("telemetria"), dict) else {}
+    idle = bounded("seg_idle", telemetry, elapsed_limit) if telemetry else None
+
+    shift.work_seconds = int(work or shift.work_seconds or 0)
+    shift.break_seconds = int(breaks or shift.break_seconds or 0)
+    shift.lunch_seconds = int(lunch or shift.lunch_seconds or 0)
+    shift.idle_seconds = int(idle or shift.idle_seconds or 0)
     shift.updated_at = now_utc()
+    if adjustments:
+        payload["server_adjustments"] = adjustments
+    return adjustments
 
 
-def get_or_create_app(db: Session, company_id: str, executable_name: str) -> AppCatalog:
+def get_or_create_app(
+    db: Session,
+    company_id: str,
+    executable_name: str,
+    cache: dict[str, AppCatalog] | None = None,
+) -> AppCatalog:
     name = (executable_name or "(desconocido)").strip()[:160] or "(desconocido)"
+    if cache is not None and name in cache:
+        return cache[name]
     app_row = db.execute(
         select(AppCatalog).where(
             AppCatalog.company_id == company_id,
             AppCatalog.executable_name == name,
         )
     ).scalar_one_or_none()
-    if app_row:
-        return app_row
-    app_row = AppCatalog(company_id=company_id, executable_name=name)
-    db.add(app_row)
-    db.flush()
+    if app_row is None:
+        app_row = AppCatalog(company_id=company_id, executable_name=name)
+        db.add(app_row)
+        db.flush()
+    if cache is not None:
+        cache[name] = app_row
     return app_row
 
 
-def get_or_create_window_title(db: Session, company_id: str, title_text_value: str) -> WindowTitleCatalog:
+def get_or_create_window_title(
+    db: Session,
+    company_id: str,
+    title_text_value: str,
+    cache: dict[str, WindowTitleCatalog] | None = None,
+) -> WindowTitleCatalog:
     text = (title_text_value or "(sin titulo)").strip() or "(sin titulo)"
     hashed = title_hash(text)
+    if cache is not None and hashed in cache:
+        return cache[hashed]
     title_row = db.execute(
         select(WindowTitleCatalog).where(
             WindowTitleCatalog.company_id == company_id,
             WindowTitleCatalog.title_hash == hashed,
         )
     ).scalar_one_or_none()
-    if title_row:
-        return title_row
-    title_row = WindowTitleCatalog(
-        company_id=company_id,
-        title_hash=hashed,
-        title_text=text,
-    )
-    db.add(title_row)
-    db.flush()
+    if title_row is None:
+        title_row = WindowTitleCatalog(
+            company_id=company_id,
+            title_hash=hashed,
+            title_text=text,
+        )
+        db.add(title_row)
+        db.flush()
+    if cache is not None:
+        cache[hashed] = title_row
     return title_row
 
 
-def classify_activity(
-    db: Session,
-    company_id: str,
+def load_active_productivity_rules(db: Session, company_id: str) -> list[ProductivityRule]:
+    return list(
+        db.execute(
+            select(ProductivityRule).where(
+                ProductivityRule.company_id == company_id,
+                ProductivityRule.is_active.is_(True),
+            )
+        ).scalars().all()
+    )
+
+
+def classify_with_rules(
+    rules: list[ProductivityRule],
     employee: Employee,
     executable_name: str,
     title_text_value: str,
 ) -> str:
+    """Clasificacion en memoria; misma semantica que la consulta original por actividad."""
     executable = (executable_name or "").strip().lower()
     title_lower = (title_text_value or "").strip().lower()
-    rules = db.execute(
-        select(ProductivityRule).where(
-            ProductivityRule.company_id == company_id,
-            ProductivityRule.is_active.is_(True),
-        )
-    ).scalars().all()
 
     matches = []
     for rule in rules:
@@ -2262,6 +2562,19 @@ def classify_activity(
     return "uncategorized"
 
 
+def classify_activity(
+    db: Session,
+    company_id: str,
+    employee: Employee,
+    executable_name: str,
+    title_text_value: str,
+    rules: list[ProductivityRule] | None = None,
+) -> str:
+    if rules is None:
+        rules = load_active_productivity_rules(db, company_id)
+    return classify_with_rules(rules, employee, executable_name, title_text_value)
+
+
 def rule_scope_score(rule: ProductivityRule) -> int:
     score = 0
     if rule.department_id:
@@ -2273,16 +2586,9 @@ def rule_scope_score(rule: ProductivityRule) -> int:
     return score
 
 
-def capture_rules_for_employee(db: Session, company_id: str, employee: Employee | None) -> list[ScopedRule]:
-    """Lista de aplicaciones permitidas del empleado: sus reglas de productividad activas."""
+def capture_rules_from_rules(rules: list[ProductivityRule], employee: Employee | None) -> list[ScopedRule]:
     if employee is None:
         return []
-    rules = db.execute(
-        select(ProductivityRule).where(
-            ProductivityRule.company_id == company_id,
-            ProductivityRule.is_active.is_(True),
-        )
-    ).scalars().all()
     scoped = []
     for rule in rules:
         if rule.employee_id and rule.employee_id != employee.id:
@@ -2301,6 +2607,20 @@ def capture_rules_for_employee(db: Session, company_id: str, employee: Employee 
     return scoped
 
 
+def capture_rules_for_employee(
+    db: Session,
+    company_id: str,
+    employee: Employee | None,
+    rules: list[ProductivityRule] | None = None,
+) -> list[ScopedRule]:
+    """Lista de aplicaciones permitidas del empleado: sus reglas de productividad activas."""
+    if employee is None:
+        return []
+    if rules is None:
+        rules = load_active_productivity_rules(db, company_id)
+    return capture_rules_from_rules(rules, employee)
+
+
 def classification_to_bool(classification: str) -> bool | None:
     if classification == "productive":
         return True
@@ -2309,66 +2629,8 @@ def classification_to_bool(classification: str) -> bool | None:
     return None
 
 
-def reclassify_activities_for_company(db: Session, company_id: str) -> dict:
-    activities = db.execute(
-        select(Activity)
-        .where(Activity.company_id == company_id)
-        .order_by(Activity.started_at)
-    ).scalars().all()
-    changed = 0
-    totals = {
-        "productive": 0,
-        "neutral": 0,
-        "non_productive": 0,
-        "uncategorized": 0,
-    }
-
-    for activity in activities:
-        employee = db.get(Employee, activity.employee_id)
-        if employee is None:
-            continue
-        app_row = db.get(AppCatalog, activity.app_id) if activity.app_id else None
-        title_row = db.get(WindowTitleCatalog, activity.window_title_id) if activity.window_title_id else None
-        new_classification = classify_activity(
-            db,
-            company_id,
-            employee,
-            app_row.executable_name if app_row else "",
-            title_row.title_text if title_row else "",
-        )
-        totals[new_classification] = totals.get(new_classification, 0) + 1
-        if activity.classification != new_classification:
-            activity.classification = new_classification
-            activity.is_productive = classification_to_bool(new_classification)
-            changed += 1
-
-    return {"changed": changed, "totals": totals}
-
-
-def reclassify_activities_for_rule(db: Session, rule: ProductivityRule) -> dict:
-    query = select(Activity).where(Activity.company_id == rule.company_id)
-    if rule.executable_name:
-        app_ids = select(AppCatalog.id).where(
-            AppCatalog.company_id == rule.company_id,
-            AppCatalog.executable_name == rule.executable_name,
-        )
-        query = query.where(Activity.app_id.in_(app_ids))
-    if rule.title_contains:
-        title_ids = select(WindowTitleCatalog.id).where(
-            WindowTitleCatalog.company_id == rule.company_id,
-            func.lower(WindowTitleCatalog.title_text).contains(rule.title_contains.lower()),
-        )
-        query = query.where(Activity.window_title_id.in_(title_ids))
-    if rule.employee_id:
-        query = query.where(Activity.employee_id == rule.employee_id)
-    elif rule.department_id or rule.position_id:
-        query = query.join(Employee, Employee.id == Activity.employee_id)
-        if rule.department_id:
-            query = query.where(Employee.department_id == rule.department_id)
-        if rule.position_id:
-            query = query.where(Employee.position_id == rule.position_id)
-
-    activities = db.execute(query.order_by(Activity.started_at.desc())).scalars().all()
+def _reclassify_activities(db: Session, company_id: str, activities: list[Activity]) -> tuple[int, dict]:
+    rules = load_active_productivity_rules(db, company_id)
     changed = 0
     totals = {
         "productive": 0,
@@ -2392,9 +2654,8 @@ def reclassify_activities_for_rule(db: Session, rule: ProductivityRule) -> dict:
             titles[activity.window_title_id] = db.get(WindowTitleCatalog, activity.window_title_id)
         app_row = apps.get(activity.app_id or "")
         title_row = titles.get(activity.window_title_id or "")
-        new_classification = classify_activity(
-            db,
-            rule.company_id,
+        new_classification = classify_with_rules(
+            rules,
             employee,
             app_row.executable_name if app_row else "",
             title_row.title_text if title_row else "",
@@ -2404,7 +2665,83 @@ def reclassify_activities_for_rule(db: Session, rule: ProductivityRule) -> dict:
             activity.classification = new_classification
             activity.is_productive = classification_to_bool(new_classification)
             changed += 1
+    return changed, totals
 
+
+def reclassify_activities_for_company(db: Session, company_id: str) -> dict:
+    activities = db.execute(
+        select(Activity)
+        .where(Activity.company_id == company_id)
+        .order_by(Activity.started_at)
+    ).scalars().all()
+    changed, totals = _reclassify_activities(db, company_id, list(activities))
+    return {"changed": changed, "totals": totals}
+
+
+RULE_MATCH_FIELDS = ("executable_name", "title_contains", "employee_id", "department_id", "position_id")
+
+
+def rule_match_criteria(rule: ProductivityRule) -> dict:
+    """Instantanea de los campos que determinan a que actividades aplica una regla."""
+    return {field: getattr(rule, field) for field in RULE_MATCH_FIELDS}
+
+
+def _activity_query_for_criteria(company_id: str, criteria: dict):
+    query = select(Activity).where(Activity.company_id == company_id)
+    if criteria.get("executable_name"):
+        app_ids = select(AppCatalog.id).where(
+            AppCatalog.company_id == company_id,
+            AppCatalog.executable_name == criteria["executable_name"],
+        )
+        query = query.where(Activity.app_id.in_(app_ids))
+    if criteria.get("title_contains"):
+        title_ids = select(WindowTitleCatalog.id).where(
+            WindowTitleCatalog.company_id == company_id,
+            func.lower(WindowTitleCatalog.title_text).contains(
+                criteria["title_contains"].lower(),
+                autoescape=True,
+            ),
+        )
+        query = query.where(Activity.window_title_id.in_(title_ids))
+    if criteria.get("employee_id"):
+        query = query.where(Activity.employee_id == criteria["employee_id"])
+    elif criteria.get("department_id") or criteria.get("position_id"):
+        query = query.join(Employee, Employee.id == Activity.employee_id)
+        if criteria.get("department_id"):
+            query = query.where(Employee.department_id == criteria["department_id"])
+        if criteria.get("position_id"):
+            query = query.where(Employee.position_id == criteria["position_id"])
+    return query
+
+
+def reclassify_activities_for_rule(
+    db: Session,
+    rule: ProductivityRule,
+    previous_criteria: dict | None = None,
+) -> dict:
+    """
+    Reclasifica las actividades afectadas por la regla. Si la regla cambio de
+    criterio (`previous_criteria`), se usa la union del criterio anterior y el nuevo
+    para que las actividades que dejaron de coincidir tambien se recalculen.
+    """
+    criteria_list = [rule_match_criteria(rule)]
+    if previous_criteria and previous_criteria != criteria_list[0]:
+        criteria_list.append(previous_criteria)
+
+    activities_by_id: dict[str, Activity] = {}
+    for criteria in criteria_list:
+        rows = db.execute(
+            _activity_query_for_criteria(rule.company_id, criteria).order_by(Activity.started_at.desc())
+        ).scalars().all()
+        for activity in rows:
+            activities_by_id.setdefault(activity.id, activity)
+
+    activities = sorted(
+        activities_by_id.values(),
+        key=lambda item: _as_aware_utc(item.started_at) if item.started_at else datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    changed, totals = _reclassify_activities(db, rule.company_id, activities)
     return {"matched": len(activities), "changed": changed, "totals": totals, "scope": "rule"}
 
 
@@ -2484,18 +2821,30 @@ def find_unique_web_station_credential(
     return matches[0]
 
 
+class AgentEventRejected(ValueError):
+    """Rechazo controlado de un evento: el mensaje (en espanol) se muestra al cliente."""
+
+    def __init__(self, message: str, code: str = "rejected"):
+        super().__init__(message)
+        self.code = code
+
+
+AGENT_EVENT_GENERIC_ERROR = "No se pudo procesar el evento. Intenta de nuevo mas tarde."
+
+
 def store_station_login_event(
     db: Session,
     device: Device,
     event: dict,
     payload: dict,
     client_ip: str,
+    tz: tzinfo | None = None,
 ):
     email = str(payload.get("email") or payload.get("correo") or "").strip().lower()
     success = bool(payload.get("success"))
     occurred_at = (
-        parse_optional_client_datetime(payload.get("occurred_at"))
-        or parse_optional_client_datetime(event.get("created_at"))
+        parse_optional_client_datetime(payload.get("occurred_at"), tz)
+        or parse_optional_client_datetime(event.get("created_at"), tz)
         or now_utc()
     )
     credential = find_employee_credential(db, device.company_id, email)
@@ -2513,7 +2862,7 @@ def store_station_login_event(
             failure_reason=str(payload.get("failure_reason") or "")[:180],
             occurred_at=occurred_at,
             ip_address=client_ip[:80],
-            payload_json=json_text(payload),
+            payload_json=bounded_json_text(payload),
         )
     )
 
@@ -2523,6 +2872,7 @@ def store_consent_record(
     device: Device,
     event: dict,
     payload: dict,
+    tz: tzinfo | None = None,
 ):
     email = str(payload.get("auth_email") or payload.get("email") or "").strip().lower()
     credential = find_employee_credential(db, device.company_id, email)
@@ -2532,14 +2882,14 @@ def store_consent_record(
 
     accepted = bool(payload.get("aceptado"))
     accepted_at = (
-        parse_optional_client_datetime(payload.get("fechaHora"))
-        or parse_optional_client_datetime(event.get("created_at"))
+        parse_optional_client_datetime(payload.get("fechaHora"), tz)
+        or parse_optional_client_datetime(event.get("created_at"), tz)
         or now_utc()
     )
     source_event_id = str(event.get("id") or "")[:36] or None
     existing = db.execute(
-        select(ConsentRecord).where(ConsentRecord.source_event_id == source_event_id)
-    ).scalar_one_or_none() if source_event_id else None
+        select(ConsentRecord.id).where(ConsentRecord.source_event_id == source_event_id).limit(1)
+    ).first() if source_event_id else None
     if existing:
         return
 
@@ -2554,7 +2904,7 @@ def store_consent_record(
             accepted_at=accepted_at if accepted else None,
             revoked_at=None if accepted else accepted_at,
             source_event_id=source_event_id,
-            payload_json=json_text(payload),
+            payload_json=bounded_json_text(payload),
         )
     )
 
@@ -2568,11 +2918,39 @@ def incident_title(incident_type: str) -> str:
     }.get(incident_type, "Incidencia")
 
 
+def find_incident_by_source_event(db: Session, company_id: str, source_event_id: str) -> Incident | None:
+    existing = db.execute(
+        select(Incident)
+        .where(
+            Incident.company_id == company_id,
+            Incident.source_event_id == source_event_id,
+        )
+        .order_by(Incident.requested_at)
+        .limit(1)
+    ).scalars().first()
+    if existing:
+        return existing
+    # Incidencias anteriores a la columna source_event_id: busqueda literal (sin
+    # comodines LIKE) de la clave serializada dentro del payload.
+    marker = json.dumps({"source_event_id": source_event_id}, ensure_ascii=False)[1:-1]
+    return db.execute(
+        select(Incident)
+        .where(
+            Incident.company_id == company_id,
+            Incident.source_event_id.is_(None),
+            Incident.payload_json.contains(marker, autoescape=True),
+        )
+        .order_by(Incident.requested_at)
+        .limit(1)
+    ).scalars().first()
+
+
 def store_incident_event(
     db: Session,
     device: Device,
     event: dict,
     payload: dict,
+    tz: tzinfo | None = None,
 ) -> Incident | None:
     employee_id = device.employee_id
     if not employee_id:
@@ -2583,12 +2961,7 @@ def store_incident_event(
 
     source_event_id = str(event.get("id") or "")[:36] or None
     if source_event_id:
-        existing = db.execute(
-            select(Incident).where(
-                Incident.company_id == device.company_id,
-                Incident.payload_json.contains(source_event_id),
-            )
-        ).scalar_one_or_none()
+        existing = find_incident_by_source_event(db, device.company_id, source_event_id)
         if existing:
             return existing
 
@@ -2596,14 +2969,18 @@ def store_incident_event(
     title = clean_text(payload.get("titulo") or incident_title(incident_type), 180)
     description = clean_text(payload.get("motivo") or payload.get("description"), 2000)
     requested_at = (
-        parse_optional_client_datetime(payload.get("requested_at"))
-        or parse_optional_client_datetime(payload.get("fechaHora"))
-        or parse_optional_client_datetime(event.get("created_at"))
+        parse_optional_client_datetime(payload.get("requested_at"), tz)
+        or parse_optional_client_datetime(payload.get("fechaHora"), tz)
+        or parse_optional_client_datetime(event.get("created_at"), tz)
         or now_utc()
     )
     incident_payload = dict(payload)
     if source_event_id:
         incident_payload["source_event_id"] = source_event_id
+    # Las fechas sin zona del agente son hora local de la empresa: se guarda la zona
+    # usada para interpretarlas (inicio_sugerido/fin_sugerido al aprobar).
+    if tz is not None and "zona_horaria" not in incident_payload:
+        incident_payload["zona_horaria"] = str(tz)
 
     incident = Incident(
         company_id=device.company_id,
@@ -2614,7 +2991,8 @@ def store_incident_event(
         title=title,
         description=description,
         requested_at=requested_at,
-        payload_json=json_text(incident_payload),
+        payload_json=bounded_json_text(incident_payload),
+        source_event_id=source_event_id,
     )
     db.add(incident)
     return incident
@@ -2626,52 +3004,66 @@ def store_activity_samples(
     shift: Shift | None,
     source_event_id: str,
     samples: list[dict],
+    *,
+    employee: Employee | None = None,
+    capture_rules: list[ScopedRule] | None = None,
+    productivity_rules: list[ProductivityRule] | None = None,
+    tz: tzinfo | None = None,
 ) -> int:
     if not device.employee_id:
         return 0
-    employee = db.get(Employee, device.employee_id)
+    if employee is None or employee.id != device.employee_id:
+        employee = db.get(Employee, device.employee_id)
     if employee is None:
         return 0
 
-    capture_rules = capture_rules_for_employee(db, device.company_id, employee)
+    samples = [sample for sample in samples[-MAX_SAMPLES_PER_EVENT:]]
+    if productivity_rules is None:
+        productivity_rules = load_active_productivity_rules(db, device.company_id)
+    if capture_rules is None:
+        capture_rules = capture_rules_from_rules(productivity_rules, employee)
+
+    existing_indexes = {
+        row[0]
+        for row in db.execute(
+            select(Activity.source_sample_index).where(Activity.source_event_id == source_event_id)
+        ).all()
+    } if samples else set()
+    app_cache: dict[str, AppCatalog] = {}
+    title_cache: dict[str, WindowTitleCatalog] = {}
+    seen_in_event: set[tuple[datetime, str, str]] = set()
     inserted = 0
     for index, sample in enumerate(samples):
-        existing = db.execute(
-            select(Activity).where(
-                Activity.source_event_id == source_event_id,
-                Activity.source_sample_index == index,
-            )
-        ).scalar_one_or_none()
-        if existing:
+        if not isinstance(sample, dict) or index in existing_indexes:
             continue
 
-        started_at = parse_optional_client_datetime(sample.get("timestamp"))
+        started_at = parse_optional_client_datetime(sample.get("timestamp"), tz)
         if started_at is None:
             continue
-        duration = max(1, int(sample.get("duracion_muestra_segundos") or 0))
+        duration = max(1, _non_negative_int(sample.get("duracion_muestra_segundos"), 0))
         is_idle = bool(sample.get("is_idle"))
-        executable_name = sample.get("proceso", "")
+        executable_name = str(sample.get("proceso") or "")
         # Nunca se almacena el titulo literal: solo el identificador normalizado (RF-07).
-        title_text_value = normalize_window_title(capture_rules, executable_name, sample.get("titulo", ""))
-        app_row = get_or_create_app(db, device.company_id, executable_name)
-        title_row = get_or_create_window_title(db, device.company_id, title_text_value)
-        classification = classify_activity(
-            db,
-            device.company_id,
-            employee,
-            executable_name,
-            title_text_value,
-        )
+        title_text_value = normalize_window_title(capture_rules, executable_name, str(sample.get("titulo") or ""))
+        app_row = get_or_create_app(db, device.company_id, executable_name, app_cache)
+        title_row = get_or_create_window_title(db, device.company_id, title_text_value, title_cache)
+        classification = classify_with_rules(productivity_rules, employee, executable_name, title_text_value)
+        sample_key = (started_at, app_row.id, title_row.id)
+        if sample_key in seen_in_event:
+            continue
         duplicate_sample = db.execute(
-            select(Activity).where(
+            select(Activity.id)
+            .where(
                 Activity.device_id == device.id,
                 Activity.started_at == started_at,
                 Activity.app_id == app_row.id,
                 Activity.window_title_id == title_row.id,
             )
-        ).scalar_one_or_none()
+            .limit(1)
+        ).first()
         if duplicate_sample:
             continue
+        seen_in_event.add(sample_key)
         db.add(
             Activity(
                 company_id=device.company_id,
@@ -2707,32 +3099,21 @@ def samples_from_agent_event(event_type: str, payload: dict) -> list[dict]:
                 "duracion_muestra_segundos": payload.get("duracion_muestra_segundos", 3),
             }
         ]
-    telemetry = payload.get("telemetria") or {}
+    telemetry = payload.get("telemetria") if isinstance(payload.get("telemetria"), dict) else {}
     samples = telemetry.get("muestras_recientes")
     return samples if isinstance(samples, list) else []
 
 
-def ensure_web_station_shift_can_start(db: Session, device: Device, payload: dict):
+def ensure_web_station_shift_can_start(db: Session, device: Device, payload: dict, tz: tzinfo | None = None):
     if not payload.get("web_station") or not device.employee_id:
         return
 
-    shift_date = (
-        payload.get("fecha")
-        or (payload.get("inicio_jornada") or payload.get("timestamp") or "")[:10]
-        or datetime.now(timezone.utc).date().isoformat()
-    )
-    existing = db.execute(
-        select(Shift)
-        .where(
-            Shift.company_id == device.company_id,
-            Shift.employee_id == device.employee_id,
-            Shift.device_id == device.id,
-            Shift.shift_date == shift_date,
-        )
-        .order_by(Shift.created_at.desc())
-    ).scalar_one_or_none()
+    existing = latest_shift_for_day(db, device, shift_date_for_payload(payload, tz))
     if existing and existing.started_at:
-        raise ValueError("La jornada de este dia ya fue activada. Ingresa codigo de reactivacion para reabrirla.")
+        raise AgentEventRejected(
+            "La jornada de este dia ya fue activada. Ingresa codigo de reactivacion para reabrirla.",
+            "shift_already_started",
+        )
 
 
 WEB_STATION_EXTENSION_REQUIRED_EVENTS = {
@@ -2753,67 +3134,123 @@ def ensure_web_station_extension_connected(event_type: str, payload: dict):
     if not payload.get("web_station") or event_type not in WEB_STATION_EXTENSION_REQUIRED_EVENTS:
         return
     if not payload.get("extension_connected"):
-        raise ValueError("La extension VYNTRA Browser debe estar conectada para marcar jornada.")
+        raise AgentEventRejected(
+            "La extension VYNTRA Browser debe estar conectada para marcar jornada.",
+            "extension_required",
+        )
     last_seen_ms = payload.get("extension_last_seen_ms_ago")
     if last_seen_ms is None:
         return
     try:
-        if int(last_seen_ms) > 20000:
-            raise ValueError("La extension VYNTRA Browser no respondio recientemente.")
+        last_seen = int(last_seen_ms)
     except (TypeError, ValueError) as exc:
-        if isinstance(exc, ValueError) and str(exc).startswith("La extension"):
-            raise
-        raise ValueError("Estado de extension invalido.") from exc
+        raise AgentEventRejected("Estado de extension invalido.", "extension_state_invalid") from exc
+    if last_seen > 20000:
+        raise AgentEventRejected(
+            "La extension VYNTRA Browser no respondio recientemente.",
+            "extension_stale",
+        )
 
 
-def process_agent_event(db: Session, device: Device, event: dict, client_ip: str) -> dict:
+def ensure_web_station_password_changed(db: Session, device: Device, event_type: str, payload: dict):
+    """
+    La estacion web no permite INICIAR jornada mientras la credencial tenga una
+    contrasena temporal (la UI ya lo bloquea; esto lo refuerza en el servidor).
+    Solo aplica a shift_started de la estacion web: pausas/cierre de una jornada ya
+    iniciada no se bloquean (p. ej. si RR. HH. restablece la credencial a mitad de
+    jornada) y el agente de escritorio, que sincroniza eventos encolados offline,
+    no se ve afectado.
+    """
+    if not payload.get("web_station") or event_type != "shift_started":
+        return
+    if not device.employee_id:
+        return
+    credential = db.execute(
+        select(EmployeeCredential)
+        .where(EmployeeCredential.employee_id == device.employee_id)
+        .limit(1)
+    ).scalars().first()
+    if credential is not None and credential.password_change_required:
+        raise AgentEventRejected(
+            "Debes cambiar tu contrasena temporal antes de marcar jornada.",
+            "password_change_required",
+        )
+
+
+SHIFT_EVENT_TYPES = {
+    "shift_started",
+    "shift_finished",
+    "shift_restored_by_admin",
+    "shift_clock_reset",
+    "break_started",
+    "break_finished",
+    "break_restored_by_admin",
+    "lunch_started",
+    "lunch_finished",
+    "lunch_restored_by_admin",
+    "overtime_requested",
+    "overtime_started",
+    "overtime_finished",
+}
+
+
+def process_agent_event(
+    db: Session,
+    device: Device,
+    event: dict,
+    client_ip: str,
+    tz: tzinfo | None = None,
+    received_at: datetime | None = None,
+) -> dict:
     event_id = str(event.get("id") or "")[:36]
     event_type = str(event.get("tipo") or "unknown")[:60]
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    received_at = received_at or now_utc()
+    if tz is None:
+        tz = company_zoneinfo_for_id(db, device.company_id)
+    # Reglas activas cargadas una sola vez por evento: sirven para la politica de
+    # captura minima y para clasificar las muestras en memoria.
+    employee = db.get(Employee, device.employee_id) if device.employee_id else None
+    productivity_rules = load_active_productivity_rules(db, device.company_id)
+    capture_rules = capture_rules_from_rules(productivity_rules, employee)
     # Segunda barrera de la captura minima: se descartan URL, dominios y titulos
     # literales antes de guardar el evento, aunque el cliente este desactualizado.
-    employee = db.get(Employee, device.employee_id) if device.employee_id else None
-    payload = sanitize_capture_payload(capture_rules_for_employee(db, device.company_id, employee), payload)
-    created_at = parse_optional_client_datetime(event.get("created_at")) or now_utc()
+    payload = sanitize_capture_payload(capture_rules, payload)
+    cap_sample_lists(payload)
+    created_at = parse_optional_client_datetime(event.get("created_at"), tz) or now_utc()
 
     shift = None
     if event_type == "station_login":
-        store_station_login_event(db, device, event, payload, client_ip)
+        store_station_login_event(db, device, event, payload, client_ip, tz)
     elif event_type == "consent_saved":
-        store_consent_record(db, device, event, payload)
+        store_consent_record(db, device, event, payload, tz)
     elif event_type in {"incident_submitted", "incidence_created"}:
-        store_incident_event(db, device, event, payload)
+        store_incident_event(db, device, event, payload, tz)
 
     ensure_web_station_extension_connected(event_type, payload)
+    ensure_web_station_password_changed(db, device, event_type, payload)
 
     if event_type == "shift_started":
-        ensure_web_station_shift_can_start(db, device, payload)
+        ensure_web_station_shift_can_start(db, device, payload, tz)
 
-    shift_event_types = {
-        "shift_started",
-        "shift_finished",
-        "shift_restored_by_admin",
-        "shift_clock_reset",
-        "break_started",
-        "break_finished",
-        "break_restored_by_admin",
-        "lunch_started",
-        "lunch_finished",
-        "lunch_restored_by_admin",
-        "overtime_requested",
-        "overtime_started",
-        "overtime_finished",
-    }
-    if event_type in shift_event_types or payload.get("estado"):
-        shift = get_or_create_shift(db, device, payload)
+    if event_type in SHIFT_EVENT_TYPES or payload.get("estado"):
+        shift = get_or_create_shift(db, device, payload, tz, received_at)
         if shift:
-            apply_shift_snapshot(shift, event_type, payload)
+            authorization = active_overtime_authorization(db, device.company_id, shift.employee_id, received_at)
+            apply_shift_snapshot(
+                shift,
+                event_type,
+                payload,
+                tz=tz,
+                received_at=received_at,
+                overtime_limit_seconds=int(authorization.assigned_minutes) * 60 if authorization else None,
+            )
             db.add(
                 ShiftEvent(
                     shift_id=shift.id,
                     event_type=event_type,
                     occurred_at=created_at,
-                    payload_json=json_text(payload),
+                    payload_json=bounded_json_text(payload),
                 )
             )
 
@@ -2823,23 +3260,10 @@ def process_agent_event(db: Session, device: Device, event: dict, client_ip: str
         shift,
         event_id,
         samples_from_agent_event(event_type, payload),
-    )
-
-    db.add(
-        AuditLog(
-            company_id=device.company_id,
-            device_id=device.id,
-            action="agent_event_received",
-            entity_type="agent_event",
-            entity_id=event_id,
-            ip_address=client_ip[:80],
-            payload_json=json_text(
-                {
-                    "event_type": event_type,
-                    "activity_samples_inserted": samples_inserted,
-                }
-            ),
-        )
+        employee=employee,
+        capture_rules=capture_rules,
+        productivity_rules=productivity_rules,
+        tz=tz,
     )
     return {"id": event_id, "event_type": event_type, "activity_samples_inserted": samples_inserted}
 
@@ -3653,17 +4077,19 @@ def list_audit_logs(
         writer.writerow(["created_at", "company", "actor_email", "actor", "action", "entity_type", "entity_id", "ip_address", "payload"])
         for item in items:
             writer.writerow(
-                [
-                    item["created_at"] or "",
-                    item["company"],
-                    item["actor_email"],
-                    item["actor"],
-                    item["action"],
-                    item["entity_type"],
-                    item["entity_id"],
-                    item["ip_address"],
-                    json.dumps(item["payload"], ensure_ascii=False),
-                ]
+                csv_safe_row(
+                    [
+                        item["created_at"] or "",
+                        item["company"],
+                        item["actor_email"],
+                        item["actor"],
+                        item["action"],
+                        item["entity_type"],
+                        item["entity_id"],
+                        item["ip_address"],
+                        json.dumps(item["payload"], ensure_ascii=False),
+                    ]
+                )
             )
         return Response(
             output.getvalue(),
@@ -4504,6 +4930,9 @@ def station_enroll(
             success = True
             break
 
+    if company is not None:
+        # Hora local sin zona del agente: se interpreta en la zona de la empresa.
+        occurred_at = parse_optional_client_datetime(payload.occurred_at, company_zoneinfo(company)) or now_utc()
     record_login_result(db, email, client_ip_address, success, lockout_key=lockout_key)
     if not success:
         db.add(
@@ -4646,7 +5075,7 @@ def station_login(
     email = clean_text(payload.email or payload.correo, 180).lower()
     password = payload.password
     occurred_at = (
-        parse_optional_client_datetime(payload.occurred_at)
+        parse_optional_client_datetime(payload.occurred_at, company_zoneinfo_for_id(db, device.company_id))
         or now_utc()
     )
     client_ip_address = client_ip(request)
@@ -5067,22 +5496,31 @@ def consume_station_access_code(
         db.commit()
         raise HTTPException(status_code=400, detail="Invalid, expired or already used access code")
 
+    # SELECT ... FOR UPDATE: la fila queda bloqueada hasta el commit, asi dos
+    # peticiones simultaneas con el mismo codigo no pueden consumirlo dos veces
+    # (la segunda espera y ve status != "issued"). En SQLite es un no-op.
     if access_type == "overtime":
         access_code = db.execute(
-            select(OvertimeAuthorization).where(
+            select(OvertimeAuthorization)
+            .where(
                 OvertimeAuthorization.company_id == device.company_id,
                 OvertimeAuthorization.employee_id == employee.id,
                 OvertimeAuthorization.code == code_value,
             )
+            .with_for_update()
+            .execution_options(populate_existing=True)
         ).scalar_one_or_none()
         entity_type = "overtime_authorization"
     else:
         access_code = db.execute(
-            select(StationRestoreCode).where(
+            select(StationRestoreCode)
+            .where(
                 StationRestoreCode.company_id == device.company_id,
                 StationRestoreCode.employee_id == employee.id,
                 StationRestoreCode.code == code_value,
             )
+            .with_for_update()
+            .execution_options(populate_existing=True)
         ).scalar_one_or_none()
         entity_type = "station_restore_code"
 
@@ -6058,6 +6496,8 @@ def update_productivity_rule(
     if rule is None:
         raise HTTPException(status_code=404, detail="Rule not found")
     resolve_admin_company(db, admin, rule.company_id)
+    # Criterio antes del cambio: se reclasifica la union del anterior y el nuevo.
+    previous_criteria = rule_match_criteria(rule)
 
     if "classification" in payload:
         classification = clean_text(payload.get("classification"), 40)
@@ -6090,9 +6530,11 @@ def update_productivity_rule(
         raise HTTPException(status_code=400, detail="Rule needs executable_name or title_contains")
 
     rule.updated_at = now_utc()
+    # autoflush=False: sin flush, la consulta de reglas activas veria el estado previo.
+    db.flush()
     reclassify_result = None
     if bool(payload.get("reclassify", True)):
-        reclassify_result = reclassify_activities_for_rule(db, rule)
+        reclassify_result = reclassify_activities_for_rule(db, rule, previous_criteria)
 
     db.commit()
     rebuild_queued = bool(payload.get("rebuild_blocks", True))
@@ -6412,9 +6854,19 @@ def employee_detail(
     }
 
 
+def evidence_download_filename(evidence: EvidenceFile) -> str:
+    """Nombre seguro para Content-Disposition: id de la evidencia + extension valida."""
+    extension = os.path.splitext(evidence.storage_path or evidence.original_filename or "")[1].lower()
+    if extension not in {".webp", ".png", ".jpg", ".jpeg"}:
+        extension = ""
+    safe_id = re.sub(r"[^A-Za-z0-9-]", "", evidence.id or "")[:36] or "evidence"
+    return f"evidence-{safe_id}{extension}"
+
+
 @app.get("/api/evidence/{evidence_id}/content")
 def view_evidence_content(
     evidence_id: str,
+    request: Request,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -6430,12 +6882,32 @@ def view_evidence_content(
     if not os.path.exists(full_path):
         raise HTTPException(status_code=404, detail="Evidence file missing")
 
+    # Trazabilidad de acceso a evidencia visual (quien, que evidencia y desde donde).
+    db.add(
+        AuditLog(
+            company_id=evidence.company_id,
+            user_id=admin.user_id,
+            action="evidence_viewed",
+            entity_type="evidence_file",
+            entity_id=evidence.id,
+            ip_address=client_ip(request)[:80],
+            payload_json=json_text(
+                {
+                    "email": admin.email,
+                    "employee_id": evidence.employee_id,
+                    "device_id": evidence.device_id,
+                }
+            ),
+        )
+    )
+    db.commit()
+
     return FileResponse(
         full_path,
         media_type=evidence_media_type(evidence),
         headers={
             "Cache-Control": "private, max-age=60",
-            "Content-Disposition": f'inline; filename="{evidence.original_filename}"',
+            "Content-Disposition": f'inline; filename="{evidence_download_filename(evidence)}"',
             "X-Content-Type-Options": "nosniff",
         },
     )
@@ -7085,28 +7557,57 @@ def sync_agent_events(
     if len(events) > 200:
         raise HTTPException(status_code=413, detail="too many events in one batch")
 
-    client_ip = request.client.host if request.client else ""
+    client_ip_address = client_ip(request)
+    tz = company_zoneinfo_for_id(db, device.company_id)
     accepted = []
     rejected = []
     for event in events:
         if not isinstance(event, dict):
-            rejected.append({"id": "", "error": "invalid event payload"})
+            rejected.append({"id": "", "error": "Evento invalido.", "code": "invalid_event"})
             continue
         event_id = str(event.get("id") or "")[:36]
         if not event_id:
-            rejected.append({"id": "", "error": "missing event id"})
+            rejected.append({"id": "", "error": "Evento sin id.", "code": "missing_event_id"})
+            continue
+        try:
+            event_size = len(json.dumps(event, ensure_ascii=False, default=str).encode("utf-8"))
+        except (TypeError, ValueError):
+            event_size = MAX_AGENT_EVENT_BYTES + 1
+        if event_size > MAX_AGENT_EVENT_BYTES:
+            rejected.append({"id": event_id, "error": "Evento demasiado grande.", "code": "event_too_large"})
             continue
         if agent_event_already_received(db, event_id):
             accepted.append({"id": event_id, "duplicate": True})
             continue
 
+        event_type = str(event.get("tipo") or "unknown")[:60]
         try:
-            result = process_agent_event(db, device, event, client_ip)
+            # Savepoint por evento: el recibo (PK = id del evento) garantiza la
+            # idempotencia incluso con dos lotes concurrentes del mismo evento.
+            with db.begin_nested():
+                db.add(AgentEventReceipt(event_id=event_id, device_id=device.id, event_type=event_type))
+                db.flush()
+                result = process_agent_event(db, device, event, client_ip_address, tz=tz)
+                db.flush()
             db.commit()
             accepted.append(result)
-        except Exception as exc:
+        except IntegrityError:
             db.rollback()
-            rejected.append({"id": event_id, "error": str(exc)[:300]})
+            if agent_event_already_received(db, event_id):
+                accepted.append({"id": event_id, "duplicate": True})
+            else:
+                logger.warning("Agent event %s conflicted while saving (device %s)", event_id, device.id)
+                rejected.append({"id": event_id, "error": AGENT_EVENT_GENERIC_ERROR, "code": "conflict"})
+        except AgentEventRejected as exc:
+            db.rollback()
+            rejected.append({"id": event_id, "error": str(exc)[:300], "code": exc.code})
+        except HTTPException as exc:
+            db.rollback()
+            rejected.append({"id": event_id, "error": str(exc.detail)[:300], "code": "invalid_event"})
+        except Exception:
+            db.rollback()
+            logger.exception("Agent event %s (%s) failed for device %s", event_id, event_type, device.id)
+            rejected.append({"id": event_id, "error": AGENT_EVENT_GENERIC_ERROR, "code": "internal_error"})
 
     return {
         "ok": not rejected,
@@ -7116,7 +7617,7 @@ def sync_agent_events(
 
 
 @app.post("/api/evidence/upload", status_code=status.HTTP_201_CREATED)
-async def upload_evidence(
+def upload_evidence(
     request: Request,
     file: UploadFile = File(...),
     employee: str = Form(...),
@@ -7129,33 +7630,34 @@ async def upload_evidence(
     device: Device = Depends(require_device),
     db: Session = Depends(get_db),
 ):
-    client_ip = request.client.host if request.client else ""
+    # Handler sincrono (FastAPI lo ejecuta en el threadpool): la lectura y escritura
+    # de archivos no bloquea el event loop.
+    client_ip_address = client_ip(request)
     expected_sha = sha256.strip().lower()
-    if len(expected_sha) != 64:
-        record_attempt(db, "rejected", "Invalid SHA-256", device.id, expected_sha, client_ip)
-        raise HTTPException(status_code=400, detail="Invalid SHA-256")
-
-    try:
-        extension = validate_image_name(file.filename or "")
-    except ValueError as exc:
-        record_attempt(db, "rejected", str(exc), device.id, expected_sha, client_ip)
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    if (file.content_type or "").lower() not in IMAGE_CONTENT_TYPES:
-        record_attempt(db, "rejected", "Invalid image content type", device.id, expected_sha, client_ip)
-        raise HTTPException(status_code=400, detail="Invalid image content type")
-
-    captured_dt = parse_client_datetime(captured_at)
-    evidence_id = new_id()
     temp_path = ""
-    actual_size = 0
-    hasher = hashlib.sha256()
-
+    stored_full_path = ""
     try:
+        if len(expected_sha) != 64:
+            raise HTTPException(status_code=400, detail="Invalid SHA-256")
+
+        try:
+            extension = validate_image_name(file.filename or "")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if (file.content_type or "").lower() not in IMAGE_CONTENT_TYPES:
+            raise HTTPException(status_code=400, detail="Invalid image content type")
+
+        # El agente envia hora local sin zona: se interpreta en la zona de la empresa.
+        captured_dt = parse_client_datetime(captured_at, company_zoneinfo_for_id(db, device.company_id))
+        evidence_id = new_id()
+        actual_size = 0
+        hasher = hashlib.sha256()
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=extension) as temp_file:
             temp_path = temp_file.name
             while True:
-                chunk = await file.read(1024 * 1024)
+                chunk = file.file.read(1024 * 1024)
                 if not chunk:
                     break
                 actual_size += len(chunk)
@@ -7169,16 +7671,21 @@ async def upload_evidence(
             raise HTTPException(status_code=400, detail="File size mismatch")
         if actual_sha != expected_sha:
             raise HTTPException(status_code=400, detail="SHA-256 mismatch")
-        validate_image_signature(temp_path, extension)
+        try:
+            validate_image_signature(temp_path, extension)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         existing = db.execute(
-            select(EvidenceFile).where(
+            select(EvidenceFile)
+            .where(
                 EvidenceFile.device_id == device.id,
                 EvidenceFile.sha256 == actual_sha,
             )
-        ).scalar_one_or_none()
+            .limit(1)
+        ).scalars().first()
         if existing:
-            record_attempt(db, "duplicate", "Duplicate evidence upload", device.id, actual_sha, client_ip)
+            record_attempt(db, "duplicate", "Duplicate evidence upload", device.id, actual_sha, client_ip_address)
             return {
                 "ok": True,
                 "duplicate": True,
@@ -7194,7 +7701,10 @@ async def upload_evidence(
             evidence_id=evidence_id,
             extension=extension,
         )
-        save_from_temp(temp_path, relative_path)
+        try:
+            stored_full_path = save_from_temp(temp_path, relative_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid evidence storage path") from exc
         temp_path = ""
 
         evidence = EvidenceFile(
@@ -7216,8 +7726,10 @@ async def upload_evidence(
         )
         db.add(evidence)
         db.commit()
+        # Confirmado en la base: el archivo ya no es huerfano.
+        stored_full_path = ""
         db.refresh(evidence)
-        record_attempt(db, "received", "Evidence uploaded", device.id, actual_sha, client_ip)
+        record_attempt(db, "received", "Evidence uploaded", device.id, actual_sha, client_ip_address)
 
         return {
             "ok": True,
@@ -7226,20 +7738,19 @@ async def upload_evidence(
             "storage_path": evidence.storage_path,
         }
     except HTTPException as exc:
-        if temp_path and os.path.exists(temp_path):
-            os.unlink(temp_path)
-        record_attempt(db, "rejected", str(exc.detail), device.id, expected_sha, client_ip)
+        db.rollback()
+        record_attempt(db, "rejected", str(exc.detail), device.id, expected_sha, client_ip_address)
         raise
     except IntegrityError:
-        if temp_path and os.path.exists(temp_path):
-            os.unlink(temp_path)
         db.rollback()
         existing = db.execute(
-            select(EvidenceFile).where(
+            select(EvidenceFile)
+            .where(
                 EvidenceFile.device_id == device.id,
                 EvidenceFile.sha256 == expected_sha,
             )
-        ).scalar_one_or_none()
+            .limit(1)
+        ).scalars().first()
         if existing:
             return {
                 "ok": True,
@@ -7249,5 +7760,20 @@ async def upload_evidence(
                 "storage_path": existing.storage_path,
             }
         raise
+    except Exception:
+        db.rollback()
+        logger.exception("Evidence upload failed for device %s", device.id)
+        raise
     finally:
-        await file.close()
+        # Limpieza en todos los caminos: temporal sin mover y archivo movido cuya
+        # fila no llego a confirmarse (evita huerfanos en el almacenamiento).
+        for leftover in (temp_path, stored_full_path):
+            if leftover and os.path.exists(leftover):
+                try:
+                    os.unlink(leftover)
+                except OSError:
+                    logger.exception("Could not remove evidence file %s", leftover)
+        try:
+            file.file.close()
+        except Exception:
+            pass

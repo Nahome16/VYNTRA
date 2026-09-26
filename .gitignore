@@ -32,3 +32,4 @@ web.zip
 
 # Copias de trabajo temporales de Claude Code
 .claude/worktrees/
+.claude/launch.json

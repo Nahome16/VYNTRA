@@ -9,7 +9,9 @@ type AuthContextValue = {
   user: AdminUser | null;
   ready: boolean;
   activeCompanyId: string;
-  setActiveCompanyId: (companyId: string) => void;
+  /** Nombre de la empresa activa (solo informativo, para la barra lateral). */
+  activeCompanyName: string;
+  setActiveCompanyId: (companyId: string, companyName?: string) => void;
   login: (email: string, password: string) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   logout: () => void;
@@ -28,6 +30,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const tokenKey = "vyntra.admin.token";
 const userKey = "vyntra.admin.user";
 const activeCompanyKey = "vyntra.admin.activeCompanyId";
+const activeCompanyNameKey = "vyntra.admin.activeCompanyName";
 
 const companyScopedReadPrefixes = [
   "/api/productivity/catalogs",
@@ -88,6 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState("");
   const [user, setUser] = useState<AdminUser | null>(null);
   const [activeCompanyId, setActiveCompanyIdState] = useState("");
+  const [activeCompanyName, setActiveCompanyName] = useState("");
   const [ready, setReady] = useState(false);
   const [accessNotice, setAccessNotice] = useState("");
 
@@ -97,6 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const storedUser = window.localStorage.getItem(userKey);
       const storedActiveCompanyId = window.localStorage.getItem(activeCompanyKey) || "";
       setActiveCompanyIdState(storedActiveCompanyId);
+      setActiveCompanyName(window.localStorage.getItem(activeCompanyNameKey) || "");
       if (!storedToken) {
         window.localStorage.removeItem(userKey);
         window.localStorage.removeItem(activeCompanyKey);
@@ -163,9 +168,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.localStorage.removeItem(activeCompanyKey);
   }, []);
 
-  const setActiveCompanyId = useCallback((companyId: string) => {
+  const setActiveCompanyId = useCallback((companyId: string, companyName?: string) => {
     const cleanCompanyId = companyId.trim();
     setActiveCompanyIdState(cleanCompanyId);
+    if (companyName !== undefined) {
+      setActiveCompanyName(companyName);
+      window.localStorage.setItem(activeCompanyNameKey, companyName);
+    }
     if (cleanCompanyId) {
       window.localStorage.setItem(activeCompanyKey, cleanCompanyId);
     } else {
@@ -241,6 +250,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       ready,
       activeCompanyId,
+      activeCompanyName: activeCompanyId ? activeCompanyName : "",
       setActiveCompanyId,
       login,
       changePassword,
@@ -264,6 +274,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [
       accessNotice,
       activeCompanyId,
+      activeCompanyName,
       changePassword,
       clearAccessNotice,
       hasPermission,

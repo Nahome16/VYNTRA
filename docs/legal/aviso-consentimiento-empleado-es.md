@@ -1,6 +1,6 @@
 # VYNTRA - Aviso de Monitoreo y Consentimiento del Empleado
 
-Version: 2026.08-global-employee-notice-v1
+Version: 2026.09-global-employee-notice-v2
 
 Este equipo puede registrar actividad laboral mediante VYNTRA mientras tu
 jornada este activa. El objetivo es apoyar el registro de asistencia, continuidad
@@ -10,9 +10,14 @@ trabajo.
 ## Que se registra durante la jornada activa
 
 - Inicio y cierre de jornada, pausas, almuerzo y horas extra.
-- Aplicacion activa, titulo de ventana, inactividad, conteo de clics y cambios
-  de ventana.
-- Capturas de pantalla con el intervalo configurado por tu empleador.
+- Aplicacion activa, inactividad, conteo de clics y cambios de ventana. El titulo
+  de la ventana, la URL y el dominio nunca se guardan: se sustituyen por el
+  nombre de la aplicacion o sitio que figura en las reglas de tu empleador, o por
+  "(fuera de lista)".
+- Capturas solo de la ventana o pestana activa, con el intervalo configurado por
+  tu empleador, y solo cuando es una herramienta de trabajo clasificada como
+  productiva. Nunca se captura la pantalla completa, el escritorio, la barra de
+  tareas ni las notificaciones.
 - Datos tecnicos del equipo, version del agente y estado de sincronizacion.
 
 ## Lo que VYNTRA no registra

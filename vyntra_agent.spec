@@ -15,6 +15,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=[
         "win32gui",
+        "win32ui",
         "win32process",
         "psutil",
         "pynput",

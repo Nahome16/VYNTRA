@@ -9,8 +9,10 @@ const consentPrefix = "vyntra.station.consent.";
 const queueKey = "vyntra.station.queue";
 const timeZoneKey = "vyntra.station.timezone";
 const loginLanguageKey = "vyntra.station.loginLanguage";
+// 0.3.0 aplica la politica de captura minima (sin URL ni titulos; evidencia solo en sitios productivos).
+// Se ofrece como actualizacion opcional; subir requiredExtensionVersion cuando se decida exigirla.
 const requiredExtensionVersion = "0.2.3";
-const latestExtensionVersion = "0.2.3";
+const latestExtensionVersion = "0.3.0";
 const extensionDownloadHref = `/extensions/vyntra-browser-extension.zip?v=${latestExtensionVersion}`;
 
 const stationTimeZones = [

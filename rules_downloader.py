@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 
 import requests
 
+import capture_policy
+
 
 class RulesDownloader:
     """
@@ -42,6 +44,7 @@ class RulesDownloader:
             with open(self.cache_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             self.rules = data.get("rules", [])
+            capture_policy.set_rules(self.rules)
             last_update_str = data.get("last_update")
             if last_update_str:
                 self.last_update = datetime.fromisoformat(last_update_str)
@@ -121,6 +124,7 @@ class RulesDownloader:
                 raise RuntimeError(f"Respuesta invalida: {payload}")
             
             self.rules = payload.get("rules", [])
+            capture_policy.set_rules(self.rules)
             self.last_update = datetime.utcnow()
             self._save_cache()
             self._notify(f"Reglas descargadas: {len(self.rules)} reglas")

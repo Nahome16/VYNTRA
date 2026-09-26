@@ -40,6 +40,7 @@ from app.auth import (
     require_permission,
     verify_password_hash,
 )
+from app.capture_policy import ScopedRule, normalize_window_title, sanitize_capture_payload
 from app.config import settings
 from app.database import Base, engine, get_db, SessionLocal
 from app.models import (
@@ -2215,6 +2216,45 @@ def classify_activity(
     return "uncategorized"
 
 
+def rule_scope_score(rule: ProductivityRule) -> int:
+    score = 0
+    if rule.department_id:
+        score += 1000
+    if rule.position_id:
+        score += 2000
+    if rule.employee_id:
+        score += 3000
+    return score
+
+
+def capture_rules_for_employee(db: Session, company_id: str, employee: Employee | None) -> list[ScopedRule]:
+    """Lista de aplicaciones permitidas del empleado: sus reglas de productividad activas."""
+    if employee is None:
+        return []
+    rules = db.execute(
+        select(ProductivityRule).where(
+            ProductivityRule.company_id == company_id,
+            ProductivityRule.is_active.is_(True),
+        )
+    ).scalars().all()
+    scoped = []
+    for rule in rules:
+        if rule.employee_id and rule.employee_id != employee.id:
+            continue
+        if rule.department_id and rule.department_id != employee.department_id:
+            continue
+        if rule.position_id and rule.position_id != employee.position_id:
+            continue
+        scoped.append(
+            ScopedRule(
+                executable_name=rule.executable_name or "",
+                title_contains=rule.title_contains or "",
+                rank=rule_scope_score(rule) + rule.priority,
+            )
+        )
+    return scoped
+
+
 def classification_to_bool(classification: str) -> bool | None:
     if classification == "productive":
         return True
@@ -2546,6 +2586,7 @@ def store_activity_samples(
     if employee is None:
         return 0
 
+    capture_rules = capture_rules_for_employee(db, device.company_id, employee)
     inserted = 0
     for index, sample in enumerate(samples):
         existing = db.execute(
@@ -2563,7 +2604,8 @@ def store_activity_samples(
         duration = max(1, int(sample.get("duracion_muestra_segundos") or 0))
         is_idle = bool(sample.get("is_idle"))
         executable_name = sample.get("proceso", "")
-        title_text_value = sample.get("titulo", "")
+        # Nunca se almacena el titulo literal: solo el identificador normalizado (RF-07).
+        title_text_value = normalize_window_title(capture_rules, executable_name, sample.get("titulo", ""))
         app_row = get_or_create_app(db, device.company_id, executable_name)
         title_row = get_or_create_window_title(db, device.company_id, title_text_value)
         classification = classify_activity(
@@ -2681,6 +2723,10 @@ def process_agent_event(db: Session, device: Device, event: dict, client_ip: str
     event_id = str(event.get("id") or "")[:36]
     event_type = str(event.get("tipo") or "unknown")[:60]
     payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    # Segunda barrera de la captura minima: se descartan URL, dominios y titulos
+    # literales antes de guardar el evento, aunque el cliente este desactualizado.
+    employee = db.get(Employee, device.employee_id) if device.employee_id else None
+    payload = sanitize_capture_payload(capture_rules_for_employee(db, device.company_id, employee), payload)
     created_at = parse_optional_client_datetime(event.get("created_at")) or now_utc()
 
     shift = None
@@ -6808,6 +6854,7 @@ def get_agent_rules(
                 "title_contains": rule.title_contains,
                 "classification": rule.classification,
                 "priority": rule.priority,
+                "scope_score": rule_scope_score(rule),
                 "updated_at": rule.updated_at.isoformat() if rule.updated_at else None,
             }
             for rule in all_rules

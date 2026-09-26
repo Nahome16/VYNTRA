@@ -3,6 +3,7 @@ const STORAGE_KEYS = {
   queue: "vyntraBrowserQueue",
   status: "vyntraBrowserStatus",
   activity: "vyntraBrowserPageActivity",
+  rules: "vyntraBrowserRules",
 };
 
 const SAMPLE_ALARM = "vyntra-browser-sample";
@@ -12,8 +13,17 @@ const AUTO_CAPTURE_MINUTES = 5;
 const STALE_STATION_MS = 10 * 60 * 1000;
 const MAX_ACTIVE_SHIFT_MS = 18 * 60 * 60 * 1000;
 const WORKING_STATUS = "TRABAJANDO";
-const VERSION = "0.2.3";
+const VERSION = "0.3.0";
 const ACTIVE_STATUSES = new Set(["TRABAJANDO", "BREAK", "LUNCH"]);
+
+// Politica de captura minima: la lista de sitios permitidos son las reglas de
+// productividad de la empresa. La URL y el titulo literal de la pestana solo se
+// usan en memoria para comparar; nunca se guardan ni se transmiten.
+const BROWSER_EXECUTABLE = "browser-extension";
+const UNLISTED_SITE_TITLE = "(sitio fuera de lista)";
+const LISTED_APP_TITLE = "(aplicacion permitida)";
+const MAX_IDENTIFIER_LENGTH = 120;
+const RULES_MAX_AGE_MS = 30 * 60 * 1000;
 
 function eventId() {
   if (crypto?.randomUUID) return crypto.randomUUID();
@@ -169,6 +179,58 @@ async function enqueue(event) {
   await storageSet({ [STORAGE_KEYS.queue]: [...queue, event].slice(-200) });
 }
 
+async function loadRules(station, { force = false } = {}) {
+  const values = await storageGet(STORAGE_KEYS.rules);
+  const cached = values[STORAGE_KEYS.rules];
+  const fresh = cached && Date.now() - Date.parse(cached.fetchedAt || "") < RULES_MAX_AGE_MS;
+  if (!force && fresh) return cached.rules || [];
+  if (!station?.session?.token) return cached?.rules || [];
+
+  try {
+    const response = await fetch(`${station.apiBase || "https://vyntralab.tech"}/api/agent/rules`, {
+      headers: { "X-Device-Token": station.session.token },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const rules = Array.isArray(data?.rules) ? data.rules : [];
+    await storageSet({ [STORAGE_KEYS.rules]: { rules, fetchedAt: nowIso() } });
+    return rules;
+  } catch {
+    return cached?.rules || [];
+  }
+}
+
+// Devuelve el identificador normalizado de la pestana, si el sitio esta en la
+// lista y si admite evidencia visual (solo sitios clasificados como productivos).
+function normalizeTab(tab, rules) {
+  const domain = getHost(tab?.url || "");
+  const haystack = `${domain} - ${tab?.title || ""}`.toLowerCase();
+  const rank = (rule) => Number(rule.scope_score || 0) + Number(rule.priority || 0);
+  let bestTitle = null;
+  let bestAny = null;
+  let executableMatch = false;
+  for (const rule of rules || []) {
+    const executable = String(rule?.executable_name || "").trim().toLowerCase();
+    const pattern = String(rule?.title_contains || "").trim();
+    if (!executable && !pattern) continue;
+    if (executable && executable !== BROWSER_EXECUTABLE) continue;
+    if (pattern && !haystack.includes(pattern.toLowerCase())) continue;
+    if (pattern) {
+      if (!bestTitle || rank(rule) > rank(bestTitle)) bestTitle = rule;
+    } else {
+      executableMatch = true;
+    }
+    if (!bestAny || rank(rule) > rank(bestAny)) bestAny = rule;
+  }
+  const evidenceAllowed = bestAny?.classification === "productive";
+  if (bestTitle) {
+    const identifier = String(bestTitle.title_contains).trim().slice(0, MAX_IDENTIFIER_LENGTH);
+    return { identifier, listed: true, evidenceAllowed };
+  }
+  if (executableMatch) return { identifier: LISTED_APP_TITLE, listed: true, evidenceAllowed };
+  return { identifier: UNLISTED_SITE_TITLE, listed: false, evidenceAllowed: false };
+}
+
 async function recordPageActivity(message, sender) {
   const values = await storageGet([STORAGE_KEYS.station, STORAGE_KEYS.activity]);
   const station = values[STORAGE_KEYS.station];
@@ -201,8 +263,6 @@ async function recordPageActivity(message, sender) {
     clicks: tabActivity.clicks + clicks,
     focusChanges: tabActivity.focusChanges + focusChanges,
     lastInteractionAt,
-    url: message.url || sender?.tab?.url || tabActivity.url || "",
-    title: message.title || sender?.tab?.title || tabActivity.title || "",
     updatedAt: nowIso(),
   };
   await storageSet({ [STORAGE_KEYS.activity]: activity });
@@ -226,10 +286,8 @@ async function clearPageActivity() {
   await storageSet({ [STORAGE_KEYS.activity]: emptyPageActivity() });
 }
 
-function buildActivityEvent(station, tab, idleState, pageActivity = emptyPageActivity()) {
-  const url = tab?.url || "";
-  const domain = getHost(url);
-  const title = tab?.title || domain || "Pestana activa";
+function buildActivityEvent(station, tab, idleState, pageActivity = emptyPageActivity(), rules = []) {
+  const { identifier, listed } = normalizeTab(tab, rules);
   const isIdle = idleState !== "active";
   const basePayload = station.snapshot && typeof station.snapshot === "object" ? station.snapshot : {};
   const baseTelemetry = basePayload.telemetria || {};
@@ -249,9 +307,8 @@ function buildActivityEvent(station, tab, idleState, pageActivity = emptyPageAct
       seg_break: currentTotals.breakSeconds,
       seg_lunch: currentTotals.lunch,
       seg_horas_extra: currentTotals.overtime,
-      recurso_actual: domain || title,
-      url_actual: url,
-      titulo_actual: title,
+      recurso_actual: identifier,
+      titulo_actual: identifier,
       idle_estado_navegador: idleState,
       telemetria: {
         ...baseTelemetry,
@@ -266,10 +323,9 @@ function buildActivityEvent(station, tab, idleState, pageActivity = emptyPageAct
         muestras_recientes: [
           {
             timestamp: nowIso(),
-            proceso: "browser-extension",
-            titulo: domain ? `${domain} - ${title}` : title,
-            url,
-            dominio: domain,
+            proceso: BROWSER_EXECUTABLE,
+            titulo: identifier,
+            en_lista: listed,
             clicks: Number(pageActivity.activeTabClicks || 0),
             cambios_ventana: Number(pageActivity.activeTabFocusChanges || 0),
             idle_segundos: isIdle ? SAMPLE_SECONDS : 0,
@@ -293,9 +349,9 @@ async function sampleBrowserActivity() {
   }
 
   try {
-    const [tab, idleState] = await Promise.all([queryActiveTab(), queryIdleState()]);
+    const [tab, idleState, rules] = await Promise.all([queryActiveTab(), queryIdleState(), loadRules(station)]);
     const pageActivity = await readPageActivitySummary(tab);
-    const event = buildActivityEvent(station, tab, idleState, pageActivity);
+    const event = buildActivityEvent(station, tab, idleState, pageActivity, rules);
     await postStationEvent(station, event);
     await clearPageActivity();
     await flushQueue(station);
@@ -339,6 +395,13 @@ async function uploadVisibleTabCapture(options = {}) {
   if (!station?.session?.token) throw new Error("Abre la estacion web e inicia sesion primero.");
 
   const tab = await queryActiveTab();
+  const rules = await loadRules(station);
+  if (!normalizeTab(tab, rules).evidenceAllowed) {
+    const error = new Error("La pestana activa no es un sitio de trabajo permitido; no se captura evidencia.");
+    error.code = "UNLISTED_SITE";
+    throw error;
+  }
+  // captureVisibleTab solo dibuja el contenido de la pestana: nunca el escritorio ni la barra de tareas.
   const dataUrl = await chrome.tabs.captureVisibleTab(tab?.windowId, { format: "png" });
   const blob = dataUrlToBlob(dataUrl);
   const sha = await sha256Hex(blob);
@@ -385,6 +448,10 @@ async function autoCaptureVisibleTab() {
       lastError: null,
     }));
   } catch (error) {
+    if (error?.code === "UNLISTED_SITE") {
+      await saveStatus(getStatus(station, { lastCaptureSkipped: nowIso(), lastError: null }));
+      return;
+    }
     await saveStatus(getStatus(station, {
       lastError: `Captura automatica: ${error?.message || "no se pudo subir"}`,
     }));
@@ -407,12 +474,13 @@ async function handleMessage(message, sender) {
       syncedAt: nowIso(),
     };
     await storageSet({ [STORAGE_KEYS.station]: station });
+    loadRules(station, { force: true }).catch(() => undefined);
     const status = await saveStatus(getStatus(station, { lastSync: station.syncedAt }));
     return { ok: true, status };
   }
 
   if (message?.type === "station_clear") {
-    await storageRemove(STORAGE_KEYS.station);
+    await storageRemove([STORAGE_KEYS.station, STORAGE_KEYS.rules]);
     const status = await saveStatus(getStatus(null, { lastSync: null, lastError: null }));
     return { ok: true, status };
   }

@@ -24,8 +24,6 @@ function flushPageActivity() {
     clicks: pageActivity.clicks,
     focusChanges: pageActivity.focusChanges,
     lastInteractionAt: pageActivity.lastInteractionAt,
-    url: window.location.href,
-    title: document.title,
   };
   pageActivity.clicks = 0;
   pageActivity.focusChanges = 0;

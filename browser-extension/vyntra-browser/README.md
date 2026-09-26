@@ -5,13 +5,15 @@ Extension requerida para Chrome o Edge que complementa la estacion web de marcaj
 ## Que agrega
 
 - Detecta cuando `https://vyntralab.tech/estacion` tiene sesion activa y consentimiento aceptado.
-- Registra la pestana activa del navegador donde la extension esta instalada: dominio, URL, titulo, foco e idle.
+- Registra el foco y la inactividad de la pestana activa del navegador donde la extension esta instalada.
+- Aplica la politica de captura minima: descarga las reglas de productividad de la empresa (`/api/agent/rules`) y, antes de enviar cualquier dato, sustituye la URL y el titulo de la pestana por un identificador normalizado. Si el sitio esta en una regla, el identificador es el patron de la regla (por ejemplo `salesforce.com`); si no, se envia `(sitio fuera de lista)`. La URL, el dominio y el titulo literales nunca se guardan ni se transmiten.
 - Cuenta clics y cambios de foco en pestanas web de ese navegador durante la jornada activa.
 - Mantiene el conteo de tiempo y actividad del navegador mientras la jornada siga activa, incluso si el usuario cierra la pestana de la estacion.
 - Envia muestras al endpoint existente `/api/agent/events` usando el token de la estacion web.
 - Mantiene una cola local si no hay conexion.
 - Permite capturar manualmente la pestana activa desde el popup y subirla como evidencia.
 - Captura automaticamente la pestana visible cada 5 minutos mientras la jornada esta en estado trabajando, con sesion y consentimiento activos.
+- Solo captura evidencia cuando la pestana activa es un sitio clasificado como productivo por las reglas de la empresa. En cualquier otro sitio la captura se omite.
 - La estacion web exige version compatible de esta extension antes de iniciar, pausar, reabrir o finalizar jornada.
 
 ## Limites

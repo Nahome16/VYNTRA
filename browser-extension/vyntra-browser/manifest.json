@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "VYNTRA Browser",
-  "description": "Extension para agregar actividad y capturas autorizadas del navegador a la estacion de marcaje web VYNTRA.",
-  "version": "0.2.3",
+  "description": "Extension que agrega a la estacion de marcaje web VYNTRA la actividad y las capturas de los sitios permitidos por la empresa.",
+  "version": "0.3.0",
   "action": {
     "default_popup": "popup.html",
     "default_title": "VYNTRA Browser"

@@ -9,7 +9,7 @@ in each jurisdiction.
 from __future__ import annotations
 
 
-NOTICE_VERSION = "2026.08-global-employee-notice-v1"
+NOTICE_VERSION = "2026.09-global-employee-notice-v2"
 
 
 def normalized_language(value: str | None) -> str:
@@ -34,8 +34,8 @@ def employee_notice(language: str, company: str, contact_email: str, interval_mi
                     "What is recorded only while your shift is active",
                     [
                         "Clock-in, clock-out, breaks, lunch and overtime events.",
-                        "The foreground application, window title, idle time, click count and window switches.",
-                        f"Screenshots at the interval configured by your employer. Current interval: every {interval_minutes} minutes.",
+                        "The foreground application, idle time, click count and window switches. Window titles are never stored: they are replaced by the name of the application or site listed in your employer's rules, or by \"(outside the list)\".",
+                        f"Screenshots of the active window only, and only when it is a work tool classified as productive by your employer. Current interval: every {interval_minutes} minutes. The full screen, desktop, taskbar and notifications are never captured.",
                         "Technical device data such as hostname, Windows user, agent version and synchronization status.",
                     ],
                 ),
@@ -96,8 +96,8 @@ def employee_notice(language: str, company: str, contact_email: str, interval_mi
                 "Que se registra solo mientras tu jornada esta activa",
                 [
                     "Inicio, cierre de jornada, pausas, almuerzo y horas extra.",
-                    "Aplicacion en primer plano, titulo de ventana, inactividad, conteo de clics y cambios de ventana.",
-                    f"Capturas de pantalla con el intervalo configurado por tu empleador. Intervalo actual: cada {interval_minutes} minutos.",
+                    "Aplicacion en primer plano, inactividad, conteo de clics y cambios de ventana. El titulo de la ventana nunca se guarda: se sustituye por el nombre de la aplicacion o sitio que figura en las reglas de tu empleador, o por \"(fuera de lista)\".",
+                    f"Capturas solo de la ventana activa, y solo cuando es una herramienta de trabajo clasificada como productiva por tu empleador. Intervalo actual: cada {interval_minutes} minutos. Nunca se captura la pantalla completa, el escritorio, la barra de tareas ni las notificaciones.",
                     "Datos tecnicos del equipo como nombre del dispositivo, usuario de Windows, version del agente y estado de sincronizacion.",
                 ],
             ),

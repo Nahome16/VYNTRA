@@ -1,8 +1,10 @@
 """
-activity_tracker.py - Telemetria cruda del agente VYNTRA.
+activity_tracker.py - Telemetria del agente VYNTRA.
 
-El agente no clasifica aplicaciones. Solo captura datos brutos. La plataforma
-web/backend aplicara reglas de productividad configuradas por administracion.
+El agente no clasifica aplicaciones; la plataforma web/backend aplica las reglas
+de productividad configuradas por administracion. Antes de guardar cualquier
+muestra, el titulo de la ventana se sustituye por un identificador normalizado
+conforme a la lista de aplicaciones permitidas (ver capture_policy.py).
 """
 
 import datetime
@@ -10,6 +12,8 @@ import getpass
 import socket
 import threading
 import time
+
+import capture_policy
 
 
 def get_idle_seconds() -> float:
@@ -30,7 +34,8 @@ def get_idle_seconds() -> float:
     return 0.0
 
 
-def get_active_window() -> tuple[str, str]:
+def get_foreground_window() -> tuple[int, str, str]:
+    """Devuelve (hwnd, titulo_literal, proceso). El titulo no debe persistirse."""
     try:
         import psutil
         import win32gui
@@ -40,9 +45,14 @@ def get_active_window() -> tuple[str, str]:
         titulo = win32gui.GetWindowText(hwnd) or "(sin titulo)"
         _, pid = win32process.GetWindowThreadProcessId(hwnd)
         proceso = psutil.Process(pid).name()
-        return titulo, proceso
+        return hwnd, titulo, proceso
     except Exception:
-        return "(desconocido)", "(desconocido)"
+        return 0, "(desconocido)", "(desconocido)"
+
+
+def get_active_window() -> tuple[str, str]:
+    _, titulo, proceso = get_foreground_window()
+    return titulo, proceso
 
 
 class ClickCounter:
@@ -138,8 +148,9 @@ class ActivityTracker:
 
         now = datetime.datetime.now()
         idle = get_idle_seconds()
-        titulo, proceso = get_active_window()
-        recurso_key = f"{proceso} | {titulo[:120]}"
+        titulo_literal, proceso = get_active_window()
+        titulo, en_lista = capture_policy.normalize_title(proceso, titulo_literal)
+        recurso_key = f"{proceso} | {titulo}"
         is_idle = idle >= self.idle_umbral
 
         with self._lock:
@@ -152,15 +163,17 @@ class ActivityTracker:
                     self.por_recurso.get(recurso_key, 0) + self.TICK
                 )
                 self.recurso_actual = recurso_key
-                if self._ultima_ventana and titulo != self._ultima_ventana:
+                # La comparacion usa el titulo literal solo en memoria; nunca se guarda.
+                if self._ultima_ventana and titulo_literal != self._ultima_ventana:
                     self.cambios_ventana += 1
-                self._ultima_ventana = titulo
+                self._ultima_ventana = titulo_literal
 
             self.muestras.append(
                 {
                     "timestamp": now.isoformat(),
                     "proceso": proceso,
                     "titulo": titulo,
+                    "en_lista": en_lista,
                     "idle_segundos": round(idle, 2),
                     "is_idle": is_idle,
                     "duracion_muestra_segundos": self.TICK,

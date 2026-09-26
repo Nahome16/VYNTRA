@@ -1,5 +1,12 @@
 """
-screenshots.py - Capturas de pantalla durante jornada activa.
+screenshots.py - Evidencia visual durante jornada activa.
+
+Politica de captura minima (RNF-03): solo se captura la ventana activa y solo
+cuando pertenece a una aplicacion de la lista permitida clasificada como
+productiva, es decir, una herramienta de trabajo. Nunca se captura la
+pantalla completa, el escritorio, la barra de tareas ni los avisos emergentes:
+la imagen se obtiene con PrintWindow, que dibuja unicamente el contenido de la
+ventana, sin lo que haya encima o alrededor de ella.
 """
 
 import datetime
@@ -9,7 +16,63 @@ import socket
 import threading
 import time
 
+import capture_policy
+from activity_tracker import get_foreground_window
 from outbox import append_event
+
+PW_RENDERFULLCONTENT = 0x00000002
+
+
+def capture_window_image(hwnd: int):
+    """Devuelve una imagen PIL con el contenido de la ventana `hwnd`."""
+    import ctypes
+
+    import win32gui
+    import win32ui
+    from PIL import Image
+
+    if not hwnd or not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd):
+        raise RuntimeError("La ventana activa no esta visible")
+    # Con escalado de pantalla, el tamano debe leerse en pixeles fisicos para que
+    # coincida con lo que dibuja PrintWindow; de lo contrario la imagen sale recortada.
+    user32 = ctypes.windll.user32
+    previous_context = None
+    try:
+        user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+        user32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        previous_context = user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
+    except Exception:
+        previous_context = None
+    try:
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    finally:
+        if previous_context:
+            user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(previous_context))
+    width, height = right - left, bottom - top
+    if width <= 0 or height <= 0:
+        raise RuntimeError("La ventana activa no tiene area visible")
+
+    hwnd_dc = win32gui.GetWindowDC(hwnd)
+    mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
+    save_dc = mfc_dc.CreateCompatibleDC()
+    bitmap = win32ui.CreateBitmap()
+    try:
+        bitmap.CreateCompatibleBitmap(mfc_dc, width, height)
+        save_dc.SelectObject(bitmap)
+        if not ctypes.windll.user32.PrintWindow(hwnd, save_dc.GetSafeHdc(), PW_RENDERFULLCONTENT):
+            raise RuntimeError("PrintWindow no pudo dibujar la ventana")
+        info = bitmap.GetInfo()
+        raw = bitmap.GetBitmapBits(True)
+        image = Image.frombuffer("RGB", (info["bmWidth"], info["bmHeight"]), raw, "raw", "BGRX", 0, 1)
+    finally:
+        win32gui.DeleteObject(bitmap.GetHandle())
+        save_dc.DeleteDC()
+        mfc_dc.DeleteDC()
+        win32gui.ReleaseDC(hwnd, hwnd_dc)
+
+    if all(high == 0 for _, high in image.getextrema()):
+        raise RuntimeError("La ventana activa se dibujo en negro")
+    return image
 
 
 def nombre_equipo() -> str:
@@ -81,25 +144,20 @@ class ScreenshotEngine:
 
     def _capturar(self):
         ts = datetime.datetime.now()
-        nombre = f"cap_{ts:%Y%m%d_%H%M%S}.webp"
-        ruta = os.path.join(self.carpeta_dia(), nombre)
-
-        try:
-            from PIL import Image
-        except Exception as exc:
-            self._notify(f"Captura deshabilitada: {exc}")
+        hwnd, titulo_literal, proceso = get_foreground_window()
+        identificador, _ = capture_policy.normalize_title(proceso, titulo_literal)
+        if not capture_policy.evidence_allowed(proceso, titulo_literal):
+            self._notify("Captura omitida: la aplicacion activa no es una herramienta de trabajo permitida.")
             return
 
-        monitores_count = 1
+        nombre = f"cap_{ts:%Y%m%d_%H%M%S}.webp"
+        ruta = os.path.join(self.carpeta_dia(), nombre)
         try:
-            monitores_count = self._capturar_con_mss(ruta, Image)
+            imagen = capture_window_image(hwnd)
         except Exception as exc:
-            try:
-                monitores_count = self._capturar_con_pillow(ruta)
-                self._notify(f"Captura realizada con fallback: {exc}")
-            except Exception as fallback_exc:
-                self._notify(f"Error de captura: {exc}; fallback: {fallback_exc}")
-                return
+            self._notify(f"Captura omitida: {exc}")
+            return
+        imagen.save(ruta, "WEBP", quality=80, optimize=True)
 
         self.ultima = ts
         metadata = {
@@ -108,50 +166,16 @@ class ScreenshotEngine:
             "empleado": getpass.getuser(),
             "equipo": nombre_equipo(),
             "intervalo_segundos": self.intervalo,
-            "monitores": monitores_count,
+            "monitores": 1,
+            "alcance": "ventana_activa",
+            "proceso": proceso,
+            "identificador": identificador,
             "agent_version": getattr(self.cfg, "agent_version", "unknown"),
         }
         append_event("screenshot_created", metadata)
         self._upload_to_drive(ruta)
         self._upload_to_backend(ruta, metadata)
         self._notify(f"Captura {ts:%H:%M:%S}")
-
-    def _capturar_con_mss(self, ruta: str, Image) -> int:
-        import mss
-
-        with mss.mss() as sct:
-            monitores = sct.monitors[1:] or sct.monitors[:1]
-
-            if not monitores:
-                raise RuntimeError("No hay monitores disponibles")
-
-            if len(monitores) == 1:
-                img = sct.grab(monitores[0])
-                imagen = Image.frombytes("RGB", img.size, img.rgb)
-                imagen.save(ruta, "WEBP", quality=80, optimize=True)
-                return 1
-
-            ancho_total = sum(m["width"] for m in monitores)
-            alto_max = max(m["height"] for m in monitores)
-            imagen_combinada = Image.new("RGB", (ancho_total, alto_max), color=(0, 0, 0))
-
-            x_offset = 0
-            for monitor in monitores:
-                img = sct.grab(monitor)
-                img_pil = Image.frombytes("RGB", img.size, img.rgb)
-                imagen_combinada.paste(img_pil, (x_offset, 0))
-                x_offset += monitor["width"]
-
-            imagen_combinada.save(ruta, "WEBP", quality=80, optimize=True)
-            return len(monitores)
-
-    @staticmethod
-    def _capturar_con_pillow(ruta: str) -> int:
-        from PIL import ImageGrab
-
-        imagen = ImageGrab.grab(all_screens=True)
-        imagen.save(ruta, "WEBP", quality=80, optimize=True)
-        return 1
 
     def _upload_to_drive(self, ruta: str):
         if not self._ensure_drive_uploader():

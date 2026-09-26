@@ -1,6 +1,6 @@
 # VYNTRA - Employee Monitoring Notice and Consent
 
-Version: 2026.08-global-employee-notice-v1
+Version: 2026.09-global-employee-notice-v2
 
 This device may record work activity through VYNTRA while your work shift is
 active. The purpose is to support attendance records, operational continuity,
@@ -9,9 +9,13 @@ incident management and review of work-related evidence.
 ## What is recorded during an active shift
 
 - Clock-in, clock-out, breaks, lunch and overtime events.
-- Foreground application, window title, idle time, click count and window
-  switches.
-- Screenshots at the interval configured by your employer.
+- Foreground application, idle time, click count and window switches. Window
+  titles, URLs and domains are never stored: they are replaced by the name of
+  the application or site listed in your employer's rules, or by "(outside the
+  list)".
+- Screenshots of the active window or tab only, at the interval configured by
+  your employer, and only when it is a work tool classified as productive. The
+  full screen, desktop, taskbar and notifications are never captured.
 - Technical device data, agent version and synchronization status.
 
 ## What VYNTRA does not record

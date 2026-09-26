@@ -10,8 +10,8 @@ Agente local de marcaje, capturas y telemetria cruda con consentimiento explicit
 - Permite iniciar jornada, break, lunch y finalizar jornada.
 - Permite solicitar horas extra, reportar fallas tecnicas y reabrir jornadas con codigos de un solo uso.
 - Guarda bitacora local de la jornada.
-- Toma capturas durante jornada activa.
-- Registra telemetria cruda: proceso activo, titulo de ventana, inactividad, clics y cambios de ventana.
+- Toma capturas solo de la ventana activa, y solo cuando es una aplicacion clasificada como productiva por las reglas de la empresa. Nunca captura la pantalla completa, el escritorio, la barra de tareas ni las notificaciones.
+- Registra telemetria: proceso activo, identificador normalizado de la ventana, inactividad, clics y cambios de ventana.
 - Guarda eventos pendientes en `%LOCALAPPDATA%\VYNTRA\outbox.jsonl`.
 - Restaura una jornada activa si la app se cierra y vuelve a abrir.
 
@@ -22,6 +22,16 @@ Agente local de marcaje, capturas y telemetria cruda con consentimiento explicit
 - No captura contrasenas ni contenido escrito con teclado.
 - No activa camara ni microfono.
 
+## Politica de captura minima
+
+La lista de aplicaciones permitidas son las reglas de productividad que la empresa configura en la plataforma web; el agente las descarga desde `/api/agent/rules` (`capture_policy.py`). Antes de guardar o transmitir cualquier muestra, el titulo literal de la ventana se sustituye por un identificador normalizado:
+
+- Si una regla con `title_contains` coincide, el identificador es ese patron (por ejemplo `Salesforce`).
+- Si solo coincide una regla por ejecutable, el identificador es `(aplicacion permitida)`.
+- Si ninguna regla coincide, el identificador es `(fuera de lista)` y no se captura evidencia.
+
+El backend aplica la misma normalizacion como segunda barrera (`backend/app/capture_policy.py`). Para normalizar datos guardados antes de esta politica: `python backend/scripts/normalize_stored_titles.py --apply` (sin `--apply` solo simula).
+
 ## Clasificacion de productividad
 
 La clasificacion debe vivir en la plataforma web administrativa.
@@ -29,7 +39,7 @@ La clasificacion debe vivir en la plataforma web administrativa.
 Flujo recomendado:
 
 1. El agente sube datos crudos al backend.
-2. La base de datos guarda procesos, titulos de ventana, timestamps, tiempo activo, tiempo idle y empleado/equipo.
+2. La base de datos guarda procesos, identificadores normalizados de ventana, timestamps, tiempo activo, tiempo idle y empleado/equipo.
 3. El administrador define reglas por empresa, departamento o rol desde la plataforma web.
 4. El backend aplica esas reglas para calcular productivo, no productivo o neutral.
 5. Los dashboards muestran reportes a jefes, gerencia o RR. HH.

@@ -1,13 +1,43 @@
 param(
+    # Comando de Python como texto ("py -3.13"). Se divide en ejecutable +
+    # argumentos (sin Invoke-Expression). Para rutas con espacios usa -PythonExe.
     [string]$Python = "py -3.13",
+    [string]$PythonExe = "",
     [string]$CertificateThumbprint = "",
     [string]$TimestampServer = "http://timestamp.digicert.com",
-    [string]$SignToolPath = "signtool.exe"
+    [string]$SignToolPath = "signtool.exe",
+    # Build de release: exige certificado de code signing y verifica la firma.
+    [switch]$Release
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+
+if ($PythonExe) {
+    $pythonCommand = $PythonExe
+    $pythonBaseArgs = @()
+} else {
+    $pythonParts = @($Python.Trim() -split "\s+" | Where-Object { $_ })
+    if ($pythonParts.Count -eq 0) { throw "Parametro -Python vacio." }
+    $pythonCommand = $pythonParts[0]
+    $pythonBaseArgs = @()
+    if ($pythonParts.Count -gt 1) { $pythonBaseArgs = $pythonParts[1..($pythonParts.Count - 1)] }
+}
+
+function Invoke-Python {
+    param([string[]]$Arguments)
+    & $pythonCommand @pythonBaseArgs @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python fallo (codigo $LASTEXITCODE): $pythonCommand $($pythonBaseArgs -join ' ') $($Arguments -join ' ')"
+    }
+}
+
+if ($Release) {
+    if ([string]::IsNullOrWhiteSpace($CertificateThumbprint) -or $CertificateThumbprint -eq "CERT_THUMBPRINT") {
+        throw "Build -Release requiere -CertificateThumbprint con el thumbprint real del certificado de code signing."
+    }
+}
 
 function Invoke-CodeSign {
     param([string]$Path)
@@ -23,6 +53,9 @@ function Invoke-CodeSign {
         /td SHA256 `
         /sha1 $CertificateThumbprint `
         $Path
+    if ($LASTEXITCODE -ne 0) {
+        throw "signtool fallo (codigo $LASTEXITCODE) firmando $Path"
+    }
 }
 
 function Resolve-SignToolPath {
@@ -52,36 +85,47 @@ function Resolve-SignToolPath {
 
 $iconPath = Join-Path $root "assets\vyntra.ico"
 if (-not (Test-Path -LiteralPath $iconPath)) {
-    & $Python (Join-Path $PSScriptRoot "create_vyntra_icon.py")
+    Invoke-Python @((Join-Path $PSScriptRoot "create_vyntra_icon.py"))
 }
 
-$rootConfig = Join-Path $root "config.ini"
-$templateConfig = Join-Path $PSScriptRoot "config.production.template.ini"
-$generatedBuildConfig = $false
-if (-not (Test-Path -LiteralPath $rootConfig)) {
-    Copy-Item -LiteralPath $templateConfig -Destination $rootConfig -Force
-    $generatedBuildConfig = $true
-    Write-Host "Created temporary build config.ini from production template."
+Write-Host "Installing/updating build dependencies..."
+Invoke-Python @("-m", "pip", "install", "-r", "requirements.txt")
+Invoke-Python @("-m", "pip", "install", "pyinstaller")
+
+Write-Host "Compiling VYNTRA agent..."
+Invoke-Python @("-m", "PyInstaller", "vyntra_agent.spec", "--clean", "--noconfirm")
+
+$distAgent = Join-Path $root "dist\VYNTRAAgent"
+$agentExe = Join-Path $distAgent "VYNTRAAgent.exe"
+if (-not (Test-Path -LiteralPath $agentExe)) {
+    throw "PyInstaller no genero $agentExe"
 }
 
-try {
-    Write-Host "Installing/updating build dependencies..."
-    Invoke-Expression "$Python -m pip install -r requirements.txt"
-    Invoke-Expression "$Python -m pip install pyinstaller"
-
-    Write-Host "Compiling VYNTRA agent..."
-    Invoke-Expression "$Python -m PyInstaller vyntra_agent.spec --clean --noconfirm"
-
-    if ($CertificateThumbprint) {
-        Write-Host "Signing agent binaries..."
-        Get-ChildItem -LiteralPath (Join-Path $root "dist\VYNTRAAgent") -Recurse -Include *.exe,*.dll,*.pyd |
-            ForEach-Object { Invoke-CodeSign -Path $_.FullName }
+# El build nunca debe llevar config.ini, credenciales ni tokens del desarrollador.
+$forbidden = @("config.ini", "credentials.json", "credentials.previous.json", "token.json", "rules_cache.json")
+Get-ChildItem -LiteralPath $distAgent -Recurse -Force -File -ErrorAction SilentlyContinue |
+    Where-Object { $forbidden -contains $_.Name } |
+    ForEach-Object {
+        Write-Warning "Eliminando archivo local no permitido en el build: $($_.FullName)"
+        Remove-Item -LiteralPath $_.FullName -Force
     }
-} finally {
-    if ($generatedBuildConfig -and (Test-Path -LiteralPath $rootConfig)) {
-        Remove-Item -LiteralPath $rootConfig -Force
-        Write-Host "Removed temporary build config.ini."
+
+if ($CertificateThumbprint) {
+    Write-Host "Signing agent binaries..."
+    Get-ChildItem -LiteralPath $distAgent -Recurse -Include *.exe,*.dll,*.pyd |
+        ForEach-Object { Invoke-CodeSign -Path $_.FullName }
+}
+
+if ($Release) {
+    $signature = Get-AuthenticodeSignature -LiteralPath $agentExe
+    if ($signature.Status -ne "Valid") {
+        throw "La firma de VYNTRAAgent.exe no es valida ($($signature.Status)). Build de release cancelado."
     }
+    $signer = [string]$signature.SignerCertificate.Thumbprint
+    if ($signer.ToUpperInvariant() -ne ($CertificateThumbprint -replace "\s", "").ToUpperInvariant()) {
+        throw "VYNTRAAgent.exe esta firmado por $signer y no por $CertificateThumbprint."
+    }
+    Write-Host "Firma verificada: $signer"
 }
 
 Write-Host "Build ready at dist\VYNTRAAgent"

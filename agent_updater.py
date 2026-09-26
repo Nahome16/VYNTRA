@@ -276,6 +276,13 @@ class AgentUpdater:
 
         os.makedirs(self.updates_dir, exist_ok=True)
         final_path = os.path.join(self.updates_dir, filename)
+        for name in os.listdir(self.updates_dir):
+            # Paquetes de versiones anteriores ya no se necesitan.
+            if name.lower().endswith(".zip") and name != filename:
+                try:
+                    os.remove(os.path.join(self.updates_dir, name))
+                except OSError:
+                    pass
         if os.path.exists(final_path):
             try:
                 if self._sha256_file(final_path) == expected_sha:
@@ -425,9 +432,10 @@ function Assert-UpdateSignature {
     if ($status -ne "Valid") {
         throw "Firma Authenticode invalida ($status). Actualizacion cancelada."
     }
-    $expected = ($ExpectedThumbprint -replace "\s", "").ToUpperInvariant()
-    if ($thumb.ToUpperInvariant() -ne $expected) {
-        throw "El firmante ($thumb) no coincide con el esperado ($expected). Actualizacion cancelada."
+    # Se admiten varias huellas separadas por coma (rotacion de certificados).
+    $expected = @($ExpectedThumbprint -split "[,;\s]+" | Where-Object { $_ } | ForEach-Object { $_.ToUpperInvariant() })
+    if ($expected -notcontains $thumb.ToUpperInvariant()) {
+        throw "El firmante ($thumb) no coincide con los esperados ($($expected -join ', ')). Actualizacion cancelada."
     }
 }
 
@@ -541,7 +549,9 @@ try {
     Remove-Item -LiteralPath $extractRoot -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
     if ($success) {
-        Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
+        # Respaldos de intentos anteriores ya no son necesarios.
+        Get-ChildItem -LiteralPath $WorkDir -Directory -Filter "backup-*" -ErrorAction SilentlyContinue |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
     }
     # Siempre se vuelve a abrir el agente (actualizado o restaurado).
     try {

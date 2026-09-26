@@ -1,16 +1,21 @@
 @echo off
 setlocal
+rem Herramienta de desarrollo/soporte: elimina SOLO los registros locales de
+rem consentimiento (consent.json y consent_<hash>.json) para volver a mostrar el
+rem aviso. No borra jornadas, outbox ni evidencias pendientes: las jornadas se
+rem restauran tras cierres imprevistos y borrarlas perderia tiempo registrado.
 set "BASE=%LOCALAPPDATA%\VYNTRA"
-set "CONSENT=%BASE%\consent.json"
-set "JORNADAS=%BASE%\jornadas"
 
-if exist "%CONSENT%" del "%CONSENT%" 2>nul
-if exist "%JORNADAS%" (
-    for %%F in ("%JORNADAS%\jornada_*.json") do del "%%~fF" 2>nul
-    if exist "%JORNADAS%\archivo" (
-        for %%F in ("%JORNADAS%\archivo\jornada_*.json") do del "%%~fF" 2>nul
-    )
+echo Se eliminaran los registros de consentimiento locales en "%BASE%".
+set /p "CONFIRM=Escribe SI para continuar: "
+if /I not "%CONFIRM%"=="SI" (
+    echo Cancelado.
+    pause
+    exit /b 1
 )
 
-echo Estado reiniciado: consentimiento y reloj de jornada eliminados si existian.
+if exist "%BASE%\consent.json" del "%BASE%\consent.json" 2>nul
+for %%F in ("%BASE%\consent_*.json") do del "%%~fF" 2>nul
+
+echo Consentimiento reiniciado. Las jornadas y eventos pendientes se conservaron.
 pause

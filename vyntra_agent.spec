@@ -1,10 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
+#
+# El ejecutable NO incluye config.ini: el config.ini del desarrollador podria
+# contener un DeviceToken o una URL de pruebas. La configuracion de produccion
+# se genera por empresa con installer\prepare_agent_package.ps1 (a partir de
+# installer\config.production.template.ini) y se copia junto a VYNTRAAgent.exe.
 
 from PyInstaller.utils.hooks import collect_data_files
 
-datas = collect_data_files("customtkinter") + [
-    ("config.ini", "."),
-]
+datas = collect_data_files("customtkinter")
 
 block_cipher = None
 
@@ -17,6 +20,7 @@ a = Analysis(
         "win32gui",
         "win32ui",
         "win32process",
+        "win32crypt",
         "psutil",
         "pynput",
         "pynput.mouse",

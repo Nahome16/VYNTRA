@@ -14,7 +14,11 @@ param(
     [string]$CertificateThumbprint = "",
     [string]$TimestampServer = "http://timestamp.digicert.com",
     [string]$SignToolPath = "signtool.exe",
-    [switch]$Build
+    # Huella(s) del certificado que firma las actualizaciones (separadas por coma).
+    # Si se indica, el actualizador exige firma Authenticode valida de ese firmante.
+    [string]$UpdateSignerThumbprint = "",
+    [switch]$Build,
+    [switch]$Release
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,6 +63,7 @@ if ($Build -or -not (Test-Path -LiteralPath $agentExe)) {
         CertificateThumbprint = $CertificateThumbprint
         TimestampServer = $TimestampServer
         SignToolPath = $SignToolPath
+        Release = $Release
     }
     & (Join-Path $PSScriptRoot "build_agent.ps1") @buildArgs
 }
@@ -95,7 +100,7 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install_agent_autostart.ps1") -
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "uninstall_agent_autostart.ps1") -Destination $packageInstaller -Force
 Copy-Item -Path (Join-Path $root "docs\legal\*") -Destination $packageLegal -Recurse -Force
 
-$forbiddenFiles = @("credentials.json", "credentials.previous.json", "token.json")
+$forbiddenFiles = @("credentials.json", "credentials.previous.json", "token.json", "config.ini", "rules_cache.json")
 foreach ($name in $forbiddenFiles) {
     Get-ChildItem -LiteralPath $packageRoot -Recurse -Force -Filter $name -ErrorAction SilentlyContinue |
         ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
@@ -125,13 +130,8 @@ CorreoContacto = $ContactEmail
 [Telemetria]
 IdleUmbralSegundos = 60
 
-[Admin]
-PIN = DESHABILITADO
-
-[GoogleDrive]
-Enabled = false
-FolderId =
-CredentialsJson =
+[Update]
+SignerThumbprint = $($UpdateSignerThumbprint.Trim())
 
 [EvidenceBackend]
 Enabled = true
@@ -140,6 +140,7 @@ DeviceToken = $($DeviceToken.Trim())
 RetryLimit = 50
 RequestTimeoutSeconds = 30
 QueueDatabase =
+DeleteAfterUpload = true
 
 [StationAuth]
 AllowLocalFallback = false
@@ -202,7 +203,7 @@ Pasos para instalar:
 Notas:
 - Este paquete es generico y puede instalarse en varias PCs de la empresa.
 - En el primer inicio de sesion, VYNTRA registra automaticamente la PC y guarda un DeviceToken unico.
-- No incluye credenciales de Google Drive ni secretos del panel.
+- No incluye credenciales ni secretos del panel. El DeviceToken se guarda cifrado con DPAPI (usuario actual) en config.ini.
 - La carpeta legal incluye terminos y aviso de consentimiento en espanol e ingles.
 - Para quitarlo, ejecuta "Desinstalar VYNTRA.ps1".
 "@

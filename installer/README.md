@@ -12,25 +12,26 @@ Esta carpeta contiene los insumos para preparar el instalador del agente.
 
 ## Flujo recomendado
 
-1. Copiar `config.production.template.ini` como `config.ini` en la raiz del proyecto.
-2. Cambiar:
-   - `Empresa`
-   - `CorreoContacto`
-   - `EvidenceBackend.Url`
-   - `EvidenceBackend.DeviceToken`
-3. Compilar:
+1. Compilar. El ejecutable ya NO incluye `config.ini` (nunca se empaqueta el
+   `config.ini` del desarrollador):
 
 ```powershell
 .\installer\build_agent.ps1
+# Release: exige certificado de code signing y verifica la firma resultante.
+.\installer\build_agent.ps1 -Release -CertificateThumbprint "<HUELLA>"
 ```
 
-4. Entregar al cliente la carpeta:
+`build_agent.ps1` ya no usa `Invoke-Expression`: el parametro `-Python` (por
+defecto `py -3.13`) se divide en ejecutable y argumentos. Para una ruta con
+espacios usa `-PythonExe "C:\ruta\python.exe"`.
 
-```text
-dist\VYNTRAAgent
-```
+2. Generar el paquete por empresa con `prepare_agent_package.ps1`, que escribe el
+   `config.ini` de produccion a partir de `config.production.template.ini` (ver
+   "Paquete final por equipo"). Si instalas manualmente desde
+   `dist\VYNTRAAgent`, copia la plantilla como `config.ini` junto a
+   `VYNTRAAgent.exe` y ajusta `Empresa`, `CorreoContacto` y `EvidenceBackend.Url`.
 
-5. En cada PC, instalar el agente y registrar autoarranque con el asistente visual:
+3. En cada PC, instalar el agente y registrar autoarranque con el asistente visual:
 
 ```powershell
 .\installer\install_agent_wizard.ps1
@@ -74,9 +75,24 @@ El instalador de produccion no debe incluir:
 
 - `credentials.json`
 - `token.json`
-- credenciales de Google Drive
+- el `config.ini` del equipo de desarrollo
 
-La evidencia debe subirse al backend VYNTRA usando `EvidenceBackend`.
+La evidencia se sube al backend VYNTRA usando `EvidenceBackend` (la integracion
+con Google Drive se elimino). El `DeviceToken` se cifra con DPAPI al primer
+inicio (`DeviceTokenProtected`).
+
+### Firma y actualizaciones
+
+- `-Release` en `build_agent.ps1`, `prepare_agent_package.ps1` y
+  `build_windows_exe_installer.ps1` falla si falta `-CertificateThumbprint`.
+- `-UpdateSignerThumbprint "<HUELLA>[,<HUELLA2>]"` en `prepare_agent_package.ps1`
+  (y `build_windows_exe_installer.ps1`) escribe `[Update] SignerThumbprint` en el
+  `config.ini` del paquete: el actualizador exigira firma Authenticode valida de
+  ese firmante antes de reemplazar archivos. Sin huella solo registra una
+  advertencia en `%LOCALAPPDATA%\VYNTRA\updates\update.log` y continua.
+- Las actualizaciones no reemplazan `config.ini`: en equipos ya instalados la
+  huella se agrega editando su `config.ini`. Para rotar certificados, agrega la
+  huella nueva (separada por coma) antes de publicar builds firmados con ella.
 
 ## Paquete final por equipo
 

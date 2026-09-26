@@ -6,6 +6,7 @@ import { EmptyState, Panel, RefreshButton, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { AttendanceEmployee, AttendanceOverviewResponse, AttendanceShift } from "@/lib/types";
+import { DEFAULT_TIME_ZONE, isValidTimeZone, monthStartISO, todayISO } from "@/lib/dates";
 import { formatDuration, fullDate } from "@/lib/format";
 import { downloadAuthenticatedFile } from "@/lib/download-file";
 
@@ -32,16 +33,6 @@ const eventLabels: Record<string, string> = {
   browser_activity_snapshot: "Actividad navegador",
   station_tab_closed: "Pestana cerrada",
 };
-
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function monthStartISO() {
-  const date = new Date();
-  date.setDate(1);
-  return date.toISOString().slice(0, 10);
-}
 
 function timeOnly(value: string | null) {
   if (!value) return "-";
@@ -254,7 +245,15 @@ export default function AttendancePage() {
     });
     return Array.from(rows, ([id, name]) => ({ id, name }));
   }, [employees]);
-  const todayShifts = useMemo(() => shifts.filter((shift) => shift.shift_date === todayISO()), [shifts]);
+  // Zona horaria de la empresa: la de los horarios de sus empleados (fallback America/Managua).
+  const companyTimeZone = useMemo(
+    () => employees.map((employee) => employee.schedule?.timezone).find(isValidTimeZone) || DEFAULT_TIME_ZONE,
+    [employees],
+  );
+  const todayShifts = useMemo(
+    () => shifts.filter((shift) => shift.shift_date === todayISO(companyTimeZone)),
+    [companyTimeZone, shifts],
+  );
   const latestTodayByEmployee = useMemo(() => {
     const rows = new Map<string, AttendanceShift>();
     todayShifts.forEach((shift) => {

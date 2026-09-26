@@ -5,6 +5,7 @@ import { AppShell } from "@/components/app-shell";
 import { EmptyState, RefreshButton, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { IncidentsPanel } from "@/components/incidents-panel";
+import { zonedDateISO } from "@/lib/dates";
 import { AccessCode, CatalogsResponse, Employee, ProductivityRule, UncategorizedItem } from "@/lib/types";
 
 const sectionLabels = {
@@ -321,7 +322,7 @@ export default function SettingsPage() {
     const needle = accessSearch.trim().toLowerCase();
     return accessCodes.filter((code) => {
       const sourceDate = code.created_at || code.valid_from;
-      const matchesDate = !accessDate || (sourceDate ? new Date(sourceDate).toISOString().slice(0, 10) === accessDate : false);
+      const matchesDate = !accessDate || (sourceDate ? zonedDateISO(undefined, sourceDate) === accessDate : false);
       return matchesDate && matchesNeedle([code.employee, code.email, code.code, code.reason, code.type_label], needle);
     });
   }, [accessCodes, accessDate, accessSearch]);

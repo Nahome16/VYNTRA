@@ -4,6 +4,9 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { EmptyState, Panel, RefreshButton, StatCard, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
+import { apiFetch } from "@/lib/api";
+import { todayISO } from "@/lib/dates";
+import { saveBlob } from "@/lib/download-file";
 import { AuditLogEntry, AuditLogsResponse, SystemCompany, SystemOverviewResponse } from "@/lib/types";
 
 function dateOnly(value: string | null) {
@@ -107,20 +110,9 @@ export default function AuditPage() {
     setDownloading(true);
     setStatusText("Preparando CSV...");
     try {
-      const response = await fetch(`/api/audit/logs?${queryString("csv")}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      if (!response.ok) throw new Error("download failed");
+      const response = await apiFetch(`/api/audit/logs?${queryString("csv")}`, { token, timeoutMs: 120_000 });
       const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `vyntra-auditoria-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      saveBlob(blob, `vyntra-auditoria-${todayISO()}.csv`);
       setStatusText("CSV exportado");
     } catch {
       setStatusText("No se pudo exportar el CSV");

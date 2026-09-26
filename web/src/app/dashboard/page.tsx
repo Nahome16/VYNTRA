@@ -14,6 +14,7 @@ import {
   SystemOverviewResponse,
 } from "@/lib/types";
 import { downloadAuthenticatedFile } from "@/lib/download-file";
+import { addDaysISO, monthStartISO, todayISO } from "@/lib/dates";
 
 type PeriodKey = "today" | "7d" | "month" | "custom";
 type TrendPoint = { key: string; label: string; value: number };
@@ -24,28 +25,7 @@ const periodLabels: Record<Exclude<PeriodKey, "custom">, string> = {
   month: "Mes",
 };
 
-function localISO(date: Date) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, "0");
-  const day = `${date.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function todayISO() {
-  return localISO(new Date());
-}
-
-function addDays(value: string, days: number) {
-  const date = new Date(`${value}T00:00:00`);
-  date.setDate(date.getDate() + days);
-  return localISO(date);
-}
-
-function monthStartISO() {
-  const date = new Date();
-  date.setDate(1);
-  return localISO(date);
-}
+const addDays = addDaysISO;
 
 function daySpanInclusive(dateFrom: string, dateTo: string) {
   const start = new Date(`${dateFrom}T00:00:00`).getTime();

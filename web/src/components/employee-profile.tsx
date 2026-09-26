@@ -5,6 +5,8 @@ import { EmptyState, Panel, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { EmployeeDetailResponse } from "@/lib/types";
+import { downloadCsv } from "@/lib/csv";
+import { monthStartISO, todayISO } from "@/lib/dates";
 import { formatDuration } from "@/lib/format";
 
 const activityHours = [9, 10, 11, 12, 13, 14, 15, 16, 17];
@@ -16,16 +18,6 @@ type HourBucket = {
   idle: number;
   total: number;
 };
-
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function monthStartISO() {
-  const date = new Date();
-  date.setDate(1);
-  return date.toISOString().slice(0, 10);
-}
 
 function initialsFor(name: string) {
   const initials = name
@@ -88,10 +80,6 @@ function dominantClass(bucket: HourBucket) {
     ["idle", bucket.idle],
   ] as const;
   return rows.reduce((winner, row) => (row[1] > winner[1] ? row : winner), rows[0])[0];
-}
-
-function csvSafe(value: string | number) {
-  return `"${String(value).replace(/"/g, '""')}"`;
 }
 
 export function EmployeeProfile({
@@ -235,20 +223,13 @@ export function EmployeeProfile({
   function exportProfileCsv() {
     if (!employeeDetail) return;
     const header = ["App", t("Clasificacion"), t("Tiempo"), t("Muestras")];
-    const lines = employeeDetail.apps.map((app) =>
-      [app.app, t(classificationLabel(app.classification)), formatDuration(app.seconds), app.samples]
-        .map(csvSafe)
-        .join(","),
-    );
-    const blob = new Blob([[header.map(csvSafe).join(","), ...lines].join("\n")], {
-      type: "text/csv;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `vyntra-perfil-${employeeDetail.employee.employee_code}-${dateFrom}-${dateTo}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    const rows = employeeDetail.apps.map((app) => [
+      app.app,
+      t(classificationLabel(app.classification)),
+      formatDuration(app.seconds),
+      app.samples,
+    ]);
+    downloadCsv(`vyntra-perfil-${employeeDetail.employee.employee_code}-${dateFrom}-${dateTo}.csv`, header, rows);
   }
 
   return (

@@ -11,17 +11,9 @@ import {
   DashboardResponse,
   ProductivityBlock,
 } from "@/lib/types";
+import { downloadCsv } from "@/lib/csv";
+import { monthStartISO, todayISO } from "@/lib/dates";
 import { formatDuration } from "@/lib/format";
-
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function monthStartISO() {
-  const date = new Date();
-  date.setDate(1);
-  return date.toISOString().slice(0, 10);
-}
 
 function initialsFor(name: string) {
   const initials = name
@@ -35,10 +27,6 @@ function initialsFor(name: string) {
 
 function hours(seconds: number) {
   return `${Math.round((seconds / 3600) * 10) / 10}`;
-}
-
-function csvSafe(value: string | number) {
-  return `"${String(value).replace(/"/g, '""')}"`;
 }
 
 export default function EmployeesPage() {
@@ -164,8 +152,7 @@ export default function EmployeesPage() {
       t("Tiempo inactivo [h]"),
       t("Descanso [h]"),
     ];
-    const lines = employeeRows.map((row) =>
-      [
+    const rows = employeeRows.map((row) => [
         row.employee.full_name,
         row.employee.employee_code,
         row.department,
@@ -175,19 +162,8 @@ export default function EmployeesPage() {
         hours(row.totals.neutral),
         hours(row.totals.idle),
         hours(row.totals.breakLunch),
-      ]
-        .map(csvSafe)
-        .join(","),
-    );
-    const blob = new Blob([[header.map(csvSafe).join(","), ...lines].join("\n")], {
-      type: "text/csv;charset=utf-8",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `vyntra-empleados-${dateFrom}-${dateTo}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    ]);
+    downloadCsv(`vyntra-empleados-${dateFrom}-${dateTo}.csv`, header, rows);
   }
 
   return (

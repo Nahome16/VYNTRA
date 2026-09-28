@@ -1352,3 +1352,89 @@ body {
     display: none;
   }
 }
+
+/* --- Ajustes de integracion (recomendados por la revision de paginas) ------- */
+
+/* Pestanas: neutraliza el aspecto de pildora heredado de globals.css. */
+.app-shell .tabs {
+  flex-wrap: nowrap;
+  gap: 2px;
+  width: auto;
+  max-width: 100%;
+  margin-bottom: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.app-shell .tabs button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.app-shell .tabs button:is([aria-selected="true"], .active) {
+  background: transparent;
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.app-shell .tabs button.active::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  bottom: -1px;
+  left: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+
+/* Buscador: el icono no debe quedar sobre el texto. */
+.app-shell:not(#_) .search-input input,
+.app-shell:not(#_) .search-input input:is(:hover, :focus) {
+  padding-left: 32px;
+}
+
+/* Lineas de estado sin margen heredado: se alinean en pies y avisos. */
+.app-shell .status-line {
+  margin-top: 0;
+}
+
+/* Movil: la barra lateral pasa a ser un panel deslizable y el contenido usa todo el ancho. */
+@media (max-width: 980px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .sidebar {
+    width: min(var(--sidebar-w), 86vw);
+  }
+
+  .app-shell .mobile-menu-button {
+    display: inline-grid;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+    color: var(--ink-soft);
+    box-shadow: none;
+  }
+
+  .app-shell .sidebar-close {
+    display: inline-grid;
+  }
+
+  .app-shell .topbar {
+    flex-wrap: wrap;
+  }
+}

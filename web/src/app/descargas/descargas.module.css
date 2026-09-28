@@ -1,0 +1,233 @@
+/* Descargas: estilos propios de la pagina sobre design-system.css */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: start;
+  gap: 24px;
+}
+
+.main {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.sectionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.sectionHead h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.sectionHead > span {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.sectionHead > .folder {
+  margin-left: auto;
+  align-self: center;
+}
+
+.main > :global(.status-line) {
+  margin: 0;
+}
+
+.loadingText {
+  margin: 0;
+  color: var(--muted);
+  padding: 20px 0;
+  font-size: 13px;
+}
+
+/* --- Aviso de carpeta ----------------------------------------------------- */
+.warning {
+  display: flex;
+  gap: 12px;
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r);
+  background: var(--surface);
+  padding: 12px 14px;
+}
+
+.warning i {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.warning strong {
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.warning p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* --- Tarjetas de descarga ------------------------------------------------- */
+.list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  padding: 16px 18px;
+  transition: border-color 0.15s var(--ease);
+}
+
+.item:hover {
+  border-color: var(--line-strong);
+}
+
+.platformIcon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+  color: var(--primary);
+}
+
+.platformIcon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.itemBody {
+  display: grid;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+}
+
+.itemBody h3 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Guia lateral --------------------------------------------------------- */
+.guide {
+  display: grid;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  padding: 18px;
+}
+
+.guide h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.steps {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.steps li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.5;
+  counter-increment: step;
+}
+
+.steps li::before {
+  content: counter(step);
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--plain-bg);
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.note {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.note strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.note p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1100px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .item {
+    flex-wrap: wrap;
+  }
+
+  .item > button {
+    width: 100%;
+  }
+}

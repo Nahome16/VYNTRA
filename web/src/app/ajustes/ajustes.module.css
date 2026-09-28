@@ -1,0 +1,725 @@
+/* Ajustes — estilos locales sobre el sistema de diseno v2 (design-system.css). */
+
+.page {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+/* --- Pestanas + resumen ------------------------------------------------------ */
+.tabBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 8px 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tabBar > .tabsReset {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Las pestanas v2 no anulan el marco de la version anterior (globals.css). */
+.tabsReset :global(.tabs) {
+  flex-wrap: nowrap;
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.tabsReset :global(.tabs button) {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  font-weight: 500;
+}
+
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 0;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.summary li + li::before {
+  content: "·";
+  margin: 0 8px;
+  color: var(--muted-soft);
+}
+
+/* --- Barra de herramientas -------------------------------------------------- */
+.search {
+  flex: 0 1 300px;
+  min-width: 200px;
+}
+
+.search input {
+  width: 100%;
+}
+
+/* design-system.css: la regla base de inputs gana en especificidad al padding
+   de .search-input, por eso se repite aqui para no tapar el placeholder. */
+:global(.app-shell):not(#_) .search input {
+  padding-left: 32px !important;
+}
+
+.filterSelect {
+  width: auto;
+  min-width: 160px;
+  max-width: 220px;
+}
+
+.dateInput {
+  width: 160px;
+}
+
+.caret {
+  width: 14px !important;
+  height: 14px !important;
+  margin-left: -2px;
+  opacity: 0.85;
+}
+
+.menuWide {
+  min-width: 290px;
+}
+
+.menuLabel {
+  padding: 6px 10px 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.menuWide button {
+  height: auto !important;
+  padding: 8px 10px !important;
+}
+
+.menuItem {
+  display: grid;
+  gap: 1px;
+}
+
+.menuItem strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.menuItem small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pendingToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--ink-soft);
+  padding: 0 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.pendingToggle i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.pendingToggle:hover {
+  background: var(--surface-hover);
+}
+
+.pendingToggle[aria-pressed="true"] {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+/* --- Tarjeta con tabla ------------------------------------------------------ */
+.card {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 14px 18px;
+}
+
+.cardHead h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.cardBody {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 18px;
+}
+
+.cardFoot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding: 12px 18px;
+}
+
+.cardEmpty {
+  padding: 18px;
+}
+
+/* Sin recorte en escritorio para que el menu de fila (⋮) no quede cortado;
+   en pantallas estrechas la tabla se desplaza horizontalmente. */
+.tableWrap {
+  overflow: visible;
+}
+
+@media (max-width: 1100px) {
+  .tableWrap {
+    overflow-x: auto;
+  }
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  white-space: nowrap;
+}
+
+.table thead th:first-child,
+.table tbody td:first-child {
+  padding-left: 18px;
+}
+
+.table thead th:last-child,
+.table tbody td:last-child {
+  padding-right: 14px;
+}
+
+.table thead th:first-child {
+  border-top-left-radius: var(--r);
+}
+
+.table thead th:last-child {
+  border-top-right-radius: var(--r);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table td {
+  height: 44px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  vertical-align: middle;
+}
+
+.menuCol {
+  width: 44px;
+  text-align: right;
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 200px;
+}
+
+.person > div,
+.stack {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.stack {
+  justify-items: start;
+  gap: 3px;
+}
+
+.person strong,
+.stack strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.person small,
+.stack small {
+  overflow: hidden;
+  max-width: 440px;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+}
+
+.code {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.codeValue {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 550;
+  letter-spacing: 0.04em;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.statusCell {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.statusOn {
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.statusOff {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.switch {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  flex: none;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--line-strong);
+  padding: 0;
+  transition: background 0.15s var(--ease);
+}
+
+.switch span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s var(--ease);
+}
+
+.switch[aria-checked="true"] {
+  background: var(--primary);
+}
+
+.switch[aria-checked="true"] span {
+  transform: translateX(14px);
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  border-top: 1px solid var(--line);
+  padding: 10px 14px 10px 18px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pagination > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* --- Reglas ----------------------------------------------------------------- */
+.scopeBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow-x: auto;
+}
+
+.scopeList {
+  display: flex;
+  gap: 6px;
+}
+
+.scopeList button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink-soft);
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.scopeList button b {
+  min-width: 18px;
+  border-radius: var(--r-pill);
+  background: var(--plain-bg);
+  color: var(--muted);
+  padding: 0 6px;
+  font-size: 11.5px;
+  font-weight: 550;
+  line-height: 18px;
+  text-align: center;
+}
+
+.scopeList button:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+}
+
+.scopeList button[aria-pressed="true"] {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-ink);
+}
+
+.scopeList button[aria-pressed="true"] b {
+  background: var(--surface);
+  color: var(--primary-ink);
+}
+
+.pendingScope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 20px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+  padding: 10px 12px 10px 14px;
+}
+
+.pendingScope > div:first-child {
+  display: grid;
+  flex: 1 1 360px;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+.pendingScope strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pendingScope span {
+  color: var(--muted);
+}
+
+.pendingScope span b {
+  color: var(--ink);
+  font-weight: 550;
+}
+
+.pendingScopeControls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pendingScopeControls select {
+  width: auto;
+  min-width: 170px;
+}
+
+/* Selector de clasificacion con aspecto de etiqueta. */
+:global(.app-shell):not(#_) select.classSelect {
+  min-height: 28px;
+  height: 28px;
+  width: auto;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  box-shadow: none;
+  padding: 0 26px 0 11px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+:global(.app-shell):not(#_) select.classSelect:hover {
+  border-color: currentColor;
+}
+
+:global(.app-shell):not(#_) select.clsGood { background-color: var(--good-soft); color: var(--good); }
+:global(.app-shell):not(#_) select.clsBad { background-color: var(--bad-soft); color: var(--bad); }
+:global(.app-shell):not(#_) select.clsWarn { background-color: var(--warn-soft); color: var(--warn); }
+:global(.app-shell):not(#_) select.clsPlain { background-color: var(--plain-bg); color: var(--ink-soft); }
+
+.classSelect option {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+/* --- Cuenta ---------------------------------------------------------------- */
+.accountGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.accountName {
+  font-size: 14.5px !important;
+  font-weight: 600 !important;
+}
+
+.facts {
+  display: grid;
+  margin: 0;
+}
+
+.facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid var(--line);
+  padding: 10px 0;
+  font-size: 13px;
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 500;
+  text-align: right;
+}
+
+/* --- Formularios (drawer y cuenta) ----------------------------------------- */
+.form {
+  display: grid;
+  gap: 14px;
+}
+
+.form label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.form :is(input, select, textarea) {
+  width: 100%;
+  min-width: 0;
+}
+
+.form :global(.field-hint) {
+  margin: -6px 0 0;
+}
+
+.fieldGroup {
+  display: grid;
+  gap: 6px;
+}
+
+.fieldGroup :global(.segmented) {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.fieldLabel {
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.footStatus {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+}
+
+.credential {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--good-line);
+  border-radius: var(--r-sm);
+  background: var(--good-soft);
+  padding: 14px;
+}
+
+.credential span,
+.credential small {
+  color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
+.credential strong {
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.credential code {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 9px 11px;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  user-select: all;
+}
+
+/* --- Confirmacion destructiva ----------------------------------------------- */
+.confirm {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 82;
+  display: grid;
+  gap: 8px;
+  width: min(420px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  padding: 22px;
+  transform: translate(-50%, -50%);
+}
+
+.confirm h2 {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.confirm p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.confirmIcon {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.confirmIcon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.confirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.dangerSolid {
+  background: var(--bad) !important;
+  color: var(--surface) !important;
+}
+
+.dangerSolid:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bad) 88%, #000) !important;
+}
+
+/* --- Pantallas pequenas ------------------------------------------------------ */
+@media (max-width: 1080px) {
+  .accountGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .search,
+  .filterSelect,
+  .dateInput {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .summary {
+    margin-top: 4px;
+  }
+}

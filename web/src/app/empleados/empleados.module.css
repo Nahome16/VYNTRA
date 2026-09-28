@@ -1,0 +1,173 @@
+.toolbar {
+  margin-bottom: 14px;
+}
+
+.search {
+  flex: 1 1 200px;
+  max-width: 320px;
+}
+
+.search input {
+  width: 100%;
+  /* La regla base de inputs de design-system.css gana en especificidad a
+     `.search-input input`; se fuerza el hueco del icono aqui. */
+  padding-left: 32px !important;
+}
+
+.toolbar select {
+  width: auto;
+  min-width: 150px;
+  max-width: 210px;
+}
+
+.range {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.range input {
+  width: 138px;
+}
+
+.range span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.scroll {
+  overflow-x: auto;
+}
+
+.table {
+  min-width: 980px;
+}
+
+.table th:first-child,
+.table td:first-child {
+  padding-left: 18px;
+}
+
+.table th:last-child,
+.table td:last-child {
+  width: 40px;
+  padding-right: 14px;
+}
+
+.table tbody tr {
+  cursor: pointer;
+}
+
+.table tbody tr:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.person > div {
+  display: grid;
+  min-width: 0;
+}
+
+.person strong {
+  color: var(--ink);
+  font-weight: 550;
+}
+
+.person small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.productivity {
+  display: grid;
+  grid-template-columns: 38px 64px;
+  align-items: center;
+  justify-content: end;
+  gap: 10px;
+}
+
+.productivity .num {
+  color: var(--ink);
+  font-weight: 550;
+}
+
+.metric {
+  color: var(--ink);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.subline {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.block {
+  display: block;
+}
+
+.status {
+  margin-top: 12px;
+}
+
+.chevron {
+  display: grid;
+  place-items: center;
+  color: var(--muted-soft);
+}
+
+.chevron svg {
+  width: 16px;
+  height: 16px;
+}
+
+.table tbody tr:hover .chevron {
+  color: var(--ink);
+}
+
+@media (max-width: 980px) {
+  .search {
+    max-width: none;
+  }
+
+  .count {
+    display: none;
+  }
+}

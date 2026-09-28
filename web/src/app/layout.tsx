@@ -1,17 +1,19 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
-import Script from "next/script";
+import { GeistMono } from "geist/font/mono";
+import { GeistSans } from "geist/font/sans";
 import { AuthProvider } from "@/components/auth-provider";
 import { PreferencesProvider } from "@/components/preferences-provider";
 import { RouteGuard } from "@/components/route-guard";
 import { PREFERENCES_BOOT_SCRIPT } from "@/lib/i18n";
 import "./globals.css";
+import "./design-system.css";
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#ffffff",
+  themeColor: "#f7f6f4",
 };
 
 export const metadata: Metadata = {
@@ -32,12 +34,17 @@ export default async function RootLayout({
       lang="es"
       data-theme="light"
       suppressHydrationWarning
-      className="h-full antialiased"
+      className={`h-full antialiased ${GeistSans.variable} ${GeistMono.variable}`}
     >
       <head>
-        <Script id="vyntra-preferences" strategy="beforeInteractive" nonce={nonce}>
-          {PREFERENCES_BOOT_SCRIPT}
-        </Script>
+        {/* El navegador oculta el atributo nonce tras cargar la pagina, por eso
+            se suprime el aviso de hidratacion de este script. */}
+        <script
+          id="vyntra-preferences"
+          nonce={nonce}
+          suppressHydrationWarning
+          dangerouslySetInnerHTML={{ __html: PREFERENCES_BOOT_SCRIPT }}
+        />
       </head>
       <body className="min-h-full flex flex-col">
         <PreferencesProvider>

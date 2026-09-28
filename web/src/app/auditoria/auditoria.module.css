@@ -1,0 +1,273 @@
+/* Auditoria: estilos propios de la pagina sobre design-system.css */
+
+.card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.cardHead {
+  padding: 14px 18px 0;
+}
+
+.cardTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.cardTitle h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.cardTitle span {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Filtros -------------------------------------------------------------- */
+.filters {
+  display: grid;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 18px 14px;
+}
+
+.search {
+  flex: 1 1 150px;
+  max-width: 260px;
+}
+
+/* Supera la regla base de inputs (que anula el hueco del icono). */
+.search input:not(#_):not(#__) {
+  width: 100%;
+  padding-left: 32px;
+}
+
+.action {
+  flex: 1 1 140px;
+  min-width: 0;
+  max-width: 230px;
+}
+
+.company {
+  flex: 0 1 170px;
+  min-width: 140px;
+}
+
+.range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.range input {
+  width: 132px;
+}
+
+.more {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 220px));
+  gap: 12px;
+  animation: fade-in 0.18s ease both;
+}
+
+.field {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field > span {
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/* --- Tabla ---------------------------------------------------------------- */
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  min-width: 980px;
+}
+
+.table thead th {
+  position: static;
+}
+
+.table th:first-child,
+.table td:first-child {
+  padding-left: 18px;
+}
+
+.table th:last-child,
+.table td:last-child {
+  padding-right: 18px;
+}
+
+.table td {
+  height: 52px;
+  vertical-align: middle;
+}
+
+.table tbody tr {
+  outline-offset: -2px;
+}
+
+.stack {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stack strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.stack span {
+  color: var(--ink-soft);
+}
+
+.stack small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.payloadCell {
+  width: 34%;
+  max-width: 0;
+}
+
+.payloadCell > * {
+  vertical-align: middle;
+}
+
+.payload {
+  display: inline-block;
+  overflow: hidden;
+  max-width: calc(100% - 22px);
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  display: inline-grid;
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+  place-items: center;
+  color: var(--muted-soft);
+  transition: transform 0.15s var(--ease);
+}
+
+.chevron svg {
+  width: 14px;
+  height: 14px;
+}
+
+.chevronOpen {
+  transform: rotate(90deg);
+  color: var(--ink);
+}
+
+.expandedRow td {
+  border-bottom-color: transparent;
+  background: var(--surface-hover);
+}
+
+.detailRow td {
+  height: auto;
+  background: var(--surface-hover);
+  padding-top: 0;
+}
+
+.detailRow:hover {
+  background: var(--surface-hover);
+}
+
+.pre {
+  overflow: auto;
+  max-height: 320px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink-soft);
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.emptyWrap {
+  padding: 18px;
+}
+
+.loadingText {
+  margin: 0;
+  color: var(--muted);
+  padding: 10px 0;
+  font-size: 13px;
+}
+
+/* --- Pie: estado y paginacion -------------------------------------------- */
+.cardFoot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  min-height: 52px;
+  border-top: 1px solid var(--line);
+  padding: 10px 18px;
+}
+
+.cardFoot :global(.status-line) {
+  margin: 0;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .search,
+  .action,
+  .company {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .more {
+    grid-template-columns: 1fr;
+  }
+}

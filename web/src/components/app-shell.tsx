@@ -102,6 +102,22 @@ const navItems = [
   },
 ];
 
+const consoleRoutes = new Set(["/sistema", "/auditoria", "/descargas"]);
+
+const roleLabels: Record<string, string> = {
+  system_admin: "Admin del sistema",
+  owner: "Propietario",
+  admin: "Administrador",
+  rrhh: "RR. HH.",
+  supervisor: "Supervisor",
+  viewer: "Solo lectura",
+};
+
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] || "") + (parts[1]?.[0] || "")).toUpperCase() || "V";
+}
+
 export function AppShell({
   title,
   description,
@@ -115,7 +131,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { ready, user, logout, apiGet, accessNotice, clearAccessNotice } = useAuth();
+  const { ready, user, logout, apiGet, accessNotice, clearAccessNotice, activeCompanyName } = useAuth();
   const { t, theme, toggleTheme, language, toggleLanguage } = usePreferences();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [noticeMessages, setNoticeMessages] = useState<Array<{ type: string; message: string }>>([]);
@@ -152,8 +168,24 @@ export function AppShell({
     );
   }
 
+  const allowed = navItems.filter((item) => {
+    const permission = requiredPermissionFor(item.href);
+    return !permission || (user.permissions || []).includes(permission);
+  });
+  const isSystemAdmin = user.role === "system_admin";
+  const consoleGroup = {
+    label: isSystemAdmin ? "Consola" : "Administracion",
+    items: allowed.filter((item) => consoleRoutes.has(item.href)),
+  };
+  const operationGroup = { label: "Operacion", items: allowed.filter((item) => !consoleRoutes.has(item.href)) };
+  const navGroups = (isSystemAdmin ? [consoleGroup, operationGroup] : [operationGroup, consoleGroup]).filter(
+    (group) => group.items.length,
+  );
+  const scopeName = isSystemAdmin ? activeCompanyName : user.company;
+  const scope = pathname.startsWith("/sistema") ? "system" : "company";
+
   return (
-    <main className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`}>
+    <main className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`} data-scope={scope}>
       <button
         type="button"
         className="sidebar-backdrop"
@@ -184,30 +216,85 @@ export function AppShell({
         </div>
 
         <nav>
-          {navItems
-            .filter((item) => {
-              const permission = requiredPermissionFor(item.href);
-              return !permission || (user.permissions || []).includes(permission);
-            })
-            .map((item) => (
-            <Link
-              href={item.href}
-              key={item.href}
-              aria-current={pathname.startsWith(item.href) ? "page" : undefined}
-              className={pathname.startsWith(item.href) ? "active" : ""}
-              onClick={() => setSidebarOpen(false)}
-            >
-              {item.icon}
-              {t(item.label)}
-            </Link>
+          {navGroups.map((group) => (
+            <div className="nav-group" key={group.label}>
+              <span className="nav-group-label">{t(group.label)}</span>
+              {group.label === "Operacion" && scopeName ? (
+                <div className="scope-chip" title={scopeName}>
+                  <i aria-hidden />
+                  <span>{scopeName}</span>
+                </div>
+              ) : null}
+              {group.items.map((item) => (
+                <Link
+                  href={item.href}
+                  key={item.href}
+                  aria-current={pathname.startsWith(item.href) ? "page" : undefined}
+                  className={pathname.startsWith(item.href) ? "active" : ""}
+                  onClick={() => setSidebarOpen(false)}
+                >
+                  {item.icon}
+                  {t(item.label)}
+                </Link>
+              ))}
+            </div>
           ))}
         </nav>
 
-        <div className="user-box">
-          <span>{user.company}</span>
-          <strong>{user.full_name}</strong>
-          <small>{user.email} · {user.role}</small>
-          <button className="ghost-button" onClick={logout}>{t("Salir")}</button>
+        <div className="sidebar-footer">
+          <div className="user-chip">
+            <span className="avatar" aria-hidden>{initials(user.full_name || user.email)}</span>
+            <div>
+              <strong title={user.full_name}>{user.full_name}</strong>
+              <small title={user.email}>{t(roleLabels[user.role] || user.role)}</small>
+            </div>
+          </div>
+          <div className="sidebar-tools">
+            <button
+              type="button"
+              className="shell-icon-button"
+              onClick={toggleTheme}
+              aria-pressed={darkOn}
+              aria-label={darkOn ? t("Cambiar a modo claro") : t("Cambiar a modo oscuro")}
+              title={darkOn ? t("Cambiar a modo claro") : t("Cambiar a modo oscuro")}
+            >
+              {darkOn ? (
+                <svg {...iconProps}>
+                  <circle cx="12" cy="12" r="4.2" />
+                  <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+                </svg>
+              ) : (
+                <svg {...iconProps}>
+                  <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
+                </svg>
+              )}
+            </button>
+            <button
+              type="button"
+              className="shell-icon-button lang"
+              onClick={toggleLanguage}
+              title={t("Cambiar idioma")}
+              aria-label={t("Cambiar idioma")}
+            >
+              <svg {...iconProps}>
+                <circle cx="12" cy="12" r="9" />
+                <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+              </svg>
+              <span>{language === "es" ? "ES" : "EN"}</span>
+            </button>
+            <button
+              type="button"
+              className="shell-icon-button logout"
+              onClick={logout}
+              title={t("Salir")}
+              aria-label={t("Salir")}
+              style={{ marginLeft: "auto" }}
+            >
+              <svg {...iconProps}>
+                <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4" />
+              </svg>
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -232,40 +319,6 @@ export function AppShell({
           </div>
 
           <div className="topbar-actions">
-            <button
-              type="button"
-              className="shell-icon-button"
-              onClick={toggleTheme}
-              aria-pressed={darkOn}
-              aria-label={darkOn ? t("Cambiar a modo claro") : t("Cambiar a modo oscuro")}
-              title={darkOn ? t("Cambiar a modo claro") : t("Cambiar a modo oscuro")}
-            >
-              {darkOn ? (
-                <svg {...iconProps}>
-                  <circle cx="12" cy="12" r="4.2" />
-                  <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-                </svg>
-              ) : (
-                <svg {...iconProps}>
-                  <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
-                </svg>
-              )}
-            </button>
-
-            <button
-              type="button"
-              className="shell-icon-button lang"
-              onClick={toggleLanguage}
-              title={t("Cambiar idioma")}
-              aria-label={t("Cambiar idioma")}
-            >
-              <svg {...iconProps}>
-                <circle cx="12" cy="12" r="9" />
-                <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
-              </svg>
-              <span>{language === "es" ? "ES" : "EN"}</span>
-            </button>
-
             {actions ? <div className="page-actions">{actions}</div> : null}
           </div>
         </header>

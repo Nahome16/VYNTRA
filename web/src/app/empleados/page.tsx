@@ -3,17 +3,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { EmptyState, Panel, RefreshButton, StatusLine } from "@/components/ui";
+import { Chip, EmptyBlock, RefreshButton, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import {
   CatalogsResponse,
   DashboardResponse,
   ProductivityBlock,
+  SystemCompany,
+  SystemOverviewResponse,
 } from "@/lib/types";
 import { downloadCsv } from "@/lib/csv";
 import { monthStartISO, todayISO } from "@/lib/dates";
 import { formatDuration } from "@/lib/format";
+import styles from "./empleados.module.css";
 
 function initialsFor(name: string) {
   const initials = name
@@ -29,15 +32,23 @@ function hours(seconds: number) {
   return `${Math.round((seconds / 3600) * 10) / 10}`;
 }
 
+function statusChip(status: string, t: (text: string) => string) {
+  if (status === "active") return <Chip tone="good">{t("Activo")}</Chip>;
+  if (status === "inactive") return <Chip>{t("Inactivo")}</Chip>;
+  return <Chip>{t(status || "Sin estado")}</Chip>;
+}
+
 export default function EmployeesPage() {
   const router = useRouter();
-  const { apiGet, activeCompanyId, user } = useAuth();
+  const { apiGet, activeCompanyId, setActiveCompanyId, user } = useAuth();
+  const [companies, setCompanies] = useState<SystemCompany[]>([]);
   const { t } = usePreferences();
   const [catalogs, setCatalogs] = useState<CatalogsResponse | null>(null);
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [dateFrom, setDateFrom] = useState(monthStartISO());
   const [dateTo, setDateTo] = useState(todayISO());
   const [searchTerm, setSearchTerm] = useState("");
+  const [departmentFilter, setDepartmentFilter] = useState("");
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -45,7 +56,7 @@ export default function EmployeesPage() {
     if (user?.role === "system_admin" && !activeCompanyId) {
       setCatalogs(null);
       setDashboard(null);
-      setStatusText("Selecciona una empresa en Sistema para ver empleados");
+      setStatusText(t("Selecciona una empresa en Sistema para ver empleados"));
       return;
     }
     setLoading(true);
@@ -70,6 +81,29 @@ export default function EmployeesPage() {
       setLoading(false);
     }
   }, [activeCompanyId, apiGet, dateFrom, dateTo, t, user?.role]);
+
+  const isSystemAdmin = user?.role === "system_admin";
+  const loadCompanies = useCallback(async () => {
+    if (!isSystemAdmin) return;
+    try {
+      const response = await apiGet<SystemOverviewResponse>("/api/system/overview");
+      const activeCompanies = response.companies.filter((company) => company.status === "active");
+      setCompanies(activeCompanies);
+      const current = activeCompanies.find((company) => company.id === activeCompanyId);
+      if (current) setActiveCompanyId(current.id, current.name);
+      else if (activeCompanies[0]) setActiveCompanyId(activeCompanies[0].id, activeCompanies[0].name);
+    } catch {
+      setCompanies([]);
+    }
+  }, [activeCompanyId, apiGet, isSystemAdmin, setActiveCompanyId]);
+
+  useEffect(() => {
+    if (!user) return;
+    const timer = window.setTimeout(() => {
+      void loadCompanies();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadCompanies, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -103,12 +137,13 @@ export default function EmployeesPage() {
           const blocks = blocksByEmployee.get(employee.id) || [];
           const totals = blocks.reduce(
             (sum, block) => ({
-              active: sum.active + block.active_seconds,
-              productive: sum.productive + block.productive_seconds,
-              nonProductive: sum.nonProductive + block.non_productive_seconds,
-              neutral: sum.neutral + block.neutral_seconds,
-              idle: sum.idle + block.idle_seconds,
-              breakLunch: sum.breakLunch + block.break_seconds + block.lunch_seconds,
+              // `|| 0`: un bloque incompleto no debe convertir la fila en NaN.
+              active: sum.active + (block.active_seconds || 0),
+              productive: sum.productive + (block.productive_seconds || 0),
+              nonProductive: sum.nonProductive + (block.non_productive_seconds || 0),
+              neutral: sum.neutral + (block.neutral_seconds || 0),
+              idle: sum.idle + (block.idle_seconds || 0),
+              breakLunch: sum.breakLunch + (block.break_seconds || 0) + (block.lunch_seconds || 0),
             }),
             { active: 0, productive: 0, nonProductive: 0, neutral: 0, idle: 0, breakLunch: 0 },
           );
@@ -122,6 +157,7 @@ export default function EmployeesPage() {
             position: employee.position_id ? positionMap.get(employee.position_id) || "" : "",
           };
         })
+        .filter((row) => !departmentFilter || row.employee.department_id === departmentFilter)
         .filter((row) => {
           const needle = searchTerm.trim().toLowerCase();
           if (!needle) return true;
@@ -130,7 +166,7 @@ export default function EmployeesPage() {
             .toLowerCase()
             .includes(needle);
         }),
-    [blocksByEmployee, departmentMap, employees, positionMap, searchTerm, t],
+    [blocksByEmployee, departmentFilter, departmentMap, employees, positionMap, searchTerm, t],
   );
 
   function openEmployeeProfile(employeeId: string) {
@@ -166,79 +202,198 @@ export default function EmployeesPage() {
     downloadCsv(`vyntra-empleados-${dateFrom}-${dateTo}.csv`, header, rows);
   }
 
+  const hasFilters = Boolean(searchTerm.trim() || departmentFilter);
+  const noCompany = user?.role === "system_admin" && !activeCompanyId;
+
   return (
     <AppShell
       title={t("Empleados")}
-      description={`${dashboard?.company.name || user?.company || t("Empresa")} - ${t("actividad, productividad y detalle por usuario.")}`}
+      description={`${dashboard?.company.name || user?.company || t("Empresa")} · ${t("actividad, productividad y detalle por usuario.")}`}
       actions={<RefreshButton loading={loading} onClick={loadEmployees} />}
     >
-      <Panel title={t("Reporte de empleados")} meta={`${employeeRows.length} ${t("visibles")}`}>
-        <div className="employee-report-toolbar">
-          <div className="date-range-control">
-            <span>{t("Seleccionar fechas")}</span>
-            <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-            <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
-            <button className="row-action" onClick={() => void loadEmployees()}>
-              {t("Aplicar")}
-            </button>
-          </div>
-          <div className="employee-search-actions">
-            <input
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder={t("Buscar empleado...")}
-            />
-            <button className="icon-action" aria-label={t("Descargar CSV")} onClick={exportCsv}>
-              CSV
-            </button>
+      <section className={`toolbar ${styles.toolbar}`} aria-label={t("Filtros")}>
+        {isSystemAdmin ? (
+          <select
+            aria-label={t("Empresa")}
+            value={activeCompanyId}
+            onChange={(event) => {
+              const company = companies.find((item) => item.id === event.target.value);
+              setActiveCompanyId(event.target.value, company?.name);
+              setDepartmentFilter("");
+            }}
+          >
+            {!activeCompanyId ? <option value="">{t("Selecciona empresa")}</option> : null}
+            {companies.map((company) => (
+              <option key={company.id} value={company.id}>{company.name}</option>
+            ))}
+          </select>
+        ) : null}
+        <label className={`search-input ${styles.search}`}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <input
+            type="search"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder={t("Buscar empleado...")}
+            aria-label={t("Buscar empleado...")}
+          />
+        </label>
+        <select
+          aria-label={t("Departamento")}
+          value={departmentFilter}
+          onChange={(event) => setDepartmentFilter(event.target.value)}
+        >
+          <option value="">{t("Todos los departamentos")}</option>
+          {(catalogs?.departments || []).map((department) => (
+            <option key={department.id} value={department.id}>{department.name}</option>
+          ))}
+        </select>
+        <div className={styles.range} role="group" aria-label={t("Seleccionar fechas")}>
+          <input
+            type="date"
+            aria-label={t("Desde")}
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(event) => setDateFrom(event.target.value)}
+          />
+          <span aria-hidden>–</span>
+          <input
+            type="date"
+            aria-label={t("Hasta")}
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(event) => setDateTo(event.target.value)}
+          />
+        </div>
+        <span className={styles.count}>
+          {employeeRows.length} {employeeRows.length === 1 ? t("empleado") : t("empleados")}
+        </span>
+        <button className="btn btn-outline" onClick={exportCsv} disabled={!employeeRows.length}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
+          </svg>
+          <span>{t("Exportar CSV")}</span>
+        </button>
+      </section>
+
+      {employeeRows.length ? (
+        <div className={styles.card}>
+          <div className={styles.scroll}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>{t("Nombre del empleado")}</th>
+                  <th>{t("Departamento")}</th>
+                  <th>{t("Estado")}</th>
+                  <th className="num">{t("Productividad")}</th>
+                  <th className="num">{t("Actividad [h]")}</th>
+                  <th className="num">{t("Productivo [h]")}</th>
+                  <th className="num">{t("Improductivo [h]")}</th>
+                  <th className="num">{t("Neutral [h]")}</th>
+                  <th className="num">{t("Tiempo inactivo")}</th>
+                  <th className="num">{t("Descanso")}</th>
+                  <th aria-hidden />
+                </tr>
+              </thead>
+              <tbody>
+                {employeeRows.map((row) => {
+                  const productivity = row.totals.active
+                    ? Math.round(((row.totals.productive + row.totals.neutral) / row.totals.active) * 100)
+                    : null;
+                  return (
+                    <tr
+                      key={row.employee.id}
+                      tabIndex={0}
+                      onClick={() => openEmployeeProfile(row.employee.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          openEmployeeProfile(row.employee.id);
+                        }
+                      }}
+                      aria-label={`${t("Ver perfil de")} ${row.employee.full_name}`}
+                    >
+                      <td>
+                        <div className={styles.person}>
+                          <span className="avatar" aria-hidden>{initialsFor(row.employee.full_name)}</span>
+                          <div>
+                            <strong>{row.employee.full_name}</strong>
+                            <small>
+                              {row.employee.email || t("Sin correo laboral")} · <span className={styles.code}>{row.employee.employee_code}</span>
+                            </small>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <span className={styles.metric}>{row.department}</span>
+                        {row.position ? <small className={styles.subline}>{row.position}</small> : null}
+                      </td>
+                      <td>{statusChip(row.employee.status, t)}</td>
+                      <td>
+                        {productivity === null ? (
+                          <span className={`num ${styles.muted} ${styles.block}`}>—</span>
+                        ) : (
+                          <div className={styles.productivity}>
+                            <span className="num">{productivity}%</span>
+                            <div className="usage-bar" aria-hidden>
+                              <i style={{ width: `${Math.min(100, productivity)}%` }} />
+                            </div>
+                          </div>
+                        )}
+                      </td>
+                      <td className={`num ${styles.metric}`}>{hours(row.totals.active)}</td>
+                      <td className="num">{hours(row.totals.productive)}</td>
+                      <td className="num">{hours(row.totals.nonProductive)}</td>
+                      <td className="num">{hours(row.totals.neutral)}</td>
+                      <td className="num">{formatDuration(row.totals.idle)}</td>
+                      <td className="num">{formatDuration(row.totals.breakLunch)}</td>
+                      <td>
+                        <span className={styles.chevron} aria-hidden>
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="m9 6 6 6-6 6" />
+                          </svg>
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
+      ) : (
+        <EmptyBlock
+          title={noCompany ? statusText : loading ? t("Actualizando empleados...") : t("No hay empleados para el filtro actual.")}
+          description={
+            noCompany || loading
+              ? undefined
+              : hasFilters
+                ? t("Prueba con otro termino de busqueda o departamento.")
+                : t("Cuando registres empleados en Ajustes apareceran aqui con su actividad.")
+          }
+          action={
+            hasFilters && !noCompany ? (
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={() => {
+                  setSearchTerm("");
+                  setDepartmentFilter("");
+                }}
+              >
+                {t("Limpiar filtros")}
+              </button>
+            ) : undefined
+          }
+        />
+      )}
 
-        {employeeRows.length ? (
-          <table className="employee-report-table">
-            <thead>
-              <tr>
-                <th>{t("Nombre del empleado")}</th>
-                <th>{t("Equipo")}</th>
-                <th>{t("Ubicacion")}</th>
-                <th>{t("Actividad [h]")}</th>
-                <th>{t("Productivo [h]")}</th>
-                <th>{t("Improductivo [h]")}</th>
-                <th>{t("Neutral [h]")}</th>
-                <th>{t("Tiempo inactivo")}</th>
-                <th>{t("Descanso")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {employeeRows.map((row) => (
-                <tr key={row.employee.id} onClick={() => openEmployeeProfile(row.employee.id)}>
-                  <td>
-                    <div className="table-person">
-                      <span>{initialsFor(row.employee.full_name)}</span>
-                      <div>
-                        <strong>{row.employee.full_name}</strong>
-                        <small>{row.employee.email || t("Sin correo laboral")}</small>
-                      </div>
-                    </div>
-                  </td>
-                  <td>{row.employee.employee_code}</td>
-                  <td>{row.department}</td>
-                  <td>{hours(row.totals.active)}</td>
-                  <td>{hours(row.totals.productive)}</td>
-                  <td>{hours(row.totals.nonProductive)}</td>
-                  <td>{hours(row.totals.neutral)}</td>
-                  <td>{formatDuration(row.totals.idle)}</td>
-                  <td>{formatDuration(row.totals.breakLunch)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <EmptyState>{t("No hay empleados para el filtro actual.")}</EmptyState>
-        )}
-      </Panel>
-
-      <StatusLine>{statusText}</StatusLine>
+      <div className={styles.status}>
+        <StatusLine>{statusText}</StatusLine>
+      </div>
     </AppShell>
   );
 }

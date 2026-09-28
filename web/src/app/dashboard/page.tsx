@@ -2,26 +2,26 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
-import { EmptyState, Panel, RefreshButton, StatCard, StatusLine } from "@/components/ui";
+import { EmptyBlock, Panel, RefreshButton, StatusLine } from "@/components/ui";
+import { BarTrendChart, DonutChart, DonutSegment, StatTile } from "@/components/charts";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { formatDuration, fullDate, metricTone } from "@/lib/format";
 import {
   CatalogsResponse,
   DashboardResponse,
-  DashboardTotals,
   SystemCompany,
   SystemOverviewResponse,
 } from "@/lib/types";
 import { downloadAuthenticatedFile } from "@/lib/download-file";
 import { addDaysISO, monthStartISO, todayISO } from "@/lib/dates";
+import styles from "./dashboard.module.css";
 
 type PeriodKey = "today" | "7d" | "month" | "custom";
-type TrendPoint = { key: string; label: string; value: number };
 
 const periodLabels: Record<Exclude<PeriodKey, "custom">, string> = {
   today: "Hoy",
-  "7d": "7 dias",
+  "7d": "7 días",
   month: "Mes",
 };
 
@@ -66,91 +66,33 @@ function buildParams({
   return params;
 }
 
-function trendDelta(current: number, previous?: number) {
-  if (previous === undefined || previous === null) return undefined;
+type Delta = { text: string; direction: "up" | "down"; tone: "plain" | "good" | "bad"; note: string };
+
+/**
+ * Comparacion con el periodo anterior en puntos porcentuales. Se omite cuando
+ * no aporta: sin datos previos o sin cambio apreciable.
+ */
+function compareToPrevious(
+  current: number,
+  previous: number | undefined,
+  hasPrevious: boolean,
+  note: string,
+  inverse = false,
+): Delta | undefined {
+  if (!hasPrevious || previous === undefined || previous === null) return undefined;
   const diff = current - previous;
-  if (Math.abs(diff) < 0.05) return "0.0%";
-  return `${diff > 0 ? "+" : ""}${diff.toFixed(1)}%`;
+  if (!Number.isFinite(diff) || Math.abs(diff) < 0.05) return undefined;
+  const better = inverse ? diff < 0 : diff > 0;
+  return {
+    text: `${diff > 0 ? "+" : "−"}${Math.abs(diff).toFixed(1)} pts`,
+    direction: diff > 0 ? "up" : "down",
+    tone: better ? "good" : "bad",
+    note,
+  };
 }
 
-function deltaTone(delta?: string, inverse = false): "plain" | "good" | "warn" | "bad" {
-  if (!delta || delta === "0.0%") return "plain";
-  const value = Number(delta.replace("%", ""));
-  if (!Number.isFinite(value)) return "plain";
-  if (inverse) return value > 0 ? "bad" : "good";
-  return value > 0 ? "good" : "bad";
-}
-
-function DailyBarTrend({ points }: { points: TrendPoint[] }) {
-  if (!points.length) return <p className="empty">Sin datos suficientes para graficar.</p>;
-  const average = points.reduce((sum, point) => sum + point.value, 0) / points.length;
-  return (
-    <div className="daily-bar-chart" aria-label={`Promedio: ${average.toFixed(1)}%`}>
-      <div className="daily-bar-legend">
-        <span><i /> Productivo</span>
-        <span><i /> Promedio</span>
-      </div>
-      <div className="daily-bar-plot">
-        {points.map((point, index) => (
-          <div className="daily-bar-slot" key={point.key}>
-            <span
-              className={index === points.length - 1 ? "active" : undefined}
-              style={{ height: `${Math.max(4, Math.min(100, point.value))}%` }}
-              title={`${point.label}: ${point.value}%`}
-            />
-            <small>{point.label}</small>
-          </div>
-        ))}
-        <b style={{ bottom: `${Math.max(0, Math.min(100, average))}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function TimeDonut({ totals }: { totals: DashboardTotals }) {
-  const productiveOnlyPct = Math.max(0, totals.productivity_pct - totals.neutral_pct);
-  const segments = [
-    { key: "productivo", label: "Productivo", value: productiveOnlyPct },
-    { key: "neutral", label: "Neutral", value: totals.neutral_pct },
-    { key: "no-productivo", label: "No productivo", value: totals.non_productive_pct },
-  ];
-  const radius = 42;
-  const circumference = 2 * Math.PI * radius;
-  let offset = 0;
-
-  return (
-    <div className="time-donut">
-      <svg viewBox="0 0 120 120" role="img" aria-label={`Productivo ${totals.productivity_pct}%`}>
-        <circle cx="60" cy="60" r={radius} className="donut-track" />
-        {segments.map((segment, index) => {
-          const length = (Math.max(0, segment.value) / 100) * circumference;
-          const dashOffset = -offset;
-          offset += length;
-          return (
-            <circle
-              key={segment.key}
-              cx="60"
-              cy="60"
-              r={radius}
-              className={`donut-segment donut-${index + 1}`}
-              strokeDasharray={`${length} ${circumference - length}`}
-              strokeDashoffset={dashOffset}
-            />
-          );
-        })}
-        <text x="60" y="57" textAnchor="middle">{totals.productivity_pct}%</text>
-        <text x="60" y="72" textAnchor="middle">Prod. + neutral</text>
-      </svg>
-      <ul>
-        {segments.map((segment, index) => (
-          <li key={segment.key}>
-            <span><i className={`donut-dot-${index + 1}`} />{segment.label}</span>
-            <strong>{segment.value}%</strong>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
+function valueTone(tone: "plain" | "good" | "warn" | "bad") {
+  return tone === "good" ? "plain" : tone;
 }
 
 export default function DashboardPage() {
@@ -184,9 +126,9 @@ export default function DashboardPage() {
   }, [activeCompanyId, companies, isSystemAdmin, t, user?.company]);
 
   const selectedDepartmentName = useMemo(() => {
-    if (!selectedDepartment) return "General";
-    return catalogs?.departments.find((department) => department.id === selectedDepartment)?.name || "Departamento";
-  }, [catalogs, selectedDepartment]);
+    if (!selectedDepartment) return t("General");
+    return catalogs?.departments.find((department) => department.id === selectedDepartment)?.name || t("Departamento");
+  }, [catalogs, selectedDepartment, t]);
 
   const trendPoints = useMemo(
     () =>
@@ -204,17 +146,20 @@ export default function DashboardPage() {
       const response = await apiGet<SystemOverviewResponse>("/api/system/overview");
       const activeCompanies = response.companies.filter((company) => company.status === "active");
       setCompanies(activeCompanies);
-      if (!activeCompanies.some((company) => company.id === activeCompanyId)) {
-        setActiveCompanyId(activeCompanies[0]?.id || user?.company_id || "");
+      const current = activeCompanies.find((company) => company.id === activeCompanyId);
+      if (!current) {
+        setActiveCompanyId(activeCompanies[0]?.id || user?.company_id || "", activeCompanies[0]?.name);
+      } else {
+        setActiveCompanyId(current.id, current.name);
       }
     } catch {
-      setStatusText("No se pudo cargar el listado de empresas");
+      setStatusText(t("No se pudo cargar el listado de empresas"));
     }
-  }, [activeCompanyId, apiGet, isSystemAdmin, setActiveCompanyId, user]);
+  }, [activeCompanyId, apiGet, isSystemAdmin, setActiveCompanyId, t, user]);
 
   const loadDashboard = useCallback(async () => {
     if (isSystemAdmin && !activeCompanyId) {
-      setStatusText("Selecciona una empresa en Sistema para ver el dashboard");
+      setStatusText(t("Selecciona una empresa en Sistema para ver el dashboard"));
       return;
     }
     setLoading(true);
@@ -293,120 +238,174 @@ export default function DashboardPage() {
     }
   }
 
+  const hasPrevious = Boolean(previousTotals && previousTotals.total_seconds > 0);
+  const comparisonNote = t("vs periodo anterior");
+  const donutSegments: DonutSegment[] = totals
+    ? [
+        {
+          key: "productive",
+          label: t("Productivo"),
+          value: Math.max(0, Math.round((totals.productivity_pct - totals.neutral_pct) * 10) / 10),
+          slot: 1,
+          detail: formatDuration(totals.productive_seconds),
+        },
+        { key: "neutral", label: t("Neutral"), value: totals.neutral_pct, slot: 2, detail: formatDuration(totals.neutral_seconds) },
+        {
+          key: "non-productive",
+          label: t("No productivo"),
+          value: totals.non_productive_pct,
+          slot: 3,
+          detail: formatDuration(totals.non_productive_seconds),
+        },
+        ...(totals.uncategorized_pct > 0
+          ? [
+              {
+                key: "uncategorized",
+                label: t("Sin clasificar"),
+                value: totals.uncategorized_pct,
+                slot: 5 as const,
+                detail: formatDuration(totals.uncategorized_seconds),
+              },
+            ]
+          : []),
+      ]
+    : [];
+
   return (
     <AppShell
       title={t("Dashboard")}
-      description={`${selectedCompanyName} · ${selectedDepartmentName} · ${dateFrom === dateTo ? fullDate(dateTo) : `${fullDate(dateFrom)} - ${fullDate(dateTo)}`}`}
+      description={`${selectedCompanyName} · ${selectedDepartmentName} · ${dateFrom === dateTo ? fullDate(dateTo) : `${fullDate(dateFrom)} – ${fullDate(dateTo)}`}`}
       actions={(
         <>
-          <button className="secondary-button" onClick={downloadReport} disabled={reportLoading || !totals}>
+          <button className="btn btn-outline" onClick={downloadReport} disabled={reportLoading || !totals}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <path d="M14 2v6h6M8 13h8M8 17h5" />
+              <path d="M14 2v6h6M12 18v-6M9 15l3 3 3-3" />
             </svg>
-            <span>{reportLoading ? t("Generando PDF...") : "PDF"}</span>
+            <span>{reportLoading ? t("Generando PDF...") : t("Exportar PDF")}</span>
           </button>
           <RefreshButton loading={loading} onClick={loadDashboard} />
         </>
       )}
     >
-      <section className="dashboard-control-panel" aria-label="Filtros del dashboard">
-        <div className="dashboard-filter-group">
-          <span>Alcance</span>
-          <div className={isSystemAdmin ? "dashboard-scope-grid system" : "dashboard-scope-grid"}>
-            {isSystemAdmin ? (
-              <label>
-                <small>Empresa</small>
-                <select value={activeCompanyId} onChange={(event) => {
-                  setActiveCompanyId(event.target.value);
-                  setSelectedDepartment("");
-                }}>
-                  {companies.map((company) => (
-                    <option key={company.id} value={company.id}>{company.name}</option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <label>
-              <small>Departamento</small>
-              <select value={selectedDepartment} onChange={(event) => setSelectedDepartment(event.target.value)}>
-                <option value="">General</option>
-                {(catalogs?.departments || []).map((department) => (
-                  <option key={department.id} value={department.id}>{department.name}</option>
-                ))}
-              </select>
-            </label>
-          </div>
+      <section className={`toolbar ${styles.toolbar}`} aria-label={t("Filtros del dashboard")}>
+        {isSystemAdmin ? (
+          <select
+            aria-label={t("Empresa")}
+            value={activeCompanyId}
+            onChange={(event) => {
+              const company = companies.find((item) => item.id === event.target.value);
+              setActiveCompanyId(event.target.value, company?.name);
+              setSelectedDepartment("");
+            }}
+          >
+            {companies.map((company) => (
+              <option key={company.id} value={company.id}>{company.name}</option>
+            ))}
+          </select>
+        ) : null}
+        <select
+          aria-label={t("Departamento")}
+          value={selectedDepartment}
+          onChange={(event) => setSelectedDepartment(event.target.value)}
+        >
+          <option value="">{t("Todos los departamentos")}</option>
+          {(catalogs?.departments || []).map((department) => (
+            <option key={department.id} value={department.id}>{department.name}</option>
+          ))}
+        </select>
+        <span className={styles.divider} aria-hidden />
+        <div className="segmented" role="group" aria-label={t("Periodo")}>
+          {(Object.keys(periodLabels) as Array<Exclude<PeriodKey, "custom">>).map((key) => (
+            <button key={key} type="button" aria-pressed={period === key} onClick={() => applyPeriod(key)}>
+              {t(periodLabels[key])}
+            </button>
+          ))}
         </div>
-
-        <div className="dashboard-filter-group">
-          <span>Periodo</span>
-          <div className="dashboard-period-control">
-            <div className="period-tabs compact">
-              {(Object.keys(periodLabels) as Array<Exclude<PeriodKey, "custom">>).map((key) => (
-                <button key={key} type="button" className={period === key ? "active" : undefined} onClick={() => applyPeriod(key)}>
-                  {periodLabels[key]}
-                </button>
-              ))}
-            </div>
-            <label>
-              <small>Desde</small>
-              <input type="date" value={dateFrom} onChange={(event) => {
-                setPeriod("custom");
-                setDateFrom(event.target.value);
-              }} />
-            </label>
-            <label>
-              <small>Hasta</small>
-              <input type="date" value={dateTo} onChange={(event) => {
-                setPeriod("custom");
-                setDateTo(event.target.value);
-              }} />
-            </label>
-          </div>
+        <div className={styles.range}>
+          <input
+            type="date"
+            aria-label={t("Desde")}
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(event) => {
+              setPeriod("custom");
+              setDateFrom(event.target.value);
+            }}
+          />
+          <span aria-hidden>–</span>
+          <input
+            type="date"
+            aria-label={t("Hasta")}
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(event) => {
+              setPeriod("custom");
+              setDateTo(event.target.value);
+            }}
+          />
         </div>
       </section>
 
       {!totals ? (
-        <Panel title={t("Estado")}>
-          <EmptyState>{statusText || t("Cargando datos...")}</EmptyState>
-        </Panel>
+        <EmptyBlock
+          title={statusText || t("Cargando datos...")}
+          description={loading ? undefined : t("Ajusta la empresa, el departamento o el periodo para ver resultados.")}
+        />
       ) : (
         <>
-          <section className="stats-grid dashboard-metric-grid">
-            <StatCard
+          <section className={styles.kpis} aria-label={t("Indicadores")}>
+            <StatTile
+              label={t("Tiempo activo")}
+              value={formatDuration(totals.active_seconds)}
+              detail={`${t("Total registrado")}: ${formatDuration(totals.total_seconds)}`}
+            />
+            <StatTile
               label={t("Productividad")}
+              marker={1}
               value={`${totals.productivity_pct}%`}
-              detail={`${formatDuration(totals.productive_seconds + totals.neutral_seconds)} productivo + neutral`}
-              tone={metricTone(totals.productivity_pct)}
-              delta={trendDelta(totals.productivity_pct, previousTotals?.productivity_pct)}
-              deltaTone={deltaTone(trendDelta(totals.productivity_pct, previousTotals?.productivity_pct))}
+              valueTone={valueTone(metricTone(totals.productivity_pct))}
+              detail={`${formatDuration(totals.productive_seconds + totals.neutral_seconds)} ${t("productivo + neutral")}`}
+              delta={compareToPrevious(totals.productivity_pct, previousTotals?.productivity_pct, hasPrevious, comparisonNote)}
             />
-            <StatCard
+            <StatTile
               label={t("No productivo")}
+              marker={3}
               value={`${totals.non_productive_pct}%`}
+              valueTone={totals.non_productive_pct > 12 ? "bad" : "plain"}
               detail={formatDuration(totals.non_productive_seconds)}
-              tone={totals.non_productive_pct > 12 ? "bad" : "plain"}
-              delta={trendDelta(totals.non_productive_pct, previousTotals?.non_productive_pct)}
-              deltaTone={deltaTone(trendDelta(totals.non_productive_pct, previousTotals?.non_productive_pct), true)}
+              delta={compareToPrevious(totals.non_productive_pct, previousTotals?.non_productive_pct, hasPrevious, comparisonNote, true)}
             />
-            <StatCard
-              label={t("Idle")}
+            <StatTile
+              label={t("Inactivo")}
+              marker={4}
               value={`${totals.idle_pct}%`}
+              valueTone={totals.idle_pct > 15 ? "warn" : "plain"}
               detail={formatDuration(totals.idle_seconds)}
-              tone={totals.idle_pct > 15 ? "warn" : "plain"}
-              delta={trendDelta(totals.idle_pct, previousTotals?.idle_pct)}
-              deltaTone={deltaTone(trendDelta(totals.idle_pct, previousTotals?.idle_pct), true)}
+              delta={compareToPrevious(totals.idle_pct, previousTotals?.idle_pct, hasPrevious, comparisonNote, true)}
             />
           </section>
 
-          <section className="chart-grid-2 dashboard-main-grid">
-            <Panel title={t("Tendencia de productividad")} meta={`${trendPoints.length} dias`}>
-              <DailyBarTrend points={trendPoints} />
+          <section className={styles.charts}>
+            <Panel
+              title={t("Tendencia de productividad")}
+              meta={`${t("Últimos")} ${trendPoints.length} ${trendPoints.length === 1 ? t("día") : t("días")}`}
+            >
+              <BarTrendChart
+                points={trendPoints}
+                emptyLabel={t("Sin datos suficientes para graficar.")}
+                seriesLabel={t("Productividad diaria")}
+                averageLabel={t("Promedio")}
+              />
             </Panel>
 
-            <Panel title={t("Composición del tiempo")} meta={formatDuration(totals.active_seconds)}>
-              <TimeDonut totals={totals} />
+            <Panel title={t("Composición del tiempo")} meta={`${formatDuration(totals.active_seconds)} ${t("activos")}`}>
+              <DonutChart
+                segments={donutSegments}
+                centerValue={`${totals.productivity_pct}%`}
+                centerLabel={t("productivo + neutral")}
+                ariaLabel={`${t("Productivo")} ${totals.productivity_pct}%`}
+              />
             </Panel>
           </section>
           <StatusLine>{statusText}</StatusLine>

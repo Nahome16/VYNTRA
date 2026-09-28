@@ -1,20 +1,20 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, Fragment, KeyboardEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
-import { EmptyState, Panel, RefreshButton, StatCard, StatusLine } from "@/components/ui";
+import { Chip, EmptyBlock, RefreshButton, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
+import { usePreferences } from "@/components/preferences-provider";
 import { apiFetch } from "@/lib/api";
 import { todayISO } from "@/lib/dates";
 import { saveBlob } from "@/lib/download-file";
 import { AuditLogEntry, AuditLogsResponse, SystemCompany, SystemOverviewResponse } from "@/lib/types";
-
-function dateOnly(value: string | null) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString("es-NI");
-}
+import styles from "./auditoria.module.css";
 
 const AUDIT_PAGE_SIZE = 50;
+const DEFAULT_LIMIT = "200";
+
+type Tone = "plain" | "good" | "warn" | "bad" | "info";
 
 function payloadText(payload: AuditLogEntry["payload"]) {
   if (!payload) return "{}";
@@ -22,8 +22,60 @@ function payloadText(payload: AuditLogEntry["payload"]) {
   return JSON.stringify(payload);
 }
 
+function payloadPretty(payload: AuditLogEntry["payload"]) {
+  if (!payload) return "{}";
+  if (typeof payload === "string") {
+    try {
+      return JSON.stringify(JSON.parse(payload), null, 2);
+    } catch {
+      return payload;
+    }
+  }
+  return JSON.stringify(payload, null, 2);
+}
+
+/** Tono del chip segun el tipo de accion auditada. */
+function actionTone(action: string): Tone {
+  const value = action.toLowerCase();
+  if (/(delet|archiv|revok|denied|fail|suspend|remov|block)/.test(value)) return "bad";
+  if (/(reset|rotat|password|expir)/.test(value)) return "warn";
+  if (/(creat|restor|resolv|approv|activat)/.test(value)) return "good";
+  if (/(export|download|view|read)/.test(value)) return "info";
+  return "plain";
+}
+
+function fill(text: string, values: Record<string, string | number>) {
+  return text.replace(/\{(\w+)\}/g, (_, key: string) => String(values[key] ?? ""));
+}
+
+const icons = {
+  search: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m16 16 4 4" />
+    </svg>
+  ),
+  download: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 4v11M7 10l5 5 5-5M5 19h14" />
+    </svg>
+  ),
+  filter: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+      <path d="M4 7h16M7 12h10M10 17h4" />
+    </svg>
+  ),
+  chevron: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="m9 6 6 6-6 6" />
+    </svg>
+  ),
+};
+
 export default function AuditPage() {
   const { apiGet, token, activeCompanyId, setActiveCompanyId, user } = useAuth();
+  const { t, language } = usePreferences();
+  const locale = language === "en" ? "en-US" : "es-NI";
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [companies, setCompanies] = useState<SystemCompany[]>([]);
   const [companyId, setCompanyId] = useState("");
@@ -33,11 +85,14 @@ export default function AuditPage() {
   const [entityId, setEntityId] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [limit, setLimit] = useState("200");
+  const [limit, setLimit] = useState(DEFAULT_LIMIT);
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [page, setPage] = useState(1);
+  const [moreFilters, setMoreFilters] = useState(false);
+  const [expandedId, setExpandedId] = useState("");
 
   const isSystemAdmin = user?.role === "system_admin";
   const canReadAudit = isSystemAdmin && Boolean(user?.permissions?.includes("audit:read"));
@@ -51,6 +106,8 @@ export default function AuditPage() {
     () => logs.slice((currentPage - 1) * AUDIT_PAGE_SIZE, currentPage * AUDIT_PAGE_SIZE),
     [currentPage, logs],
   );
+  const extraFilters = [entityType.trim(), entityId.trim(), limit !== DEFAULT_LIMIT ? limit : ""].filter(Boolean).length;
+  const anyFilter = Boolean(companyId || actor.trim() || action.trim() || dateFrom || dateTo || extraFilters);
 
   const queryString = useCallback(
     (exportMode: "json" | "csv" = "json") => {
@@ -77,13 +134,15 @@ export default function AuditPage() {
       const response = await apiGet<AuditLogsResponse>(`/api/audit/logs?${queryString()}`);
       setLogs(response.items);
       setPage(1);
-      setStatusText(`${response.count} eventos cargados`);
+      setExpandedId("");
+      setStatusText(`${response.count} ${t("eventos cargados")}`);
     } catch {
       setStatusText("No se pudo cargar la auditoria");
     } finally {
       setLoading(false);
+      setLoaded(true);
     }
-  }, [apiGet, canReadAudit, queryString]);
+  }, [apiGet, canReadAudit, queryString, t]);
 
   const loadCompanies = useCallback(async () => {
     if (!isSystemAdmin) return;
@@ -116,6 +175,17 @@ export default function AuditPage() {
     await loadAudit();
   }
 
+  function clearFilters() {
+    setCompanyId("");
+    setActor("");
+    setAction("");
+    setEntityType("");
+    setEntityId("");
+    setDateFrom("");
+    setDateTo("");
+    setLimit(DEFAULT_LIMIT);
+  }
+
   async function exportCsv() {
     if (!canReadAudit || !token) return;
     setDownloading(true);
@@ -132,125 +202,279 @@ export default function AuditPage() {
     }
   }
 
+  function toggleRow(id: string) {
+    setExpandedId((current) => (current === id ? "" : id));
+  }
+
+  function onRowKey(event: KeyboardEvent<HTMLTableRowElement>, id: string) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggleRow(id);
+    }
+  }
+
+  function formatWhen(value: string | null) {
+    if (!value) return { date: "-", time: "" };
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return { date: value, time: "" };
+    return {
+      date: date.toLocaleDateString(locale, { day: "numeric", month: "short", year: "numeric" }),
+      time: date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+    };
+  }
+
   if (!isSystemAdmin) {
     return (
-      <AppShell title="Auditoria" description="Trazabilidad de acciones sensibles">
-        <Panel title="Acceso restringido">
-          <EmptyState>Esta vista solo esta disponible para el administrador del sistema.</EmptyState>
-        </Panel>
+      <AppShell title={t("Auditoría")} description={t("Trazabilidad de acciones sensibles")}>
+        <EmptyBlock
+          title={t("Acceso restringido")}
+          description={t("Esta vista solo esta disponible para el administrador del sistema.")}
+        />
       </AppShell>
     );
   }
 
+  const firstRow = logs.length ? (currentPage - 1) * AUDIT_PAGE_SIZE + 1 : 0;
+  const lastRow = Math.min(currentPage * AUDIT_PAGE_SIZE, logs.length);
+
   return (
     <AppShell
-      title="Auditoria"
-      description={`${user?.company || "Sistema"} · acciones administrativas y eventos sensibles`}
-      actions={<RefreshButton loading={loading} onClick={() => void loadAudit()} />}
+      title={t("Auditoría")}
+      description={`${user?.company || t("Sistema")} · ${t("acciones administrativas y eventos sensibles")}`}
+      actions={
+        <>
+          <RefreshButton loading={loading} onClick={() => void loadAudit()} />
+          <button type="button" className="btn btn-outline" onClick={() => void exportCsv()} disabled={downloading}>
+            {icons.download}
+            <span>{downloading ? t("Exportando...") : t("Exportar CSV")}</span>
+          </button>
+        </>
+      }
     >
-      <section className="settings-page audit-page">
-        <div className="stats-grid">
-          <StatCard label="Eventos" value={`${logs.length}`} detail="Resultado del filtro" />
-          <StatCard label="Actores" value={`${actorsCount}`} detail="Usuarios detectados" />
-          <StatCard label="Acciones" value={`${actionsCount}`} detail="Tipos auditados" />
-          <StatCard label="Empresas" value={`${companiesCount}`} detail={isSystemAdmin ? "Alcance global" : "Tu empresa"} />
-        </div>
+      <section className={styles.card} aria-labelledby="audit-title">
+        <header className={styles.cardHead}>
+          <div className={styles.cardTitle}>
+            <h2 id="audit-title">{t("Eventos auditados")}</h2>
+            <span>
+              {fill(t("{events} eventos · {actors} actores · {actions} tipos de acción · {companies} empresas"), {
+                events: logs.length,
+                actors: actorsCount,
+                actions: actionsCount,
+                companies: companiesCount,
+              })}
+            </span>
+          </div>
+        </header>
 
-        <Panel title="Filtros">
-          <form className="audit-filter-grid" onSubmit={applyFilters}>
-            {isSystemAdmin ? (
-              <label>Empresa
-                <select value={companyId} onChange={(event) => {
-                  setCompanyId(event.target.value);
-                  if (event.target.value) setActiveCompanyId(event.target.value);
-                }}>
-                  <option value="">Todas</option>
-                  {companies.map((company) => (
-                    <option key={company.id} value={company.id}>{company.name}</option>
-                  ))}
-                </select>
-              </label>
-            ) : null}
-            <label>Actor
-              <input value={actor} onChange={(event) => setActor(event.target.value)} placeholder="correo o nombre" />
-            </label>
-            <label>Accion
-              <input value={action} onChange={(event) => setAction(event.target.value)} placeholder="incident_resolved" />
-            </label>
-            <label>Entidad
-              <input value={entityType} onChange={(event) => setEntityType(event.target.value)} placeholder="user, shift, incident" />
-            </label>
-            <label>ID entidad
-              <input value={entityId} onChange={(event) => setEntityId(event.target.value)} placeholder="UUID exacto" />
-            </label>
-            <label>Desde
-              <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-            </label>
-            <label>Hasta
-              <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
-            </label>
-            <label>Limite
-              <input type="number" min="1" max="1000" value={limit} onChange={(event) => setLimit(event.target.value)} />
-            </label>
-            <div className="audit-actions">
-              <button type="submit" className="settings-primary-action">Aplicar filtros</button>
-              <button type="button" className="secondary-button" onClick={() => void exportCsv()} disabled={downloading}>
-                {downloading ? "Exportando..." : "Exportar CSV"}
-              </button>
+        <form className={styles.filters} onSubmit={applyFilters} aria-label={t("Filtros")}>
+          <div className="toolbar">
+            <div className={`search-input ${styles.search}`}>
+              {icons.search}
+              <input
+                type="search"
+                value={actor}
+                onChange={(event) => setActor(event.target.value)}
+                placeholder={t("Buscar actor")}
+                title={t("Correo o nombre del actor")}
+                aria-label={t("Actor")}
+              />
             </div>
-          </form>
-        </Panel>
+            <input
+              className={styles.action}
+              value={action}
+              onChange={(event) => setAction(event.target.value)}
+              placeholder={t("Código de acción")}
+              title={t("Ej. incident_resolved")}
+              aria-label={t("Accion")}
+            />
+            {isSystemAdmin ? (
+              <select
+                className={styles.company}
+                value={companyId}
+                aria-label={t("Empresa")}
+                onChange={(event) => {
+                  setCompanyId(event.target.value);
+                  const company = companies.find((row) => row.id === event.target.value);
+                  if (company) setActiveCompanyId(company.id, company.name);
+                }}
+              >
+                <option value="">{t("Todas las empresas")}</option>
+                {companies.map((company) => (
+                  <option key={company.id} value={company.id}>
+                    {company.name}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <div className={styles.range}>
+              <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} aria-label={t("Desde")} title={t("Desde")} />
+              <span aria-hidden>–</span>
+              <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} aria-label={t("Hasta")} title={t("Hasta")} />
+            </div>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              aria-expanded={moreFilters}
+              aria-controls="audit-more-filters"
+              onClick={() => setMoreFilters((value) => !value)}
+            >
+              {icons.filter}
+              <span>
+                {t("Más filtros")}
+                {extraFilters ? ` (${extraFilters})` : ""}
+              </span>
+            </button>
+            <span className="grow" />
+            {anyFilter ? (
+              <button type="button" className="btn btn-ghost" onClick={clearFilters}>
+                {t("Limpiar")}
+              </button>
+            ) : null}
+            <button type="submit" className="btn" title={t("Aplicar filtros")}>
+              {t("Aplicar")}
+            </button>
+          </div>
 
-        <StatusLine>{statusText}</StatusLine>
+          {moreFilters ? (
+            <div id="audit-more-filters" className={styles.more}>
+              <label className={styles.field}>
+                <span>{t("Entidad")}</span>
+                <input value={entityType} onChange={(event) => setEntityType(event.target.value)} placeholder="user, shift, incident" />
+              </label>
+              <label className={styles.field}>
+                <span>{t("ID entidad")}</span>
+                <input value={entityId} onChange={(event) => setEntityId(event.target.value)} placeholder={t("UUID exacto")} />
+              </label>
+              <label className={styles.field}>
+                <span>{t("Límite de filas")}</span>
+                <input type="number" min="1" max="1000" value={limit} onChange={(event) => setLimit(event.target.value)} />
+                <small className="field-hint">{t("Máximo 1000")}</small>
+              </label>
+            </div>
+          ) : null}
+        </form>
 
-        <Panel title="Eventos auditados" meta={`${logs.length} registros`}>
-          <div className="settings-table-shell audit-table-shell">
-            <table>
+        {!logs.length ? (
+          <div className={styles.emptyWrap}>
+            {loaded ? (
+              <EmptyBlock
+                title={t("Sin eventos")}
+                description={t("No hay eventos para el filtro actual.")}
+                action={
+                  anyFilter ? (
+                    <button type="button" className="btn btn-outline btn-sm" onClick={clearFilters}>
+                      {t("Limpiar filtros")}
+                    </button>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <p className={styles.loadingText}>{t("Cargando auditoria...")}</p>
+            )}
+          </div>
+        ) : (
+          <div className={styles.tableWrap}>
+            <table className={styles.table}>
               <thead>
                 <tr>
-                  <th>Fecha</th>
-                  <th>Actor</th>
-                  <th>Empresa</th>
-                  <th>Accion</th>
-                  <th>Entidad</th>
-                  <th>IP</th>
-                  <th>Payload</th>
+                  <th>{t("Fecha")}</th>
+                  <th>{t("Actor")}</th>
+                  <th>{t("Empresa")}</th>
+                  <th>{t("Acción")}</th>
+                  <th>{t("Entidad")}</th>
+                  <th>{t("IP")}</th>
+                  <th>{t("Detalle")}</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleLogs.map((log) => (
-                  <tr key={log.id}>
-                    <td>{dateOnly(log.created_at)}</td>
-                    <td>
-                      <strong>{log.actor || "Sistema"}</strong>
-                      <small>{log.actor_email || log.user_id || "-"}</small>
-                    </td>
-                    <td>{log.company || "-"}</td>
-                    <td><span className="audit-action-pill">{log.action}</span></td>
-                    <td>
-                      <strong>{log.entity_type || "-"}</strong>
-                      <small>{log.entity_id || "-"}</small>
-                    </td>
-                    <td>{log.ip_address || "-"}</td>
-                    <td><code className="audit-payload">{payloadText(log.payload)}</code></td>
-                  </tr>
-                ))}
+                {visibleLogs.map((log) => {
+                  const when = formatWhen(log.created_at);
+                  const expanded = expandedId === log.id;
+                  return (
+                    <Fragment key={log.id}>
+                      <tr
+                        className={expanded ? styles.expandedRow : undefined}
+                        onClick={() => toggleRow(log.id)}
+                        onKeyDown={(event) => onRowKey(event, log.id)}
+                        tabIndex={0}
+                        aria-expanded={expanded}
+                      >
+                        <td>
+                          <div className={styles.stack}>
+                            <span>{when.date}</span>
+                            <small>{when.time}</small>
+                          </div>
+                        </td>
+                        <td>
+                          <div className={styles.stack}>
+                            <strong>{log.actor || t("Sistema")}</strong>
+                            <small>{log.actor_email || log.user_id || "-"}</small>
+                          </div>
+                        </td>
+                        <td>{log.company || "-"}</td>
+                        <td>
+                          <Chip tone={actionTone(log.action)} dot={false}>
+                            <span className={styles.code}>{log.action}</span>
+                          </Chip>
+                        </td>
+                        <td>
+                          <div className={styles.stack}>
+                            <span>{log.entity_type || "-"}</span>
+                            <small className={styles.code}>{log.entity_id || "-"}</small>
+                          </div>
+                        </td>
+                        <td className={styles.code}>{log.ip_address || "-"}</td>
+                        <td className={styles.payloadCell}>
+                          <span className={`${styles.chevron} ${expanded ? styles.chevronOpen : ""}`}>{icons.chevron}</span>
+                          <code className={styles.payload}>{payloadText(log.payload)}</code>
+                        </td>
+                      </tr>
+                      {expanded ? (
+                        <tr className={styles.detailRow}>
+                          <td colSpan={7}>
+                            <pre className={styles.pre}>{payloadPretty(log.payload)}</pre>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
-            {!logs.length ? <EmptyState>No hay eventos para el filtro actual.</EmptyState> : null}
           </div>
-          {pageCount > 1 ? (
-            <div className="settings-pagination">
-              <button type="button" disabled={currentPage <= 1} onClick={() => setPage(Math.max(1, currentPage - 1))}>
-                Anterior
-              </button>
-              <span>{currentPage} / {pageCount}</span>
-              <button type="button" disabled={currentPage >= pageCount} onClick={() => setPage(Math.min(pageCount, currentPage + 1))}>
-                Siguiente
-              </button>
+        )}
+
+        <footer className={styles.cardFoot}>
+          <StatusLine>{t(statusText)}</StatusLine>
+          {logs.length ? (
+            <div className={styles.pager}>
+              <span>{fill(t("{from}–{to} de {total}"), { from: firstRow, to: lastRow, total: logs.length })}</span>
+              {pageCount > 1 ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    disabled={currentPage <= 1}
+                    onClick={() => setPage(Math.max(1, currentPage - 1))}
+                  >
+                    {t("Anterior")}
+                  </button>
+                  <span>
+                    {currentPage} / {pageCount}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    disabled={currentPage >= pageCount}
+                    onClick={() => setPage(Math.min(pageCount, currentPage + 1))}
+                  >
+                    {t("Siguiente")}
+                  </button>
+                </>
+              ) : null}
             </div>
           ) : null}
-        </Panel>
+        </footer>
       </section>
     </AppShell>
   );

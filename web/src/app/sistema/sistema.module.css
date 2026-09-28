@@ -1,0 +1,629 @@
+/* Consola del sistema: estilos propios de la pagina sobre design-system.css */
+
+.page {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* --- Avisos --------------------------------------------------------------- */
+.alerts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.alertButton {
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  transition:
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease);
+}
+
+.alertButton:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+/* --- KPIs ----------------------------------------------------------------- */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+/* --- Tarjetas ------------------------------------------------------------- */
+.card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  scroll-margin-top: 16px;
+}
+
+.cardHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 18px;
+}
+
+.cardTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+
+.cardTitle h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.cardTitle span {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.cardBody {
+  padding: 18px;
+}
+
+.cardBodyTight {
+  padding: 4px 18px;
+}
+
+.loadingText {
+  margin: 0;
+  color: var(--muted);
+  padding: 28px 18px;
+  font-size: 13px;
+}
+
+.search {
+  width: 240px;
+}
+
+/* Supera la regla base de inputs (que anula el hueco del icono). */
+.search input:not(#_):not(#__) {
+  width: 100%;
+  padding-left: 32px;
+}
+
+.count {
+  margin-left: 6px;
+  color: var(--muted-soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Tabla de empresas ---------------------------------------------------- */
+.tableWrap {
+  min-width: 0;
+}
+
+.table {
+  width: 100%;
+}
+
+.table thead th {
+  position: static;
+}
+
+.table th:first-child,
+.table td:first-child {
+  padding-left: 18px;
+}
+
+.table th:last-child,
+.table td:last-child {
+  padding-right: 12px;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table tbody tr:last-child td:first-child {
+  border-bottom-left-radius: var(--r);
+}
+
+.table td {
+  height: 58px;
+  vertical-align: middle;
+}
+
+.table tbody tr {
+  outline-offset: -2px;
+}
+
+.table th:nth-child(2) {
+  width: 26%;
+}
+
+.archivedRow td {
+  color: var(--muted);
+}
+
+.archivedRow strong {
+  color: var(--ink-soft);
+}
+
+.menuCell {
+  width: 44px;
+  text-align: right;
+}
+
+.stack {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.stack strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+}
+
+.stack small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+
+.usage {
+  display: grid;
+  gap: 6px;
+  max-width: 220px;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
+/* --- Aviso flotante de estado --------------------------------------------- */
+.toast {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 70;
+  max-width: min(420px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 6px 6px 14px;
+  animation: toast-in 0.2s var(--ease) both;
+}
+
+.toast :global(.status-line) {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* --- Detalle de empresa --------------------------------------------------- */
+.detailHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px 6px;
+}
+
+.detailHead h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.detailHead p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tabsRow {
+  border-bottom: 1px solid var(--line);
+  padding: 0 10px;
+}
+
+/* globals.css aun da a .tabs aspecto de "pildora"; aqui se usa la variante subrayada. */
+.tabsRow :global(.tabs) {
+  flex-wrap: nowrap;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.summary {
+  display: grid;
+  gap: 18px;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px 24px;
+  margin: 0;
+}
+
+.facts > div,
+.miniFacts > div {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.facts dt,
+.miniFacts dt {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.facts dd,
+.miniFacts dd {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.facts dd small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.facts dd :global(.usage-bar) {
+  max-width: 180px;
+}
+
+.notice {
+  display: grid;
+  gap: 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.notice span {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.notice p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 13.5px;
+}
+
+.tabPane {
+  display: grid;
+  gap: 8px;
+}
+
+.paneHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* --- Lista de usuarios ---------------------------------------------------- */
+.userList {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.userRow {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1.7fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 1.1fr) 30px;
+  align-items: center;
+  gap: 14px;
+  min-height: 60px;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+}
+
+.userRow:last-child {
+  border-bottom: 0;
+}
+
+.userName {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.userName strong,
+.userName small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.userName strong {
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 550;
+}
+
+.userName em {
+  margin-left: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  color: var(--muted);
+  padding: 0 7px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.userName small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.userMeta {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
+.userMeta small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* --- Formularios ---------------------------------------------------------- */
+.field {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.field > span {
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.field :is(input, select, textarea) {
+  width: 100%;
+}
+
+.form {
+  display: grid;
+  gap: 16px;
+  max-width: 680px;
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.drawerForm {
+  display: grid;
+  gap: 16px;
+}
+
+.drawerText {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.miniFacts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  margin: 0;
+}
+
+.miniFacts dd {
+  font-size: 13.5px;
+}
+
+.inlineActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.footStatus {
+  margin-right: auto;
+  align-self: center;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* --- Credencial generada -------------------------------------------------- */
+.credential {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--good-line);
+  border-radius: var(--r);
+  background: var(--good-soft);
+  padding: 14px 16px;
+}
+
+.credential > span {
+  color: var(--good);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+
+.credential > strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.credential > small {
+  color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
+.secret {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  padding: 4px 4px 4px 12px;
+}
+
+.secret code {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+/* --- Zona de riesgo ------------------------------------------------------- */
+.danger {
+  display: grid;
+  gap: 12px;
+  max-width: 760px;
+}
+
+.dangerRow {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  border: 1px solid var(--bad-line);
+  border-radius: var(--r);
+  padding: 16px 18px;
+}
+
+.dangerRow > div {
+  display: grid;
+  flex: 1;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dangerRow strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.dangerRow p {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dangerRow .field {
+  max-width: 360px;
+}
+
+/* --- Responsive ----------------------------------------------------------- */
+@media (max-width: 1180px) {
+  .kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .tableWrap {
+    overflow-x: auto;
+  }
+
+  .table {
+    min-width: 720px;
+  }
+
+  .search {
+    width: 100%;
+  }
+
+  .cardHead :global(.toolbar) {
+    width: 100%;
+  }
+
+  .cardHead :global(.segmented) {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .userRow {
+    grid-template-columns: 32px minmax(0, 1fr) 30px;
+  }
+
+  .userRow > :nth-child(3),
+  .userRow > :nth-child(4),
+  .userRow > :nth-child(5) {
+    grid-column: 2;
+  }
+
+  .userRow > :last-child {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .dangerRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 560px) {
+  .kpis,
+  .facts,
+  .miniFacts {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,1488 @@
+/* ==========================================================================
+   VYNTRA Control — sistema de diseno v2
+   Neutros calidos, un unico acento (teal VYNTRA), bordes para la estructura y
+   sombra solo para lo que flota. Se carga despues de globals.css y se limita
+   al panel (.app-shell) y al acceso (.login-shell): la estacion web conserva
+   su propio diseno.
+
+   `.app-shell:not(#_)` eleva la especificidad a proposito para que estas
+   reglas base ganen sobre los estilos antiguos de cada pagina.
+   ========================================================================== */
+
+:root {
+  --danger: var(--bad);
+  --danger-soft: var(--bad-soft);
+  --danger-line: var(--bad-line);
+  --sidebar-w: 240px;
+  --scope-stripe: var(--primary);
+  --h-control: 36px;
+}
+
+/* --- Tipografia base ------------------------------------------------------ */
+body {
+  font-family: var(--font-sans);
+  letter-spacing: -0.006em;
+  font-feature-settings: "ss01" 0;
+}
+
+.app-shell :is(table, .stat strong, .soft-pill, .time-pill, .stat-delta),
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.mono,
+.app-shell code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+/* --- Marco: barra lateral ---------------------------------------------- */
+.app-shell {
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  background: var(--canvas);
+}
+
+.app-shell[data-scope="system"] {
+  --scope-stripe: var(--ink);
+}
+
+.app-shell .sidebar {
+  gap: 20px;
+  border-right: 1px solid var(--line);
+  background: var(--surface-sunken);
+  padding: 16px 12px 14px;
+}
+
+.app-shell .sidebar-head {
+  margin: 2px 6px 4px;
+}
+
+.app-shell .brand-row {
+  gap: 10px;
+}
+
+.app-shell .brand-mark {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.12);
+}
+
+.app-shell .brand-row strong {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+}
+
+.app-shell .brand-row span {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+}
+
+.nav-group {
+  display: grid;
+  gap: 1px;
+}
+
+.nav-group-label {
+  margin: 0 10px 6px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.app-shell .sidebar nav {
+  display: grid;
+  gap: 16px;
+}
+
+.app-shell .sidebar a {
+  gap: 10px;
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--ink-soft);
+  padding: 0 10px;
+  font-size: 13.5px;
+  font-weight: 450;
+}
+
+.app-shell .sidebar a svg {
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+
+.app-shell .sidebar a:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.app-shell .sidebar a.active {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 550;
+  box-shadow: var(--shadow-xs);
+}
+
+.app-shell .sidebar a.active svg {
+  color: var(--primary);
+}
+
+.app-shell .sidebar a.active::before {
+  display: none;
+}
+
+.scope-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  padding: 7px 9px;
+  min-width: 0;
+}
+
+.scope-chip i {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.scope-chip span {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Pie de la barra lateral: usuario + preferencias */
+.sidebar-footer {
+  display: grid;
+  gap: 10px;
+  margin-top: auto;
+  border-top: 1px solid var(--line);
+  padding: 12px 4px 0;
+}
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.avatar {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--primary-soft);
+  color: var(--primary-ink);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.avatar.lg {
+  width: 40px;
+  height: 40px;
+  font-size: 14px;
+}
+
+.user-chip div {
+  min-width: 0;
+}
+
+.user-chip strong,
+.user-chip small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-chip strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.user-chip small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sidebar-tools {
+  display: flex;
+  gap: 6px;
+}
+
+.app-shell .shell-icon-button,
+.login-shell .shell-icon-button {
+  width: 32px;
+  height: 32px;
+  border-color: var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink-soft);
+  box-shadow: none;
+}
+
+.app-shell .shell-icon-button:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.app-shell .shell-icon-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.app-shell .shell-icon-button.lang {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  gap: 5px;
+  padding: 0 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.app-shell .shell-icon-button.logout:hover {
+  border-color: var(--bad-line);
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+/* --- Marco: contenido y encabezado --------------------------------------- */
+.app-shell .content {
+  padding: 0 32px 56px;
+}
+
+.app-shell .content::before {
+  content: "";
+  display: block;
+  height: 3px;
+  margin: 0 -32px 22px;
+  background: var(--scope-stripe);
+}
+
+.app-shell .topbar {
+  gap: 16px;
+  margin-bottom: 22px;
+  border-bottom: 0;
+  padding-bottom: 0;
+  animation: none;
+}
+
+.app-shell .topbar h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+}
+
+.app-shell .topbar p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.app-shell .topbar-actions,
+.app-shell .page-actions {
+  gap: 8px;
+}
+
+/* --- Botones -------------------------------------------------------------- */
+.btn,
+.app-shell .secondary-button,
+.app-shell .settings-primary-action,
+.app-shell .primary-action,
+.login-shell .login-form button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  height: var(--h-control);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: var(--primary);
+  color: #fff;
+  padding: 0 14px;
+  font-size: 13.5px;
+  font-weight: 550;
+  letter-spacing: 0;
+  box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+  transition:
+    background 0.15s var(--ease),
+    border-color 0.15s var(--ease),
+    color 0.15s var(--ease);
+}
+
+.btn:hover:not(:disabled),
+.app-shell .secondary-button:hover:not(:disabled),
+.app-shell .settings-primary-action:hover:not(:disabled),
+.app-shell .primary-action:hover:not(:disabled),
+.login-shell .login-form button:hover:not(:disabled) {
+  background: var(--primary-dark);
+}
+
+.btn svg,
+.app-shell .secondary-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.btn-outline,
+.app-shell .btn-outline {
+  border-color: var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-xs);
+}
+
+.btn-outline:hover:not(:disabled),
+.app-shell .btn-outline:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink-soft);
+  box-shadow: none;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.btn-danger {
+  border-color: var(--bad-line);
+  background: var(--surface);
+  color: var(--bad);
+  box-shadow: none;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.btn-sm {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.app-shell .row-action {
+  min-height: 30px;
+  border-color: var(--line-strong);
+  border-radius: var(--r-sm);
+  box-shadow: none;
+  padding: 0 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.app-shell .row-action:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.app-shell .row-action.danger {
+  border-color: var(--bad-line);
+  color: var(--bad);
+}
+
+.app-shell .row-action.danger:hover {
+  background: var(--bad-soft);
+}
+
+.icon-button {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+}
+
+.icon-button:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.icon-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* --- Formularios ---------------------------------------------------------- */
+.app-shell:not(#_) label,
+.login-shell:not(#_) label {
+  gap: 6px;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.app-shell:not(#_) :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select),
+.login-shell:not(#_) :is(input, select) {
+  min-height: var(--h-control);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 11px;
+  font-size: 13.5px;
+  font-weight: 400;
+  box-shadow: var(--shadow-xs);
+}
+
+.app-shell:not(#_) textarea {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 9px 11px;
+  font-size: 13.5px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.app-shell:not(#_) :is(input, textarea)::placeholder,
+.login-shell:not(#_) input::placeholder {
+  color: var(--muted-soft);
+  font-weight: 400;
+  opacity: 1;
+}
+
+.app-shell:not(#_) :is(input, select, textarea):hover {
+  border-color: var(--muted-soft);
+}
+
+.app-shell:not(#_) :is(input, select, textarea):focus,
+.login-shell:not(#_) :is(input, select):focus {
+  border-color: var(--primary);
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+.app-shell input[type="checkbox"],
+.app-shell input[type="radio"] {
+  accent-color: var(--primary);
+}
+
+.field-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* --- Tarjetas, paneles e indicadores -------------------------------------- */
+.app-shell :is(.stat, .panel, .filter-row, .attendance-card, .group-card, .associate-card, .associate-month, .activity-day, .employee-detail-section) {
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.app-shell .panel {
+  padding: 18px;
+  animation: fade-in 0.3s var(--ease) both;
+}
+
+.app-shell .panel-title {
+  margin-bottom: 14px;
+}
+
+.app-shell .panel-title h2 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.app-shell .panel-title span {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 450;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.app-shell .stats-grid {
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.app-shell .stat {
+  gap: 4px;
+  min-height: 0;
+  padding: 16px 18px;
+  animation: fade-in 0.3s var(--ease) both;
+  transition: border-color 0.15s var(--ease);
+}
+
+.app-shell .stat:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-xs);
+  transform: none;
+}
+
+.app-shell .stat span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.app-shell .stat strong {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.app-shell .stat small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* Los estados se comunican con un punto y el color de la cifra, sin teñir la tarjeta. */
+.app-shell :is(.stat-good, .stat-warn, .stat-bad) {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+.app-shell :is(.stat-good, .stat-warn, .stat-bad) :is(span, small) {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.app-shell :is(.stat-good, .stat-warn, .stat-bad) span::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.app-shell .stat-good span::before { background: var(--good); }
+.app-shell .stat-warn span::before { background: var(--warn); }
+.app-shell .stat-bad span::before { background: var(--bad); }
+.app-shell .stat-good strong { color: var(--good); }
+.app-shell .stat-warn strong { color: var(--warn); }
+.app-shell .stat-bad strong { color: var(--bad); }
+
+.app-shell .stat-delta {
+  border-radius: var(--r-pill);
+  padding: 2px 8px;
+  font-size: 11.5px;
+  font-weight: 550;
+}
+
+/* --- Tablas --------------------------------------------------------------- */
+.app-shell table {
+  font-size: 13px;
+}
+
+.app-shell :is(th, td) {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 12px;
+}
+
+.app-shell thead th {
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-sunken);
+  color: var(--muted);
+  padding-top: 8px;
+  padding-bottom: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.app-shell td {
+  color: var(--ink-soft);
+}
+
+.app-shell tbody tr:hover {
+  background: var(--surface-hover);
+}
+
+.app-shell .selected-row {
+  background: var(--primary-soft) !important;
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+.app-shell .table-person > span {
+  width: 32px;
+  height: 32px;
+  background: var(--primary-soft);
+  color: var(--primary-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.app-shell .table-person strong {
+  font-weight: 550;
+}
+
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Insignias y chips ---------------------------------------------------- */
+.app-shell :is(.soft-pill, .badge) {
+  min-height: 22px;
+  gap: 5px;
+  border-radius: var(--r-pill);
+  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  border-radius: var(--r-pill);
+  background: var(--plain-bg);
+  color: var(--ink-soft);
+  padding: 2px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.chip::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.9;
+}
+
+.chip.no-dot::before { display: none; }
+.chip-good { background: var(--good-soft); color: var(--good); }
+.chip-warn { background: var(--warn-soft); color: var(--warn); }
+.chip-bad { background: var(--bad-soft); color: var(--bad); }
+.chip-accent { background: var(--primary-soft); color: var(--primary-ink); }
+.chip-info { background: var(--cyan-soft); color: var(--cyan); }
+
+/* Punto "en vivo" para quien esta conectado ahora. */
+.live-dot {
+  display: inline-block;
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: var(--primary);
+  opacity: 0.35;
+  animation: live-pulse 1.8s ease-out infinite;
+}
+
+@keyframes live-pulse {
+  0% { transform: scale(0.5); opacity: 0.45; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+/* Barra de jornada: trabajo / pausa / almuerzo / inactivo en una sola linea. */
+.shift-bar {
+  display: flex;
+  overflow: hidden;
+  width: 100%;
+  min-width: 120px;
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--plain-bg);
+}
+
+.shift-bar i { display: block; height: 100%; }
+.shift-bar .seg-work { background: var(--primary); }
+.shift-bar .seg-break { background: var(--warn); opacity: 0.75; }
+.shift-bar .seg-lunch { background: var(--cyan); opacity: 0.75; }
+.shift-bar .seg-idle { background: var(--muted-soft); }
+.shift-bar .seg-overtime { background: var(--primary-dark); }
+
+/* Barra de uso (planes, licencias) */
+.usage-bar {
+  overflow: hidden;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--plain-bg);
+}
+
+.usage-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+}
+
+.usage-bar.warn i { background: var(--warn); }
+.usage-bar.bad i { background: var(--bad); }
+
+/* --- Barra de herramientas (busqueda y filtros en linea) ------------------ */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.toolbar .grow {
+  flex: 1 1 auto;
+}
+
+.search-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-input svg {
+  position: absolute;
+  left: 10px;
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.app-shell:not(#_) .search-input input {
+  padding-left: 32px;
+}
+
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+  padding: 2px;
+}
+
+.segmented button {
+  height: 30px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.segmented button[aria-pressed="true"],
+.segmented button.on {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(28, 27, 25, 0.08);
+}
+
+/* --- Pestanas ------------------------------------------------------------- */
+.tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.tabs button {
+  position: relative;
+  height: 38px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.tabs button:hover {
+  color: var(--ink);
+}
+
+.tabs button[aria-selected="true"] {
+  color: var(--ink);
+}
+
+.tabs button[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  bottom: -1px;
+  left: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+
+.tabs button.danger { color: var(--bad); }
+
+/* --- Panel lateral (drawer) ----------------------------------------------- */
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(20, 19, 17, 0.32);
+  animation: fade-in 0.18s ease both;
+}
+
+.drawer {
+  display: flex;
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 81;
+  flex-direction: column;
+  width: min(520px, calc(100vw - 16px));
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  animation: drawer-in 0.24s var(--ease) both;
+}
+
+.drawer.wide {
+  width: min(720px, calc(100vw - 16px));
+}
+
+.drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 18px 20px 16px;
+}
+
+.drawer-head h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.drawer-head p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.drawer-body {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  overflow-y: auto;
+  flex: 1;
+  padding: 18px 20px;
+}
+
+.drawer-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding: 14px 20px;
+}
+
+.drawer-section {
+  display: grid;
+  gap: 12px;
+}
+
+.drawer-section + .drawer-section {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.drawer-section h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@keyframes drawer-in {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* --- Menu contextual (kebab) ---------------------------------------------- */
+.menu-anchor {
+  position: relative;
+}
+
+.context-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 60;
+  display: grid;
+  min-width: 200px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+}
+
+.context-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  padding: 0 10px;
+  font-size: 13px;
+  text-align: left;
+}
+
+.context-menu button:hover {
+  background: var(--surface-hover);
+}
+
+.context-menu button.danger {
+  color: var(--bad);
+}
+
+.context-menu hr {
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* --- Estados vacios y avisos ---------------------------------------------- */
+.app-shell .empty,
+.empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r);
+  background: var(--surface-sunken);
+  color: var(--muted);
+  padding: 28px 16px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.empty-state strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.alert-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.alert {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink-soft);
+  padding: 7px 11px;
+  font-size: 13px;
+}
+
+.alert i {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--muted-soft);
+}
+
+.alert.warn i { background: var(--warn); }
+.alert.bad i { background: var(--bad); }
+.alert.info i { background: var(--primary); }
+
+.app-shell .system-notice {
+  border-radius: var(--r-sm);
+}
+
+.app-shell .status-line {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+/* --- Acceso --------------------------------------------------------------- */
+.login-shell {
+  background:
+    radial-gradient(1200px 520px at 50% -10%, color-mix(in srgb, var(--primary) 9%, transparent), transparent 70%),
+    var(--canvas);
+}
+
+.login-shell .login-panel,
+.login-shell .login-card {
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.login-shell h1 {
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+
+.login-shell .brand-mark {
+  border-radius: 9px;
+  background: var(--primary);
+}
+
+/* --- Carga ---------------------------------------------------------------- */
+.loading-shell .brand-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 22px;
+}
+
+/* --- Pantallas pequenas ---------------------------------------------------- */
+@media (max-width: 980px) {
+  .app-shell .content {
+    padding: 0 16px 40px;
+  }
+
+  .app-shell .content::before {
+    margin: 0 -16px 16px;
+  }
+
+  .field-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot::after {
+    animation: none;
+  }
+}
+
+/* --- Acceso: diseno en dos columnas ---------------------------------------- */
+.login-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  align-items: stretch;
+  min-height: 100vh;
+  padding: 0;
+  background: var(--canvas);
+}
+
+.login-aside {
+  display: flex;
+  position: relative;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 40px;
+  overflow: hidden;
+  margin: 12px 0 12px 12px;
+  border-radius: 18px;
+  background: #102a2c;
+  color: #e6f2f2;
+  padding: 36px 40px;
+}
+
+.login-aside::after {
+  content: "";
+  position: absolute;
+  right: -120px;
+  bottom: -160px;
+  width: 420px;
+  height: 420px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(46, 196, 203, 0.26), transparent 65%);
+  pointer-events: none;
+}
+
+.login-aside-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.login-aside-brand .brand-mark {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  background: #2ec4cb;
+  color: #062021;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.login-aside-brand strong {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.16em;
+}
+
+.login-aside-copy h2 {
+  max-width: 17ch;
+  margin: 0 0 18px;
+  color: #ffffff;
+  font-size: clamp(28px, 3vw, 38px);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.12;
+}
+
+.login-aside-copy ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  color: #b8d3d4;
+  font-size: 14px;
+  list-style: none;
+}
+
+.login-aside-copy li {
+  display: flex;
+  gap: 10px;
+}
+
+.login-aside-copy li::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: none;
+  margin-top: 8px;
+  border-radius: 50%;
+  background: #2ec4cb;
+}
+
+.login-aside-preview {
+  display: grid;
+  position: relative;
+  z-index: 1;
+  gap: 12px;
+  max-width: 420px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 16px 18px;
+}
+
+.login-aside-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #e6f2f2;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.login-aside-preview .live-dot,
+.login-aside-preview .live-dot::after {
+  background: #2ec4cb;
+}
+
+.login-aside-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  color: #b8d3d4;
+  font-size: 12.5px;
+}
+
+.login-aside .shift-bar {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.login-aside .seg-work { background: #2ec4cb; }
+.login-aside .seg-break { background: #f5b547; opacity: 0.85; }
+.login-aside .seg-lunch { background: #7fb0ea; opacity: 0.85; }
+.login-aside .seg-idle { background: rgba(255, 255, 255, 0.3); }
+
+.login-shell .login-panel {
+  align-self: center;
+  justify-self: center;
+  width: min(400px, calc(100% - 48px));
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.login-shell .login-panel h1 {
+  margin: 18px 0 6px;
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+}
+
+.login-shell .login-panel > p {
+  margin: 0 0 24px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.login-shell .login-form {
+  display: grid;
+  gap: 14px;
+}
+
+.login-shell:not(#_) .login-form input {
+  height: 40px;
+}
+
+.login-shell .login-form button {
+  height: 40px;
+  margin-top: 4px;
+}
+
+.login-shell .pref-button {
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--ink-soft);
+  padding: 5px 10px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+@media (max-width: 900px) {
+  .login-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .login-aside {
+    display: none;
+  }
+}
+
+/* Texto oscuro sobre el teal brillante del modo oscuro (contraste AA). */
+:root[data-theme="dark"] :is(.btn:not(.btn-outline):not(.btn-ghost):not(.btn-danger), .app-shell .secondary-button, .app-shell .settings-primary-action, .app-shell .primary-action, .login-shell .login-form button, .brand-mark) {
+  color: #062021;
+}
+
+.login-shell {
+  place-items: stretch;
+}
+
+.login-shell .login-aside {
+  justify-self: stretch;
+  align-self: stretch;
+  width: auto;
+}
+
+@media (min-width: 901px) {
+  .login-shell .login-panel > .brand-mark {
+    display: none;
+  }
+}
+
+/* --- Ajustes de integracion (recomendados por la revision de paginas) ------- */
+
+/* Pestanas: neutraliza el aspecto de pildora heredado de globals.css. */
+.app-shell .tabs {
+  flex-wrap: nowrap;
+  gap: 2px;
+  width: auto;
+  max-width: 100%;
+  margin-bottom: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.app-shell .tabs button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0 10px;
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.app-shell .tabs button:is([aria-selected="true"], .active) {
+  background: transparent;
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.app-shell .tabs button.active::after {
+  content: "";
+  position: absolute;
+  right: 8px;
+  bottom: -1px;
+  left: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+
+/* Buscador: el icono no debe quedar sobre el texto. */
+.app-shell:not(#_) .search-input input,
+.app-shell:not(#_) .search-input input:is(:hover, :focus) {
+  padding-left: 32px;
+}
+
+/* Lineas de estado sin margen heredado: se alinean en pies y avisos. */
+.app-shell .status-line {
+  margin-top: 0;
+}
+
+/* Movil: la barra lateral pasa a ser un panel deslizable y el contenido usa todo el ancho. */
+@media (max-width: 980px) {
+  .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-shell .sidebar {
+    width: min(var(--sidebar-w), 86vw);
+  }
+
+  .app-shell .mobile-menu-button {
+    display: inline-grid;
+    width: 34px;
+    height: 34px;
+    place-items: center;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+    color: var(--ink-soft);
+    box-shadow: none;
+  }
+
+  .app-shell .sidebar-close {
+    display: inline-grid;
+  }
+
+  .app-shell .topbar {
+    flex-wrap: wrap;
+  }
+}
+
+
+/* Panel lateral: sus hijos nunca se colapsan dentro de la rejilla con scroll. */
+.drawer-body > * {
+  min-height: min-content;
+}
+
+/* Dialogo de confirmacion compartido (ConfirmDialog). */
+.confirm-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 81;
+  display: grid;
+  gap: 12px;
+  width: min(420px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  padding: 20px;
+  transform: translate(-50%, -50%);
+  animation: fade-in 0.18s ease both;
+}
+
+.confirm-dialog h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.confirm-dialog-body {
+  color: var(--ink-soft);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.app-shell .context-menu {
+  z-index: 90;
+}

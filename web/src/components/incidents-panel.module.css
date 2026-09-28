@@ -1,0 +1,360 @@
+/* Bandeja de incidencias — estilos locales sobre el sistema de diseno v2. */
+
+.root {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.metrics > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 12px 18px;
+}
+
+.metrics > div + div {
+  border-left: 1px solid var(--line);
+}
+
+.metrics span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.metrics strong {
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+
+.metrics small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dotWarn,
+.dotGood,
+.dotBad {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.dotWarn { background: var(--warn); }
+.dotGood { background: var(--good); }
+.dotBad { background: var(--bad); }
+.valueWarn { color: var(--warn) !important; }
+.valueBad { color: var(--bad) !important; }
+
+.search {
+  flex: 0 1 320px;
+  min-width: 200px;
+}
+
+.search input {
+  width: 100%;
+}
+
+/* design-system.css: la regla base de inputs gana en especificidad al padding
+   de .search-input, por eso se repite aqui para no tapar el placeholder. */
+:global(.app-shell):not(#_) .search input {
+  padding-left: 32px !important;
+}
+
+.card {
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 13px 18px;
+}
+
+.cardHead h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.cardHead span {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cardEmpty {
+  padding: 18px;
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th {
+  white-space: nowrap;
+}
+
+.table thead th:first-child,
+.table tbody td:first-child {
+  padding-left: 18px;
+}
+
+.table thead th:last-child,
+.table tbody td:last-child {
+  padding-right: 14px;
+}
+
+.table tbody tr {
+  cursor: pointer;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table td {
+  height: 44px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+  vertical-align: middle;
+}
+
+.stack {
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.stack strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 550;
+}
+
+.stack small {
+  overflow: hidden;
+  max-width: 360px;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actionCol {
+  width: 90px;
+  text-align: right;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.impactOn {
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.impactOff {
+  color: var(--muted);
+  font-size: 12.5px;
+  text-decoration: line-through;
+}
+
+/* --- Drawer de revision ----------------------------------------------------- */
+.footStatus {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  min-width: 0;
+}
+
+.reviewHead {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+
+.reviewHead p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: clip;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--line);
+}
+
+.facts > div {
+  display: grid;
+  gap: 2px;
+  background: var(--surface);
+  padding: 10px 12px;
+}
+
+.facts dt,
+.evidence dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.facts dd,
+.evidence dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.evidence {
+  display: grid;
+  margin: 0;
+}
+
+.evidence > div {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding: 8px 0;
+}
+
+.evidence > div:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.form label {
+  display: grid;
+  gap: 6px;
+}
+
+.form textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.form :global(.segmented) {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.impact {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--muted-soft);
+  border-radius: var(--r-sm);
+  background: var(--surface-sunken);
+  padding: 12px 14px;
+}
+
+.impact span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.impact strong {
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 550;
+  line-height: 1.45;
+}
+
+.impact small {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.impact_approved { border-left-color: var(--good); }
+.impact_rejected { border-left-color: var(--bad); }
+.impact_closed { border-left-color: var(--muted-soft); }
+
+.confirm {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-sm);
+  background: var(--warn-soft);
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.confirm strong {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.confirm span {
+  color: var(--ink-soft);
+}
+
+@media (max-width: 860px) {
+  .metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metrics > div:nth-child(3) {
+    border-left: 0;
+  }
+
+  .metrics > div:nth-child(n + 3) {
+    border-top: 1px solid var(--line);
+  }
+
+  .facts {
+    grid-template-columns: 1fr;
+  }
+
+  .evidence > div {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}

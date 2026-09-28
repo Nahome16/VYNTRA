@@ -166,7 +166,27 @@ export type MenuItem = { label: string; onSelect: () => void; danger?: boolean; 
 export function RowMenu({ items, label }: { items: MenuItem[]; label?: string }) {
   const t = useT();
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ top: number; right: number } | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
+
+  // El menu se posiciona respecto a la ventana (position: fixed) para que no lo
+  // recorten las tablas con desplazamiento horizontal.
+  function toggle() {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const rect = anchorRef.current?.getBoundingClientRect();
+    if (rect) {
+      const menuHeight = items.length * 34 + 16;
+      const fitsBelow = rect.bottom + 4 + menuHeight <= window.innerHeight;
+      setPosition({
+        top: fitsBelow ? rect.bottom + 4 : Math.max(8, rect.top - 4 - menuHeight),
+        right: Math.max(8, window.innerWidth - rect.right),
+      });
+    }
+    setOpen(true);
+  }
 
   useEffect(() => {
     if (!open) return undefined;
@@ -176,11 +196,16 @@ export function RowMenu({ items, label }: { items: MenuItem[]; label?: string })
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
     };
+    const close = () => setOpen(false);
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
     return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
     };
   }, [open]);
 
@@ -192,7 +217,7 @@ export function RowMenu({ items, label }: { items: MenuItem[]; label?: string })
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={label || t("Acciones")}
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggle}
       >
         <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
           <circle cx="12" cy="5" r="1.6" />
@@ -201,7 +226,11 @@ export function RowMenu({ items, label }: { items: MenuItem[]; label?: string })
         </svg>
       </button>
       {open ? (
-        <div className="context-menu" role="menu">
+        <div
+          className="context-menu"
+          role="menu"
+          style={position ? { position: "fixed", top: position.top, right: position.right } : undefined}
+        >
           {items.map((item) => (
             <Fragment key={item.label}>
               {item.separatorBefore ? <hr /> : null}
@@ -249,5 +278,48 @@ export function Tabs<T extends string>({
         </button>
       ))}
     </div>
+  );
+}
+
+/** Dialogo de confirmacion accesible para acciones destructivas o irreversibles. */
+export function ConfirmDialog({
+  open,
+  title,
+  description,
+  confirmLabel,
+  danger = true,
+  busy = false,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  description?: ReactNode;
+  confirmLabel: string;
+  danger?: boolean;
+  busy?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  const titleId = useId();
+  const ref = useDialog<HTMLDivElement>(open, onCancel);
+  if (!open) return null;
+  return (
+    <>
+      <div className="drawer-backdrop" onClick={onCancel} aria-hidden />
+      <div ref={ref} className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby={titleId}>
+        <h2 id={titleId}>{title}</h2>
+        {description ? <div className="confirm-dialog-body">{description}</div> : null}
+        <div className="confirm-dialog-actions">
+          <button type="button" className="btn btn-outline" onClick={onCancel} disabled={busy}>
+            {t("Cancelar")}
+          </button>
+          <button type="button" className={danger ? "btn btn-danger" : "btn"} onClick={onConfirm} disabled={busy}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </>
   );
 }

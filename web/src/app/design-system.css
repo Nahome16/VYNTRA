@@ -1438,3 +1438,51 @@ body {
     flex-wrap: wrap;
   }
 }
+
+
+/* Panel lateral: sus hijos nunca se colapsan dentro de la rejilla con scroll. */
+.drawer-body > * {
+  min-height: min-content;
+}
+
+/* Dialogo de confirmacion compartido (ConfirmDialog). */
+.confirm-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 81;
+  display: grid;
+  gap: 12px;
+  width: min(420px, calc(100vw - 32px));
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  padding: 20px;
+  transform: translate(-50%, -50%);
+  animation: fade-in 0.18s ease both;
+}
+
+.confirm-dialog h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.confirm-dialog-body {
+  color: var(--ink-soft);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+
+.confirm-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.app-shell .context-menu {
+  z-index: 90;
+}

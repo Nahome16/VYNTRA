@@ -1,7 +1,8 @@
 "use client";
 
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { EmptyState, Panel, StatusLine } from "@/components/ui";
+import { Chip, EmptyBlock, Panel, RefreshButton, StatusLine, Tabs } from "@/components/ui";
+import { BarTrendChart, CompositionChart, TrendChart, swatchClass } from "@/components/charts";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { EmployeeDetailResponse } from "@/lib/types";
@@ -9,12 +10,14 @@ import { apiFetch } from "@/lib/api";
 import { downloadCsv } from "@/lib/csv";
 import { useDialog } from "@/lib/use-dialog";
 import { monthStartISO, todayISO } from "@/lib/dates";
-import { formatDuration } from "@/lib/format";
+import { formatDuration, fullDate } from "@/lib/format";
+import styles from "./employee-profile.module.css";
 
 const activityHours = [9, 10, 11, 12, 13, 14, 15, 16, 17];
 const EMPTY_PREVIEWS: Record<string, string> = {};
 
 type EvidenceItem = EmployeeDetailResponse["evidence"][number];
+type ProfileTab = "resumen" | "actividad" | "evidencias";
 
 /**
  * Miniatura de evidencia que pide su vista previa solo cuando entra (o esta por
@@ -66,7 +69,15 @@ function LazyEvidenceThumb({
   }, [resetKey]);
 
   return (
-    <button ref={buttonRef} type="button" className={className} onClick={onClick} disabled={disabled} title={title}>
+    <button
+      ref={buttonRef}
+      type="button"
+      className={className}
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      aria-label={title}
+    >
       {children}
     </button>
   );
@@ -112,6 +123,13 @@ function classificationLabel(value: string) {
   return labels[value] || value;
 }
 
+function classificationTone(value: string) {
+  if (value === "productive") return "accent" as const;
+  if (value === "neutral") return "info" as const;
+  if (value === "non_productive") return "bad" as const;
+  return "plain" as const;
+}
+
 function appShare(appSeconds: number, totalSeconds: number) {
   return `${Math.max(3, percent(appSeconds, totalSeconds))}%`;
 }
@@ -132,15 +150,10 @@ function emptyHourBucket(): HourBucket {
   };
 }
 
-function dominantClass(bucket: HourBucket) {
-  if (!bucket.total) return "empty";
-  const rows = [
-    ["productive", bucket.productive],
-    ["neutral", bucket.neutral],
-    ["non-productive", bucket.nonProductive],
-    ["idle", bucket.idle],
-  ] as const;
-  return rows.reduce((winner, row) => (row[1] > winner[1] ? row : winner), rows[0])[0];
+function statusTone(status: string) {
+  if (status === "active") return "good" as const;
+  if (status === "inactive" || status === "suspended") return "warn" as const;
+  return "plain" as const;
 }
 
 export function EmployeeProfile({
@@ -165,7 +178,7 @@ export function EmployeeProfile({
   const [selectedEvidenceId, setSelectedEvidenceId] = useState("");
   const [dateFrom, setDateFrom] = useState(initialDateFrom || monthStartISO());
   const [dateTo, setDateTo] = useState(initialDateTo || todayISO());
-  const [detailTab, setDetailTab] = useState<"resumen" | "registro">("resumen");
+  const [tab, setTab] = useState<ProfileTab>("resumen");
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -195,6 +208,13 @@ export function EmployeeProfile({
     }, 0);
     return () => window.clearTimeout(timer);
   }, [initialDateFrom, initialDateTo, loadProfile]);
+
+  /** Cambiar una fecha aplica el rango al momento (si ambas son validas). */
+  function changeRange(nextFrom: string, nextTo: string) {
+    setDateFrom(nextFrom);
+    setDateTo(nextTo);
+    if (nextFrom && nextTo && nextFrom <= nextTo) void loadProfile(nextFrom, nextTo);
+  }
 
   const evidenceList = employeeDetail?.evidence;
   // Las vistas previas pertenecen a la lista de evidencias actual; al cambiar de
@@ -228,7 +248,7 @@ export function EmployeeProfile({
           urls: current.source === evidenceList ? { ...current.urls, [item.id]: url } : { [item.id]: url },
         }));
       } catch {
-        // Sin vista previa: la miniatura queda como "IMG" deshabilitada.
+        // Sin vista previa: la miniatura queda como marcador deshabilitado.
       }
     },
     [evidenceList, token],
@@ -282,6 +302,18 @@ export function EmployeeProfile({
     }));
   }, [employeeDetail]);
 
+  const dailyTrend = useMemo(
+    () =>
+      (employeeDetail?.days || []).map((day) => ({
+        key: day.date,
+        label: fullDate(day.date).slice(0, 5),
+        value: day.active_seconds
+          ? Math.round(((day.productive_seconds + day.neutral_seconds) / day.active_seconds) * 1000) / 10
+          : 0,
+      })),
+    [employeeDetail],
+  );
+
   function exportProfileCsv() {
     if (!employeeDetail) return;
     const header = ["App", t("Clasificacion"), t("Tiempo"), t("Muestras")];
@@ -294,281 +326,391 @@ export function EmployeeProfile({
     downloadCsv(`vyntra-perfil-${employeeDetail.employee.employee_code}-${dateFrom}-${dateTo}.csv`, header, rows);
   }
 
+  const topApps = productiveApps.length ? productiveApps : (employeeDetail?.apps || []).slice(0, 5);
+  const focusApps = distractingApps.length
+    ? distractingApps
+    : (employeeDetail?.apps || []).filter((app) => app.classification !== "productive").slice(0, 5);
+
   return (
-    <div className="employee-profile-view">
-      <div className="profile-page-actions">
-        <div className="date-range-control">
-          <span>{t("Periodo")}</span>
-          <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-          <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
-          <button className="row-action" onClick={() => void loadProfile(dateFrom, dateTo)}>
-            {t("Aplicar")}
+    <div className={styles.view}>
+      <section className={`toolbar ${styles.toolbar}`} aria-label={t("Periodo")}>
+        <div className={styles.range} role="group" aria-label={t("Periodo")}>
+          <span className={styles.rangeLabel}>{t("Periodo")}</span>
+          <input
+            type="date"
+            aria-label={t("Desde")}
+            value={dateFrom}
+            max={dateTo || undefined}
+            onChange={(event) => changeRange(event.target.value, dateTo)}
+          />
+          <span aria-hidden>–</span>
+          <input
+            type="date"
+            aria-label={t("Hasta")}
+            value={dateTo}
+            min={dateFrom || undefined}
+            onChange={(event) => changeRange(dateFrom, event.target.value)}
+          />
+        </div>
+        <div className={styles.actions}>
+          <RefreshButton loading={loading} onClick={() => void loadProfile(dateFrom, dateTo)} />
+          <button className="btn btn-outline" onClick={exportProfileCsv} disabled={!employeeDetail}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
+            </svg>
+            <span>{t("Descargar informe")}</span>
           </button>
         </div>
-      </div>
+      </section>
 
-      {loading ? (
-        <Panel title={t("Perfil empleado")}>
-          <EmptyState>{t("Cargando informacion del empleado...")}</EmptyState>
-        </Panel>
-      ) : null}
-
-      {!loading && !employeeDetail ? (
-        <Panel title={t("Perfil empleado")}>
-          <EmptyState>{t("No se pudo cargar este perfil.")}</EmptyState>
-        </Panel>
-      ) : null}
-
-      {!loading && employeeDetail ? (
-        <div className="employee-detail-page">
-          <section className="employee-profile-hero">
-            <div className="profile-main">
-              <div className="employee-avatar-lg">{initialsFor(employeeDetail.employee.full_name)}</div>
+      {!employeeDetail ? (
+        <EmptyBlock
+          title={loading ? t("Cargando informacion del empleado...") : t("No se pudo cargar este perfil.")}
+          description={loading ? undefined : t("Revisa el rango de fechas o vuelve a intentarlo.")}
+          action={
+            loading ? undefined : (
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => void loadProfile(dateFrom, dateTo)}>
+                {t("Reintentar")}
+              </button>
+            )
+          }
+        />
+      ) : (
+        <div className={`${styles.content}${loading ? ` ${styles.busy}` : ""}`} aria-busy={loading}>
+          <section className={styles.header}>
+            <div className={styles.identity}>
+              <div className={styles.avatarXl} aria-hidden>{initialsFor(employeeDetail.employee.full_name)}</div>
               <div>
-                <h2>{employeeDetail.employee.full_name}</h2>
-                <p>{employeeDetail.employee.position || t("Empleado monitoreado")}</p>
-                <div className="profile-badges">
-                  <span className="badge attendance-good">{employeeDetail.employee.status}</span>
-                  <span className="soft-pill">{employeeDetail.employee.department || t("Sin departamento")}</span>
+                <h2>
+                  {employeeDetail.employee.full_name}
+                  <Chip tone={statusTone(employeeDetail.employee.status)}>
+                    {employeeDetail.employee.status === "active" ? t("Activo") : t(employeeDetail.employee.status)}
+                  </Chip>
+                </h2>
+                <p>
+                  {employeeDetail.employee.position || t("Empleado monitoreado")} · {employeeDetail.employee.department || t("Sin departamento")}
+                </p>
+                <div className={styles.meta}>
+                  <span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <rect x="3" y="5" width="18" height="14" rx="2" />
+                      <path d="m3 7 9 6 9-6" />
+                    </svg>
+                    {employeeDetail.employee.email || t("Sin correo laboral")}
+                  </span>
+                  <span title={t("Equipo")}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <rect x="3" y="4" width="18" height="16" rx="2" />
+                      <path d="M7 9h4M7 13h10M7 16h6" />
+                    </svg>
+                    {t("Equipo")} <span className={styles.mono}>{employeeDetail.employee.employee_code}</span>
+                  </span>
                 </div>
               </div>
             </div>
-            <div className="profile-contact">
-              <span>{employeeDetail.employee.email || t("Sin correo laboral")}</span>
-              <span>{t("Equipo")} {employeeDetail.employee.employee_code}</span>
-              <span>{employeeDetail.employee.department || t("Sin departamento")}</span>
-            </div>
-            <button className="secondary-button" onClick={exportProfileCsv}>
-              {t("Descargar informe")}
-            </button>
-          </section>
 
-          <section className="employee-kpi-grid">
-            <div>
-              <span>{t("Horas rango")}</span>
-              <strong>{formatDuration(employeeDetail.totals.active_seconds)}</strong>
-              <small>{t("Actividad real capturada")}</small>
-            </div>
-            <div>
-              <span>{t("Productividad")}</span>
-              <strong className="metric-good">{employeeDetail.totals.productivity_pct}%</strong>
-              <small>{t("Sobre tiempo activo")}</small>
-            </div>
-            <div>
-              <span>{t("No productivo")}</span>
-              <strong className={employeeDetail.totals.non_productive_pct > 12 ? "metric-bad" : ""}>
-                {employeeDetail.totals.non_productive_pct}%
-              </strong>
-              <small>{formatDuration(employeeDetail.totals.non_productive_seconds)}</small>
-            </div>
-          </section>
-
-          <section className="employee-detail-section">
-            <div className="panel-title">
-              <h2>{t("Composicion de actividad (ultimos 7 dias)")}</h2>
-              <span>
-                {dateFrom} - {dateTo}
-              </span>
-            </div>
-            <div className="activity-legend">
-              <span>
-                <i className="legend-productive" />
-                {t("Productivo")}
-              </span>
-              <span>
-                <i className="legend-neutral" />
-                {t("Neutral")}
-              </span>
-              <span>
-                <i className="legend-bad" />
-                {t("No productivo")}
-              </span>
-              <span>
-                <i className="legend-idle" />
-                {t("Inactivo")}
-              </span>
-            </div>
-            <div className="activity-map">
-              <div className="activity-map-hours">
-                <span />
-                {activityHours.map((hour) => (
-                  <strong key={hour}>{hourLabel(hour)}</strong>
-                ))}
+            <div className={styles.stats}>
+              <div className={styles.stat}>
+                <span className={styles.statLabel}>{t("Horas rango")}</span>
+                <strong className={styles.statValue}>{formatDuration(employeeDetail.totals.active_seconds)}</strong>
+                <small className={styles.statDetail}>{t("Actividad real capturada")}</small>
               </div>
-              {activityMap.map((day) => (
-                <div className="activity-map-row" key={day.date}>
-                  <strong>{day.label}</strong>
-                  {day.hours.map((bucket, index) => (
-                    <div
-                      className={`activity-cell activity-cell-${dominantClass(bucket)}`}
-                      key={`${day.date}-${activityHours[index]}`}
-                      title={`${day.label} ${hourLabel(activityHours[index])}: ${formatDuration(bucket.total)}`}
-                    >
-                      {bucket.total ? (
-                        <>
-                          <span
-                            className="segment-productive"
-                            style={{ width: `${percent(bucket.productive, bucket.total)}%` }}
-                          />
-                          <span
-                            className="segment-neutral"
-                            style={{ width: `${percent(bucket.neutral, bucket.total)}%` }}
-                          />
-                          <span
-                            className="segment-bad"
-                            style={{ width: `${percent(bucket.nonProductive, bucket.total)}%` }}
-                          />
-                          <span className="segment-idle" style={{ width: `${percent(bucket.idle, bucket.total)}%` }} />
-                        </>
-                      ) : null}
+              <div className={styles.stat}>
+                <span className={styles.statLabel}><i className={`${styles.mk} ${styles.mk1}`} aria-hidden />{t("Productividad")}</span>
+                <strong className={styles.statValue}>{employeeDetail.totals.productivity_pct}%</strong>
+                <small className={styles.statDetail}>{t("Sobre tiempo activo")}</small>
+              </div>
+              <div className={styles.stat}>
+                <span className={styles.statLabel}><i className={`${styles.mk} ${styles.mk3}`} aria-hidden />{t("No productivo")}</span>
+                <strong className={`${styles.statValue}${employeeDetail.totals.non_productive_pct > 12 ? ` ${styles.bad}` : ""}`}>
+                  {employeeDetail.totals.non_productive_pct}%
+                </strong>
+                <small className={styles.statDetail}>{formatDuration(employeeDetail.totals.non_productive_seconds)}</small>
+              </div>
+              <div className={styles.stat}>
+                <span className={styles.statLabel}><i className={`${styles.mk} ${styles.mk4}`} aria-hidden />{t("Inactivo")}</span>
+                <strong className={`${styles.statValue}${employeeDetail.totals.idle_pct > 15 ? ` ${styles.warn}` : ""}`}>
+                  {employeeDetail.totals.idle_pct}%
+                </strong>
+                <small className={styles.statDetail}>{formatDuration(employeeDetail.totals.idle_seconds)}</small>
+              </div>
+            </div>
+          </section>
+
+          <div className={styles.tabsBar}>
+          <Tabs<ProfileTab>
+            value={tab}
+            onChange={setTab}
+            tabs={[
+              { id: "resumen", label: t("Resumen") },
+              { id: "actividad", label: t("Actividad") },
+              { id: "evidencias", label: `${t("Evidencias")} · ${employeeDetail.evidence.length}` },
+            ]}
+          />
+          </div>
+
+          {tab === "resumen" ? (
+            <>
+              <div className={styles.grid2}>
+                <Panel title={t("Distribucion del tiempo")} meta={`${fullDate(dateFrom)} – ${fullDate(dateTo)}`}>
+                  <CompositionChart
+                    stacked
+                    emptyLabel={t("No hay actividad registrada para el rango.")}
+                    segments={[
+                      {
+                        key: "productive",
+                        label: t("Productivo"),
+                        seconds: employeeDetail.totals.productive_seconds,
+                        slot: 1,
+                        display: formatDuration(employeeDetail.totals.productive_seconds),
+                      },
+                      {
+                        key: "neutral",
+                        label: t("Neutral"),
+                        seconds: employeeDetail.totals.neutral_seconds + employeeDetail.totals.uncategorized_seconds,
+                        slot: 2,
+                        display: formatDuration(employeeDetail.totals.neutral_seconds + employeeDetail.totals.uncategorized_seconds),
+                      },
+                      {
+                        key: "non-productive",
+                        label: t("No productivo"),
+                        seconds: employeeDetail.totals.non_productive_seconds,
+                        slot: 3,
+                        display: formatDuration(employeeDetail.totals.non_productive_seconds),
+                      },
+                      {
+                        key: "idle",
+                        label: t("Inactivo"),
+                        seconds: employeeDetail.totals.idle_seconds,
+                        slot: 4,
+                        display: formatDuration(employeeDetail.totals.idle_seconds),
+                      },
+                    ]}
+                  />
+                </Panel>
+                <Panel title={t("Productividad diaria")} meta={`${dailyTrend.length} ${dailyTrend.length === 1 ? t("día") : t("días")}`}>
+                  {dailyTrend.length > 14 ? (
+                    <TrendChart points={dailyTrend} emptyLabel={t("Sin datos suficientes para graficar.")} averageLabel={t("Promedio")} height={180} />
+                  ) : (
+                    <BarTrendChart
+                      points={dailyTrend}
+                      emptyLabel={t("Sin datos suficientes para graficar.")}
+                      seriesLabel={t("Productivo + neutral")}
+                      averageLabel={t("Promedio")}
+                      height={150}
+                    />
+                  )}
+                </Panel>
+              </div>
+
+              <div className={styles.grid2}>
+                <Panel title={t("Aplicaciones principales")} meta={`${employeeDetail.apps.length} apps`}>
+                  {topApps.length ? (
+                    <div className={styles.appList}>
+                      {topApps.map((app) => (
+                        <div className={styles.appRow} key={`${app.app}-${app.classification}`}>
+                          <div>
+                            <span>{app.app}</span>
+                            <small>{formatDuration(app.seconds)}</small>
+                          </div>
+                          <div className={styles.appBar} aria-hidden>
+                            <i style={{ width: appShare(app.seconds, detailTotal) }} />
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              ))}
-              {!activityMap.length ? (
-                <EmptyState>{t("No hay composicion calculada para este rango.")}</EmptyState>
-              ) : null}
-            </div>
-          </section>
+                  ) : (
+                    <EmptyBlock title={t("No hay apps registradas para el rango.")} />
+                  )}
+                </Panel>
+                <Panel title={t("Puntos de foco")} meta={t("Apps que restan productividad")}>
+                  {focusApps.length ? (
+                    <div className={styles.appList}>
+                      {focusApps.map((app) => (
+                        <div className={styles.appRow} key={`${app.app}-${app.classification}`}>
+                          <div>
+                            <span>{app.app}</span>
+                            <small>{formatDuration(app.seconds)}</small>
+                          </div>
+                          <div className={`${styles.appBar} ${styles.focus}`} aria-hidden>
+                            <i style={{ width: appShare(app.seconds, detailTotal) }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyBlock title={t("No hay apps registradas para el rango.")} />
+                  )}
+                </Panel>
+              </div>
+            </>
+          ) : null}
 
-          <section className="employee-detail-section">
-            <div className="panel-title">
-              <h2>{t("Detalle de actividad")}</h2>
-              <span>{employeeDetail.apps.length} apps</span>
-            </div>
-            <div className="tabs inner-tabs">
-              <button className={detailTab === "resumen" ? "active" : ""} onClick={() => setDetailTab("resumen")}>
-                {t("Resumen")}
-              </button>
-              <button className={detailTab === "registro" ? "active" : ""} onClick={() => setDetailTab("registro")}>
-                {t("Registro completo")}
-              </button>
-            </div>
-            {detailTab === "resumen" ? (
-              <div className="activity-summary-grid">
-                <div>
-                  <h3>{t("Aplicaciones principales")}</h3>
-                  {(productiveApps.length ? productiveApps : employeeDetail.apps.slice(0, 5)).map((app) => (
-                    <div className="app-progress" key={`${app.app}-${app.classification}`}>
-                      <div>
-                        <span>{app.app}</span>
-                        <small>{formatDuration(app.seconds)}</small>
+          {tab === "actividad" ? (
+            <>
+              <Panel title={t("Composicion de actividad (ultimos 7 dias)")} meta={`${fullDate(dateFrom)} – ${fullDate(dateTo)}`} className={styles.section}>
+                <div className={styles.legendRow}>
+                  <span><i className={swatchClass(1)} aria-hidden />{t("Productivo")}</span>
+                  <span><i className={swatchClass(2)} aria-hidden />{t("Neutral")}</span>
+                  <span><i className={swatchClass(3)} aria-hidden />{t("No productivo")}</span>
+                  <span><i className={swatchClass(4)} aria-hidden />{t("Inactivo")}</span>
+                </div>
+                {activityMap.length ? (
+                  <div className={styles.heatmap}>
+                    <div className={`${styles.heatRow} ${styles.heatHead}`}>
+                      <strong />
+                      {activityHours.map((hour) => (
+                        <strong key={hour}>{hourLabel(hour)}</strong>
+                      ))}
+                    </div>
+                    {activityMap.map((day) => (
+                      <div className={styles.heatRow} key={day.date}>
+                        <strong>{day.label}</strong>
+                        {day.hours.map((bucket, index) => (
+                          <div
+                            className={styles.cell}
+                            key={`${day.date}-${activityHours[index]}`}
+                            title={`${day.label} ${hourLabel(activityHours[index])}: ${formatDuration(bucket.total)}`}
+                          >
+                            {bucket.total ? (
+                              <>
+                                <span className={styles.segProductive} style={{ width: `${percent(bucket.productive, bucket.total)}%` }} />
+                                <span className={styles.segNeutral} style={{ width: `${percent(bucket.neutral, bucket.total)}%` }} />
+                                <span className={styles.segBad} style={{ width: `${percent(bucket.nonProductive, bucket.total)}%` }} />
+                                <span className={styles.segIdle} style={{ width: `${percent(bucket.idle, bucket.total)}%` }} />
+                              </>
+                            ) : null}
+                          </div>
+                        ))}
                       </div>
-                      <strong>
-                        <i style={{ width: appShare(app.seconds, detailTotal) }} />
-                      </strong>
-                    </div>
-                  ))}
-                </div>
-                <div>
-                  <h3>{t("Puntos de foco")}</h3>
-                  {(distractingApps.length
-                    ? distractingApps
-                    : employeeDetail.apps.filter((app) => app.classification !== "productive").slice(0, 5)
-                  ).map((app) => (
-                    <div className="app-progress danger" key={`${app.app}-${app.classification}`}>
-                      <div>
-                        <span>{app.app}</span>
-                        <small>{formatDuration(app.seconds)}</small>
-                      </div>
-                      <strong>
-                        <i style={{ width: appShare(app.seconds, detailTotal) }} />
-                      </strong>
-                    </div>
-                  ))}
-                  {!employeeDetail.apps.length ? (
-                    <EmptyState>{t("No hay apps registradas para el rango.")}</EmptyState>
-                  ) : null}
-                </div>
-              </div>
-            ) : (
-              <div className="app-register">
-                {employeeDetail.apps.map((app) => (
-                  <article key={`${app.app}-${app.classification}`}>
-                    <strong>{app.app}</strong>
-                    <span>{formatDuration(app.seconds)}</span>
-                    <em className={`badge badge-${app.classification}`}>{t(classificationLabel(app.classification))}</em>
-                  </article>
-                ))}
-              </div>
-            )}
-          </section>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyBlock title={t("No hay composicion calculada para este rango.")} />
+                )}
+              </Panel>
 
-          <section className="employee-detail-section">
-            <div className="panel-title">
-              <h2>{t("Revision de capturas")}</h2>
-              <span>{employeeDetail.evidence.length} {t("archivos")}</span>
-            </div>
-            {employeeDetail.evidence.length ? (
-              <div className="evidence-grid">
-                {employeeDetail.evidence.map((item) => (
-                  <article className="evidence-tile" key={item.id}>
-                    <LazyEvidenceThumb
-                      className="evidence-thumb evidence-open"
-                      resetKey={evidenceList}
-                      onVisible={() => void requestEvidencePreview(item)}
-                      onClick={() => setSelectedEvidenceId(item.id)}
-                      disabled={!evidencePreviews[item.id]}
-                      title={evidencePreviews[item.id] ? t("Abrir captura") : t("Vista previa no disponible")}
-                    >
-                      {evidencePreviews[item.id] ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={evidencePreviews[item.id]} alt={item.original_filename} />
-                      ) : item.content_type.includes("image") ? (
-                        "IMG"
-                      ) : (
-                        "FILE"
-                      )}
-                    </LazyEvidenceThumb>
-                    <strong>{item.original_filename}</strong>
-                    <span>{new Date(item.captured_at).toLocaleString("es-NI")}</span>
-                    <small>
-                      {item.equipment} - {item.status}
-                    </small>
-                    <button
-                      type="button"
-                      className="row-action"
-                      onClick={() => setSelectedEvidenceId(item.id)}
-                      disabled={!evidencePreviews[item.id]}
-                    >
-                      {t("Ver evidencia")}
-                    </button>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <EmptyState>{t("No hay capturas asociadas a este empleado en el rango.")}</EmptyState>
-            )}
-          </section>
+              <Panel title={t("Registro completo")} meta={`${employeeDetail.apps.length} apps`} className={styles.section}>
+                {employeeDetail.apps.length ? (
+                  <div className={styles.tableCard}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>App</th>
+                          <th>{t("Clasificacion")}</th>
+                          <th className="num">{t("Tiempo")}</th>
+                          <th className="num">{t("Muestras")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {employeeDetail.apps.map((app) => (
+                          <tr key={`${app.app}-${app.classification}`}>
+                            <td className={styles.appName}>{app.app}</td>
+                            <td>
+                              <Chip tone={classificationTone(app.classification)}>{t(classificationLabel(app.classification))}</Chip>
+                            </td>
+                            <td className="num">{formatDuration(app.seconds)}</td>
+                            <td className="num">{app.samples}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <EmptyBlock title={t("No hay apps registradas para el rango.")} />
+                )}
+              </Panel>
+            </>
+          ) : null}
+
+          {tab === "evidencias" ? (
+            <Panel title={t("Revision de capturas")} meta={`${employeeDetail.evidence.length} ${t("archivos")}`} className={styles.section}>
+              {employeeDetail.evidence.length ? (
+                <div className={styles.gallery}>
+                  {employeeDetail.evidence.map((item) => {
+                    const preview = evidencePreviews[item.id];
+                    const isImage = item.content_type.includes("image");
+                    return (
+                      <article className={styles.tile} key={item.id}>
+                        <LazyEvidenceThumb
+                          className={styles.thumb}
+                          resetKey={evidenceList}
+                          onVisible={() => void requestEvidencePreview(item)}
+                          onClick={() => setSelectedEvidenceId(item.id)}
+                          disabled={!preview}
+                          title={preview ? `${t("Ver evidencia")}: ${item.original_filename}` : t("Vista previa no disponible")}
+                        >
+                          {preview ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={preview} alt={item.original_filename} loading="lazy" />
+                          ) : (
+                            <span className={styles.placeholder}>
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                                {isImage ? (
+                                  <>
+                                    <rect x="3" y="4" width="18" height="16" rx="2" />
+                                    <circle cx="9" cy="10" r="1.8" />
+                                    <path d="m21 16-5-5-9 9" />
+                                  </>
+                                ) : (
+                                  <>
+                                    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+                                    <path d="M14 3v5h5" />
+                                  </>
+                                )}
+                              </svg>
+                              {isImage ? "IMG" : "FILE"}
+                            </span>
+                          )}
+                        </LazyEvidenceThumb>
+                        <div className={styles.caption}>
+                          <strong title={item.original_filename}>{item.original_filename}</strong>
+                          <span>{new Date(item.captured_at).toLocaleString("es-NI")}</span>
+                          <div className={styles.captionFoot}>
+                            <small title={item.equipment}>{item.equipment}</small>
+                            <Chip dot={false}>{t(item.status)}</Chip>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <EmptyBlock title={t("No hay capturas asociadas a este empleado en el rango.")} />
+              )}
+            </Panel>
+          ) : null}
         </div>
-      ) : null}
+      )}
 
       {selectedEvidence && evidencePreviews[selectedEvidence.id] ? (
         <div
-          className="evidence-modal"
+          className={styles.modal}
           role="dialog"
           aria-modal="true"
           aria-labelledby="evidence-dialog-title"
           ref={evidenceDialogRef}
           onClick={() => setSelectedEvidenceId("")}
         >
-          <section className="evidence-modal-panel" onClick={(event) => event.stopPropagation()}>
-            <header>
+          <section className={styles.modalPanel} onClick={(event) => event.stopPropagation()}>
+            <header className={styles.modalHead}>
               <div>
                 <h2 id="evidence-dialog-title">{t("Evidencia")}</h2>
                 <p>{selectedEvidence.original_filename}</p>
               </div>
-              <button type="button" className="row-action" onClick={() => setSelectedEvidenceId("")}>
-                {t("Cerrar")}
+              <button type="button" className="icon-button" onClick={() => setSelectedEvidenceId("")} aria-label={t("Cerrar")}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
               </button>
             </header>
-            <div className="evidence-modal-image">
+            <div className={styles.modalImage}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={evidencePreviews[selectedEvidence.id]} alt={selectedEvidence.original_filename} />
             </div>
-            <footer>
+            <footer className={styles.modalFoot}>
               <span>{new Date(selectedEvidence.captured_at).toLocaleString("es-NI")}</span>
-              <span>{selectedEvidence.equipment} - {selectedEvidence.status}</span>
+              <span>{selectedEvidence.equipment} · {t(selectedEvidence.status)}</span>
             </footer>
           </section>
         </div>

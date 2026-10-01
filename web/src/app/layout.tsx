@@ -1,7 +1,5 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
-import { GeistMono } from "geist/font/mono";
-import { GeistSans } from "geist/font/sans";
 import { AuthProvider } from "@/components/auth-provider";
 import { PreferencesProvider } from "@/components/preferences-provider";
 import { RouteGuard } from "@/components/route-guard";
@@ -34,7 +32,7 @@ export default async function RootLayout({
       lang="es"
       data-theme="light"
       suppressHydrationWarning
-      className={`h-full antialiased ${GeistSans.variable} ${GeistMono.variable}`}
+      className="h-full antialiased"
     >
       <head>
         {/* El navegador oculta el atributo nonce tras cargar la pagina, por eso

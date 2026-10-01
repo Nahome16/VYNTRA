@@ -242,6 +242,120 @@
   padding: 18px;
 }
 
+/* --- Jornada en vivo -------------------------------------------------------- */
+.liveGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.liveCard {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  transition:
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease),
+    box-shadow 0.15s var(--ease);
+}
+
+.liveCard:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+  box-shadow: var(--shadow-xs);
+}
+
+.liveCardSelected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.liveCardMain {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 14px 6px 14px 14px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.liveCardMain:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.liveCardMain .person {
+  min-width: 0;
+}
+
+.liveTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.liveTop .chips {
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.liveFacts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.liveFacts span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface-sunken);
+  padding: 7px 9px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.liveFacts strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.liveBarRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.liveBar {
+  height: 11px;
+}
+
+.liveCardMenu {
+  display: flex;
+  align-items: flex-start;
+  padding: 10px 8px 0 0;
+}
+
 /* Sin recorte en escritorio para que el menu de fila (⋮) no quede cortado;
    en pantallas estrechas la tabla se desplaza horizontalmente. */
 .tableWrap {
@@ -797,6 +911,10 @@
   .summaryGrid {
     grid-template-columns: 1fr;
   }
+
+  .liveGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {
@@ -822,8 +940,27 @@
   }
 
   .comparison,
-  .timeGrid {
+  .timeGrid,
+  .liveFacts {
     grid-template-columns: 1fr;
+  }
+
+  .liveGrid {
+    padding: 10px;
+  }
+
+  .liveTop,
+  .liveBarRow {
+    align-items: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .liveTop {
+    display: grid;
+  }
+
+  .liveTop .chips {
+    justify-content: flex-start;
   }
 
   .toolbar select,

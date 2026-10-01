@@ -961,6 +961,50 @@ export default function SystemPage() {
       }
     >
       <div className={styles.page}>
+        <section className={styles.consolePanel} aria-label={t("Estado general del sistema")}>
+          <div className={styles.consoleMain}>
+            <span className={styles.consoleEyebrow}>{t("Consola master")}</span>
+            <h2>{controlsCompany?.name || t("Sin empresa seleccionada")}</h2>
+            <p>
+              {loaded
+                ? fill(t("{active} empresas activas · {users} usuarios del panel · {devices} dispositivos registrados"), {
+                    active: activeCompanies.length,
+                    users: users.length,
+                    devices: totalDevices,
+                  })
+                : t("Cargando estado global de empresas, usuarios y licencias.")}
+            </p>
+            <div className={styles.consoleActions}>
+              {controlsCompany ? (
+                <button type="button" className="btn btn-outline btn-sm" onClick={() => openCompanyDetail(controlsCompany, "summary")}>
+                  {t("Ver empresa activa")}
+                </button>
+              ) : null}
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setCompanyFilter(alerts.length ? "attention" : "all")}>
+                {alerts.length ? t("Ver alertas") : t("Ver empresas")}
+              </button>
+            </div>
+          </div>
+          <div className={styles.consoleFacts}>
+            <div>
+              <span>{t("Estado")}</span>
+              {selectedState ? <Chip tone={selectedState.tone}>{selectedState.label}</Chip> : <strong>{t("Pendiente")}</strong>}
+            </div>
+            <div>
+              <span>{t("Alertas")}</span>
+              <strong className={alerts.length ? styles.valueWarn : ""}>{alerts.length}</strong>
+            </div>
+            <div>
+              <span>{t("Licencias")}</span>
+              <strong>{license.total ? `${license.pct}%` : "—"}</strong>
+            </div>
+            <div>
+              <span>{t("Archivadas")}</span>
+              <strong>{archivedCount}</strong>
+            </div>
+          </div>
+        </section>
+
         {alerts.length ? (
           <div className={styles.alerts} aria-label={t("Avisos")}>
             {alerts.map((alert) =>

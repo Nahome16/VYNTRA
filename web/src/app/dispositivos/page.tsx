@@ -428,78 +428,58 @@ export default function DevicesPage() {
       </section>
 
       {devices.length ? (
-        <div className={styles.card}>
-          <div className={styles.scroll}>
-            <table className={styles.table}>
-              <thead>
-                <tr>
-                  <th>{t("Equipo")}</th>
-                  <th>{t("Empleado")}</th>
-                  <th>{t("Versión")}</th>
-                  <th>{t("Última conexión")}</th>
-                  <th>{t("Estado")}</th>
-                  <th aria-label={t("Acciones")} />
-                </tr>
-              </thead>
-              <tbody>
-                {devices.map((device) => (
-                  <tr
-                    key={device.id}
-                    tabIndex={0}
-                    className={controlOpen && device.id === selectedDeviceId ? "selected-row" : undefined}
-                    onClick={() => openControl(device)}
-                    onKeyDown={(event) => {
-                      if (event.target !== event.currentTarget) return;
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        openControl(device);
-                      }
-                    }}
-                    aria-label={`${t("Control del equipo")} ${device.name}`}
-                  >
-                    <td>
-                      <div className={styles.cellMain}>
-                        <strong>{device.name}</strong>
-                        <small>
-                          <span className={styles.mono}>{device.hostname || "-"}</span>
-                          {device.location ? ` · ${device.location}` : ""}
-                        </small>
-                      </div>
-                    </td>
-                    <td>
-                      {device.employee_id ? (
-                        <div className={styles.cellMain}>
-                          <strong>{device.employee || t("Sin asignar")}</strong>
-                          <small>{device.employee_code || device.employee_id}</small>
-                        </div>
-                      ) : (
-                        <em className={styles.unassigned}>{t("Sin asignar")}</em>
-                      )}
-                    </td>
-                    <td><span className={styles.mono}>{device.agent_version || "unknown"}</span></td>
-                    <td>
-                      <span className={styles.seen} title={dateText(device.last_seen_at, t)}>
-                        <span>{relativeText(device.last_seen_at, language, t)}</span>
-                      </span>
-                    </td>
-                    <td>{statusChip(device.status, t)}</td>
-                    <td>
-                      <RowMenu
-                        label={`${t("Acciones")} ${device.name}`}
-                        items={[
-                          { label: canManage ? t("Editar equipo") : t("Ver detalle"), onSelect: () => openControl(device) },
-                          ...(canManage
-                            ? [{ label: t("Rotar token"), onSelect: () => openControl(device, true), danger: true, separatorBefore: true }]
-                            : []),
-                        ]}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <section className={styles.deviceGrid} aria-label={t("Inventario de dispositivos")}>
+          {devices.map((device) => (
+            <article
+              key={device.id}
+              className={`${styles.deviceCard} ${device.status === "online" ? styles.deviceOnline : ""} ${device.status === "revoked" ? styles.deviceRevoked : ""} ${controlOpen && device.id === selectedDeviceId ? styles.deviceSelected : ""}`}
+            >
+              <button
+                type="button"
+                className={styles.deviceMain}
+                onClick={() => openControl(device)}
+                aria-label={`${t("Control del equipo")} ${device.name}`}
+              >
+                <div className={styles.deviceTop}>
+                  <div className={styles.cellMain}>
+                    <strong>{device.name}</strong>
+                    <small>
+                      <span className={styles.mono}>{device.hostname || "-"}</span>
+                      {device.location ? ` · ${device.location}` : ""}
+                    </small>
+                  </div>
+                  {statusChip(device.status, t)}
+                </div>
+
+                <div className={styles.deviceFacts}>
+                  <span>
+                    {t("Empleado")}
+                    <strong>{device.employee_id ? device.employee || device.employee_code || t("Sin asignar") : t("Sin asignar")}</strong>
+                  </span>
+                  <span>
+                    {t("Versión")}
+                    <strong className={styles.mono}>{device.agent_version || "unknown"}</strong>
+                  </span>
+                  <span title={dateText(device.last_seen_at, t)}>
+                    {t("Última conexión")}
+                    <strong>{relativeText(device.last_seen_at, language, t)}</strong>
+                  </span>
+                </div>
+              </button>
+              <div className={styles.deviceMenu}>
+                <RowMenu
+                  label={`${t("Acciones")} ${device.name}`}
+                  items={[
+                    { label: canManage ? t("Editar equipo") : t("Ver detalle"), onSelect: () => openControl(device) },
+                    ...(canManage
+                      ? [{ label: t("Rotar token"), onSelect: () => openControl(device, true), danger: true, separatorBefore: true }]
+                      : []),
+                  ]}
+                />
+              </div>
+            </article>
+          ))}
+        </section>
       ) : (
         <EmptyBlock
           title={noCompany ? t("Selecciona una empresa para ver sus dispositivos") : loading ? t("Cargando dispositivos...") : t("No hay dispositivos para el filtro actual.")}

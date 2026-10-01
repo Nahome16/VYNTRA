@@ -45,8 +45,8 @@
   --cyan-soft: #ecf3fb;
   --cyan-line: #c3d8f0;
   --plain-bg: #f1efec;
-  --font-sans: var(--font-geist-sans), "Segoe UI", system-ui, sans-serif;
-  --font-mono: var(--font-geist-mono), "Cascadia Mono", Consolas, monospace;
+  --font-sans: "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, monospace;
 
   /* Elevacion: los bordes dan estructura; la sombra es solo para lo que flota */
   --shadow-xs: 0 1px 1px rgba(28, 27, 25, 0.03);

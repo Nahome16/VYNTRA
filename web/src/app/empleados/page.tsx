@@ -3,15 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { Chip, EmptyBlock, RefreshButton, StatusLine } from "@/components/ui";
+import { Chip, EmptyBlock, RefreshButton } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import {
   CatalogsResponse,
   DashboardResponse,
   ProductivityBlock,
-  SystemCompany,
-  SystemOverviewResponse,
 } from "@/lib/types";
 import { downloadCsv } from "@/lib/csv";
 import { monthStartISO, todayISO } from "@/lib/dates";
@@ -32,16 +30,14 @@ function hours(seconds: number) {
   return `${Math.round((seconds / 3600) * 10) / 10}`;
 }
 
-function statusChip(status: string, t: (text: string) => string) {
-  if (status === "active") return <Chip tone="good">{t("Activo")}</Chip>;
-  if (status === "inactive") return <Chip>{t("Inactivo")}</Chip>;
-  return <Chip>{t(status || "Sin estado")}</Chip>;
+function percent(part: number, total: number) {
+  if (!total) return 0;
+  return Math.max(0, Math.min(100, Math.round((part / total) * 100)));
 }
 
 export default function EmployeesPage() {
   const router = useRouter();
-  const { apiGet, activeCompanyId, setActiveCompanyId, user } = useAuth();
-  const [companies, setCompanies] = useState<SystemCompany[]>([]);
+  const { apiGet, activeCompanyId, activeCompanyName, user } = useAuth();
   const { t } = usePreferences();
   const [catalogs, setCatalogs] = useState<CatalogsResponse | null>(null);
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
@@ -81,29 +77,6 @@ export default function EmployeesPage() {
       setLoading(false);
     }
   }, [activeCompanyId, apiGet, dateFrom, dateTo, t, user?.role]);
-
-  const isSystemAdmin = user?.role === "system_admin";
-  const loadCompanies = useCallback(async () => {
-    if (!isSystemAdmin) return;
-    try {
-      const response = await apiGet<SystemOverviewResponse>("/api/system/overview");
-      const activeCompanies = response.companies.filter((company) => company.status === "active");
-      setCompanies(activeCompanies);
-      const current = activeCompanies.find((company) => company.id === activeCompanyId);
-      if (current) setActiveCompanyId(current.id, current.name);
-      else if (activeCompanies[0]) setActiveCompanyId(activeCompanies[0].id, activeCompanies[0].name);
-    } catch {
-      setCompanies([]);
-    }
-  }, [activeCompanyId, apiGet, isSystemAdmin, setActiveCompanyId]);
-
-  useEffect(() => {
-    if (!user) return;
-    const timer = window.setTimeout(() => {
-      void loadCompanies();
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [loadCompanies, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -208,26 +181,11 @@ export default function EmployeesPage() {
   return (
     <AppShell
       title={t("Empleados")}
-      description={`${dashboard?.company.name || user?.company || t("Empresa")} · ${t("actividad, productividad y detalle por usuario.")}`}
+      description={`${activeCompanyName || dashboard?.company.name || user?.company || t("Empresa")} · ${t("actividad, productividad y detalle por usuario.")}`}
+      status={statusText}
       actions={<RefreshButton loading={loading} onClick={loadEmployees} />}
     >
       <section className={`toolbar ${styles.toolbar}`} aria-label={t("Filtros")}>
-        {isSystemAdmin ? (
-          <select
-            aria-label={t("Empresa")}
-            value={activeCompanyId}
-            onChange={(event) => {
-              const company = companies.find((item) => item.id === event.target.value);
-              setActiveCompanyId(event.target.value, company?.name);
-              setDepartmentFilter("");
-            }}
-          >
-            {!activeCompanyId ? <option value="">{t("Selecciona empresa")}</option> : null}
-            {companies.map((company) => (
-              <option key={company.id} value={company.id}>{company.name}</option>
-            ))}
-          </select>
-        ) : null}
         <label className={`search-input ${styles.search}`}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
             <circle cx="11" cy="11" r="7" />
@@ -287,14 +245,10 @@ export default function EmployeesPage() {
                 <tr>
                   <th>{t("Nombre del empleado")}</th>
                   <th>{t("Departamento")}</th>
-                  <th>{t("Estado")}</th>
+                  <th>{t("Ahora")}</th>
+                  <th>{t("Distribución")}</th>
                   <th className="num">{t("Productividad")}</th>
                   <th className="num">{t("Actividad [h]")}</th>
-                  <th className="num">{t("Productivo [h]")}</th>
-                  <th className="num">{t("Improductivo [h]")}</th>
-                  <th className="num">{t("Neutral [h]")}</th>
-                  <th className="num">{t("Tiempo inactivo")}</th>
-                  <th className="num">{t("Descanso")}</th>
                   <th aria-hidden />
                 </tr>
               </thead>
@@ -303,6 +257,13 @@ export default function EmployeesPage() {
                   const productivity = row.totals.active
                     ? Math.round(((row.totals.productive + row.totals.neutral) / row.totals.active) * 100)
                     : null;
+                  const activeTotal = row.totals.productive + row.totals.neutral + row.totals.nonProductive + row.totals.idle + row.totals.breakLunch;
+                  const nowTone = row.employee.status !== "active" ? "plain" : row.totals.active ? "good" : "warn";
+                  const nowLabel = row.employee.status !== "active"
+                    ? t("Inactivo")
+                    : row.totals.active
+                    ? t("Con actividad")
+                    : t("Sin actividad");
                   return (
                     <tr
                       key={row.employee.id}
@@ -331,7 +292,27 @@ export default function EmployeesPage() {
                         <span className={styles.metric}>{row.department}</span>
                         {row.position ? <small className={styles.subline}>{row.position}</small> : null}
                       </td>
-                      <td>{statusChip(row.employee.status, t)}</td>
+                      <td>
+                        <Chip tone={nowTone}>{nowLabel}</Chip>
+                      </td>
+                      <td>
+                        {activeTotal ? (
+                          <div className={styles.distribution} aria-label={`${t("Distribución")}: ${formatDuration(activeTotal)}`}>
+                            <span style={{ width: `${percent(row.totals.productive, activeTotal)}%` }} className={styles.segmentProductive} />
+                            <span style={{ width: `${percent(row.totals.neutral, activeTotal)}%` }} className={styles.segmentNeutral} />
+                            <span style={{ width: `${percent(row.totals.nonProductive, activeTotal)}%` }} className={styles.segmentBad} />
+                            <span style={{ width: `${percent(row.totals.idle, activeTotal)}%` }} className={styles.segmentIdle} />
+                            <span style={{ width: `${percent(row.totals.breakLunch, activeTotal)}%` }} className={styles.segmentBreak} />
+                          </div>
+                        ) : (
+                          <span className={styles.muted}>—</span>
+                        )}
+                        <small className={styles.subline}>
+                          {activeTotal
+                            ? `${t("Productivo")} ${formatDuration(row.totals.productive)} · ${t("Inactivo")} ${formatDuration(row.totals.idle)}`
+                            : t("Sin actividad en el periodo")}
+                        </small>
+                      </td>
                       <td>
                         {productivity === null ? (
                           <span className={`num ${styles.muted} ${styles.block}`}>—</span>
@@ -345,11 +326,6 @@ export default function EmployeesPage() {
                         )}
                       </td>
                       <td className={`num ${styles.metric}`}>{hours(row.totals.active)}</td>
-                      <td className="num">{hours(row.totals.productive)}</td>
-                      <td className="num">{hours(row.totals.nonProductive)}</td>
-                      <td className="num">{hours(row.totals.neutral)}</td>
-                      <td className="num">{formatDuration(row.totals.idle)}</td>
-                      <td className="num">{formatDuration(row.totals.breakLunch)}</td>
                       <td>
                         <span className={styles.chevron} aria-hidden>
                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -390,10 +366,6 @@ export default function EmployeesPage() {
           }
         />
       )}
-
-      <div className={styles.status}>
-        <StatusLine>{statusText}</StatusLine>
-      </div>
     </AppShell>
   );
 }

@@ -50,6 +50,8 @@ DEFERRED_RETRY_SECONDS = 15 * 60
 STATE_FILE = "update_state.json"
 UPDATES_DIR = "updates"
 UPDATE_ALLOWED_STATES = ("FUERA", "TERMINADO")
+HTTP = requests.Session()
+HTTP.trust_env = False
 
 
 def _version_tuple(value: str) -> tuple[int, ...]:
@@ -243,7 +245,7 @@ class AgentUpdater:
         return {"X-Device-Token": self.device_token}
 
     def _fetch_manifest(self) -> dict:
-        response = requests.get(
+        response = HTTP.get(
             f"{self.base_url}/api/agent/update",
             headers=self._headers(),
             params={"platform": "windows", "current_version": self.current_version},
@@ -292,7 +294,7 @@ class AgentUpdater:
         temp_path = f"{final_path}.tmp"
         digest = hashlib.sha256()
 
-        with requests.get(
+        with HTTP.get(
             url,
             headers=self._headers(),
             stream=True,

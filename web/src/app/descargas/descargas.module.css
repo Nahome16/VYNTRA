@@ -1,5 +1,85 @@
 /* Descargas: estilos propios de la pagina sobre design-system.css */
 
+.releasePanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 16px;
+  align-items: stretch;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  padding: 18px;
+}
+
+.releaseMain {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.eyebrow {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.releaseMain h2 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.releaseFacts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.releaseFacts span,
+.releaseSide > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface-sunken);
+  padding: 9px 10px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.releaseFacts strong,
+.releaseSide strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.releaseSide {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.releaseSide > button {
+  width: 100%;
+  justify-content: center;
+}
+
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
@@ -217,12 +297,28 @@
 }
 
 @media (max-width: 1100px) {
+  .releasePanel {
+    grid-template-columns: 1fr;
+  }
+
   .layout {
     grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 600px) {
+  .releaseFacts {
+    grid-template-columns: 1fr;
+  }
+
+  .releasePanel {
+    padding: 14px;
+  }
+
+  .releaseMain h2 {
+    white-space: normal;
+  }
+
   .item {
     flex-wrap: wrap;
   }

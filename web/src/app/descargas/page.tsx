@@ -64,6 +64,13 @@ export default function DownloadsPage() {
 
   const canManageDevices = Boolean(user?.permissions?.includes("devices:manage"));
   const manualDownloads = useMemo(() => downloads.filter(isManualInstaller), [downloads]);
+  const featuredInstaller = useMemo(
+    () =>
+      [...manualDownloads].sort(
+        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+      )[0] || null,
+    [manualDownloads],
+  );
   const windowsCount = useMemo(() => manualDownloads.filter((item) => item.platform === "Windows").length, [manualDownloads]);
   const hiddenUpdatePackages = useMemo(() => downloads.length - manualDownloads.length, [downloads.length, manualDownloads.length]);
 
@@ -149,6 +156,58 @@ export default function DownloadsPage() {
       description={t("Instaladores oficiales para estaciones monitoreadas.")}
       actions={<RefreshButton loading={loading} onClick={() => void loadDownloads()} />}
     >
+      {loaded && !loadFailed ? (
+        <section className={styles.releasePanel} aria-label={t("Resumen de instaladores")}>
+          <div className={styles.releaseMain}>
+            <span className={styles.eyebrow}>{t("Instalador recomendado")}</span>
+            <h2>{featuredInstaller?.filename || t("Sin instalador publicado")}</h2>
+            <div className={styles.releaseFacts}>
+              <span>
+                {t("Plataforma")}
+                <strong>{featuredInstaller?.platform || "Windows"}</strong>
+              </span>
+              <span>
+                {t("Versión")}
+                <strong>{featuredInstaller ? versionOf(featuredInstaller.filename) || t("Sin indicar") : "-"}</strong>
+              </span>
+              <span>
+                {t("Tamaño")}
+                <strong>{featuredInstaller ? formatSize(featuredInstaller.size_bytes) : "-"}</strong>
+              </span>
+              <span>
+                {t("Actualizado")}
+                <strong>{featuredInstaller ? formatDate(featuredInstaller.updated_at) : "-"}</strong>
+              </span>
+            </div>
+          </div>
+          <div className={styles.releaseSide}>
+            <div>
+              <span>{t("Publicación")}</span>
+              <Chip tone={directoryReady ? "good" : "warn"}>{directoryReady ? t("Carpeta activa") : t("Carpeta no preparada")}</Chip>
+            </div>
+            <div>
+              <span>{t("Instaladores visibles")}</span>
+              <strong className="tabular">{manualDownloads.length}</strong>
+            </div>
+            <div>
+              <span>{t("Paquetes internos")}</span>
+              <strong className="tabular">{hiddenUpdatePackages}</strong>
+            </div>
+            {featuredInstaller ? (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void downloadFile(featuredInstaller)}
+                disabled={downloading === featuredInstaller.filename}
+              >
+                {downloadIcon}
+                <span>{downloading === featuredInstaller.filename ? t("Descargando...") : t("Descargar")}</span>
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       <div className={styles.layout}>
         <section className={styles.main} aria-labelledby="downloads-title">
           <div className={styles.sectionHead}>

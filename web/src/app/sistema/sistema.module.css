@@ -6,6 +6,96 @@
   min-width: 0;
 }
 
+/* --- Foco de consola ------------------------------------------------------ */
+.consolePanel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.78fr);
+  gap: 16px;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  padding: 18px;
+}
+
+.consoleMain {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.consoleEyebrow {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.consoleMain h2 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 650;
+  line-height: 1.18;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.consoleMain p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.consoleActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.consoleFacts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.consoleFacts > div {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface-sunken);
+  padding: 10px 12px;
+}
+
+.consoleFacts span {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.consoleFacts strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.valueWarn {
+  color: var(--warn) !important;
+}
+
 /* --- Avisos --------------------------------------------------------------- */
 .alerts {
   display: flex;
@@ -568,6 +658,10 @@
 
 /* --- Responsive ----------------------------------------------------------- */
 @media (max-width: 1180px) {
+  .consolePanel {
+    grid-template-columns: 1fr;
+  }
+
   .kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -623,7 +717,16 @@
 @media (max-width: 560px) {
   .kpis,
   .facts,
-  .miniFacts {
+  .miniFacts,
+  .consoleFacts {
     grid-template-columns: 1fr;
+  }
+
+  .consolePanel {
+    padding: 14px;
+  }
+
+  .consoleMain h2 {
+    white-space: normal;
   }
 }

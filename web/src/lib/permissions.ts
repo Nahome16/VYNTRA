@@ -7,6 +7,7 @@ export const routePermissions: Array<{ href: string; permission: string }> = [
   { href: "/dashboard", permission: "dashboard:read" },
   { href: "/empleados", permission: "employees:read" },
   { href: "/asistencia", permission: "attendance:read" },
+  { href: "/incidencias", permission: "settings:manage" },
   { href: "/dispositivos", permission: "devices:read" },
   { href: "/descargas", permission: "devices:manage" },
   { href: "/auditoria", permission: "audit:read" },

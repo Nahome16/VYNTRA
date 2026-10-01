@@ -6,6 +6,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { requiredPermissionFor } from "@/lib/permissions";
+import { SystemCompany, SystemOverviewResponse } from "@/lib/types";
 
 const iconProps = {
   viewBox: "0 0 24 24",
@@ -59,6 +60,17 @@ const navItems = [
     ),
   },
   {
+    href: "/incidencias",
+    label: "Incidencias",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+        <path d="M10.3 3.9 2.4 17.5A2 2 0 0 0 4.1 20h15.8a2 2 0 0 0 1.7-2.5L13.7 3.9a2 2 0 0 0-3.4 0z" />
+      </svg>
+    ),
+  },
+  {
     href: "/dispositivos",
     label: "Dispositivos",
     icon: (
@@ -102,7 +114,9 @@ const navItems = [
   },
 ];
 
-const consoleRoutes = new Set(["/sistema", "/auditoria", "/descargas"]);
+const operationRoutes = new Set(["/dashboard", "/asistencia", "/empleados", "/incidencias", "/dispositivos"]);
+const configRoutes = new Set(["/ajustes", "/descargas"]);
+const consoleRoutes = new Set(["/sistema", "/auditoria"]);
 
 const roleLabels: Record<string, string> = {
   system_admin: "Admin del sistema",
@@ -122,19 +136,32 @@ export function AppShell({
   title,
   description,
   actions,
+  status,
   children,
 }: {
   title: string;
   description: string;
   actions?: ReactNode;
+  status?: ReactNode;
   children: ReactNode;
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { ready, user, logout, apiGet, accessNotice, clearAccessNotice, activeCompanyName } = useAuth();
+  const {
+    ready,
+    user,
+    logout,
+    apiGet,
+    accessNotice,
+    clearAccessNotice,
+    activeCompanyId,
+    activeCompanyName,
+    setActiveCompanyId,
+  } = useAuth();
   const { t, theme, toggleTheme, language, toggleLanguage } = usePreferences();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [noticeMessages, setNoticeMessages] = useState<Array<{ type: string; message: string }>>([]);
+  const [companies, setCompanies] = useState<SystemCompany[]>([]);
   const darkOn = theme === "dark";
 
   useEffect(() => {
@@ -160,6 +187,26 @@ export function AppShell({
     return () => window.clearTimeout(timer);
   }, [apiGet, ready, user]);
 
+  useEffect(() => {
+    if (!ready || !user || user.role !== "system_admin") return;
+    const timer = window.setTimeout(() => {
+      apiGet<SystemOverviewResponse>("/api/system/overview")
+        .then((response) => {
+          const activeCompanies = response.companies.filter((company) => company.status === "active");
+          setCompanies(activeCompanies);
+          const current = activeCompanies.find((company) => company.id === activeCompanyId);
+          if (current) {
+            setActiveCompanyId(current.id, current.name);
+            return;
+          }
+          const first = activeCompanies[0];
+          if (first) setActiveCompanyId(first.id, first.name);
+        })
+        .catch(() => setCompanies([]));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [activeCompanyId, apiGet, ready, setActiveCompanyId, user]);
+
   if (!ready || !user) {
     return (
       <main className="loading-shell">
@@ -173,16 +220,16 @@ export function AppShell({
     return !permission || (user.permissions || []).includes(permission);
   });
   const isSystemAdmin = user.role === "system_admin";
-  const consoleGroup = {
-    label: isSystemAdmin ? "Consola" : "Administracion",
-    items: allowed.filter((item) => consoleRoutes.has(item.href)),
-  };
-  const operationGroup = { label: "Operacion", items: allowed.filter((item) => !consoleRoutes.has(item.href)) };
-  const navGroups = (isSystemAdmin ? [consoleGroup, operationGroup] : [operationGroup, consoleGroup]).filter(
+  const operationGroup = { label: "Operacion", items: allowed.filter((item) => operationRoutes.has(item.href)) };
+  const configGroup = { label: "Configuracion", items: allowed.filter((item) => configRoutes.has(item.href)) };
+  const consoleGroup = { label: isSystemAdmin ? "Consola" : "Administracion", items: allowed.filter((item) => consoleRoutes.has(item.href)) };
+  const navGroups = (isSystemAdmin ? [operationGroup, configGroup, consoleGroup] : [operationGroup, configGroup, consoleGroup]).filter(
     (group) => group.items.length,
   );
   const scopeName = isSystemAdmin ? activeCompanyName : user.company;
   const scope = pathname.startsWith("/sistema") ? "system" : "company";
+  const breadcrumbRoot = scopeName || (isSystemAdmin ? "Sistema" : user.company);
+  const breadcrumb = breadcrumbRoot ? `${breadcrumbRoot} / ${title}` : title;
 
   return (
     <main className={`app-shell ${sidebarOpen ? "sidebar-open" : ""}`} data-scope={scope}>
@@ -214,6 +261,27 @@ export function AppShell({
             </svg>
           </button>
         </div>
+
+        {isSystemAdmin ? (
+          <label className="scope-selector">
+            <span>{t("Empresa activa")}</span>
+            <select
+              value={activeCompanyId}
+              onChange={(event) => {
+                const company = companies.find((item) => item.id === event.target.value);
+                setActiveCompanyId(event.target.value, company?.name);
+              }}
+              disabled={!companies.length}
+              aria-label={t("Empresa activa")}
+            >
+              {companies.length ? companies.map((company) => (
+                <option key={company.id} value={company.id}>
+                  {company.name} · {company.controls.subscription_status === "past_due" ? t("Vencida") : `${company.employees_count}/${company.controls.employee_limit} ${t("licencias")}`}
+                </option>
+              )) : <option value="">{t("Cargando empresas")}</option>}
+            </select>
+          </label>
+        ) : null}
 
         <nav>
           {navGroups.map((group) => (
@@ -313,12 +381,14 @@ export function AppShell({
               </svg>
             </button>
             <div>
+              <span className="topbar-breadcrumb">{breadcrumb}</span>
               <h1>{title}</h1>
               <p>{description}</p>
             </div>
           </div>
 
           <div className="topbar-actions">
+            {status ? <span className="sync-status">{status}</span> : null}
             {actions ? <div className="page-actions">{actions}</div> : null}
           </div>
         </header>

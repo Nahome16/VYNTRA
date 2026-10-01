@@ -851,6 +851,7 @@ export default function StationPage() {
   const extensionMissing = !extensionReachable;
   const extensionGraceActive = !extensionStatus.lastSeenAt && Date.now() - extensionProbeStartedAtRef.current < 3000;
   const canAccrueTime = extensionConnected || extensionGraceActive;
+  const currentTotals = totals(stationState, canAccrueTime);
   const canAcceptConsent = consentChecks.every(Boolean);
   const needsPasswordChange = Boolean(session?.credential.password_change_required);
   const consentKey = session ? `${consentPrefix}${session.email}` : "";
@@ -1882,13 +1883,13 @@ export default function StationPage() {
     {
       number: "3",
       label: "Break",
-      detail: stationState.status === "BREAK" ? "Ahora" : stationState.breakUsed ? "Usado" : "Libre",
+      detail: stationState.status === "BREAK" ? "Ahora" : stationState.breakUsed ? formatHms(currentTotals.breakSeconds) : "Disponible",
       active: stationState.status === "BREAK",
     },
     {
       number: "4",
       label: "Lunch",
-      detail: stationState.status === "LUNCH" ? "Ahora" : stationState.lunchUsed ? "Usado" : "Libre",
+      detail: stationState.status === "LUNCH" ? "Ahora" : stationState.lunchUsed ? formatHms(currentTotals.lunch) : "Disponible",
       active: stationState.status === "LUNCH",
     },
     {

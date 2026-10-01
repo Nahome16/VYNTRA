@@ -265,9 +265,9 @@ function statusGroup(label: string): Exclude<QuickFilter, "all" | "late"> {
 }
 
 export default function AttendancePage() {
-  const { apiGet, apiPost, apiPatch, token, activeCompanyId, user } = useAuth();
+  const { apiGet, apiPost, apiPatch, token, activeCompanyId, activeCompanyName, user } = useAuth();
   const { t } = usePreferences();
-  const [view, setView] = useState<AttendanceView>("history");
+  const [view, setView] = useState<AttendanceView>("live");
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("all");
   const [overview, setOverview] = useState<AttendanceOverviewResponse | null>(null);
   const [selectedDepartment, setSelectedDepartment] = useState("");
@@ -802,7 +802,7 @@ export default function AttendancePage() {
   return (
     <AppShell
       title={t("Asistencia")}
-      description={`${overview?.company.name || user?.company || t("Empresa")} - ${t("control de jornada, ausencias, break y lunch.")}`}
+      description={`${activeCompanyName || overview?.company.name || user?.company || t("Empresa")} - ${t("control de jornada, ausencias, break y lunch.")}`}
       actions={(
         <>
           <button className="btn btn-outline" onClick={downloadReport} disabled={reportLoading || !overview}>
@@ -911,47 +911,48 @@ export default function AttendancePage() {
                   <span className={styles.cardMeta}>{visibleRows.length} {t("asociados")}</span>
                 </header>
                 {visibleRows.length ? (
-                  <div className={styles.tableWrap}>
-                    <table className={`${styles.table} ${styles.clickable}`}>
-                      <thead>
-                        <tr>
-                          <th>{t("Empleado")}</th>
-                          <th>{t("Estado")}</th>
-                          <th>{t("Entrada")}</th>
-                          <th>{t("Salida")}</th>
-                          <th className={styles.barCol}>{t("Jornada")}</th>
-                          <th aria-label={t("Acciones")} />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {visibleRows.map((row) => (
-                          <tr
-                            key={row.employee.id}
-                            className={selectedAssociate?.id === row.employee.id ? "selected-row" : ""}
-                            onClick={() => openDetail(row.employee.id)}
-                          >
-                            <td>{personCell(row.employee, row.employee.department || t("Sin departamento"), row.latestStatus.label === "Activo")}</td>
-                            <td>
-                              <div className={styles.chips}>
-                                <Chip tone={row.latestStatus.tone}>{t(row.latestStatus.label)}</Chip>
-                                {row.todayShift?.started_at ? (
-                                  row.lateToday ? <Chip tone="bad" dot={false}>{t("Tarde")}</Chip> : <Chip tone="good" dot={false}>{t("A tiempo")}</Chip>
-                                ) : null}
-                              </div>
-                            </td>
-                            <td className="tabular">{timeOnly(row.todayShift?.started_at || null)}</td>
-                            <td className="tabular">{timeOnly(row.todayShift?.ended_at || null)}</td>
-                            <td className={styles.barCol}>
-                              <div className={styles.barCell}>
-                                <ShiftBar mix={row.todayMix} />
-                                <span className="tabular">{formatDuration(workedSeconds(row.todayShift))}</span>
-                              </div>
-                            </td>
-                            <td className={styles.menuCol}>{rowMenu(row.employee)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <div className={styles.liveGrid}>
+                    {visibleRows.map((row) => (
+                      <article
+                        key={row.employee.id}
+                        className={`${styles.liveCard} ${selectedAssociate?.id === row.employee.id ? styles.liveCardSelected : ""}`}
+                      >
+                        <button type="button" className={styles.liveCardMain} onClick={() => openDetail(row.employee.id)}>
+                          <div className={styles.liveTop}>
+                            {personCell(row.employee, row.employee.department || t("Sin departamento"), row.latestStatus.label === "Activo")}
+                            <div className={styles.chips}>
+                              <Chip tone={row.latestStatus.tone}>{t(row.latestStatus.label)}</Chip>
+                              {row.todayShift?.started_at ? (
+                                row.lateToday ? <Chip tone="bad" dot={false}>{t("Tarde")}</Chip> : <Chip tone="good" dot={false}>{t("A tiempo")}</Chip>
+                              ) : null}
+                            </div>
+                          </div>
+                          <div className={styles.liveFacts}>
+                            <span>
+                              {t("Horario")}
+                              <strong className="tabular">{row.employee.schedule.start_time} - {row.employee.schedule.end_time}</strong>
+                            </span>
+                            <span>
+                              {t("Entrada")}
+                              <strong className="tabular">{timeOnly(row.todayShift?.started_at || null)}</strong>
+                            </span>
+                            <span>
+                              {t("Salida")}
+                              <strong className="tabular">{timeOnly(row.todayShift?.ended_at || null)}</strong>
+                            </span>
+                            <span>
+                              {t("Trabajado")}
+                              <strong className="tabular">{formatDuration(workedSeconds(row.todayShift))}</strong>
+                            </span>
+                          </div>
+                          <div className={styles.liveBarRow}>
+                            <ShiftBar mix={row.todayMix} className={styles.liveBar} />
+                            <span>{row.todayShift?.started_at ? t("Jornada registrada") : t("Sin entrada")}</span>
+                          </div>
+                        </button>
+                        <div className={styles.liveCardMenu}>{rowMenu(row.employee)}</div>
+                      </article>
+                    ))}
                   </div>
                 ) : (
                   <div className={styles.cardEmpty}>{noRowsBlock}</div>

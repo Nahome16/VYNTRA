@@ -29,6 +29,8 @@ from agent_runtime import get_logger, is_dev_mode, now_iso
 log = get_logger("auth")
 
 _ITERATIONS = 200_000
+_HTTP = requests.Session()
+_HTTP.trust_env = False
 
 # Usuarios de pruebas SOLO para desarrollo (ver is_dev_mode). Nunca se consultan
 # en un ejecutable empaquetado.
@@ -88,7 +90,7 @@ def autenticar_credenciales(correo: str, password: str, cfg, agent_version: str 
 
     if backend_enabled and base_url and not device_token:
         try:
-            response = requests.post(
+            response = _HTTP.post(
                 f"{base_url}/api/station/enroll",
                 json={
                     "email": correo,
@@ -137,7 +139,7 @@ def autenticar_credenciales(correo: str, password: str, cfg, agent_version: str 
 
     if backend_enabled and base_url and device_token:
         try:
-            response = requests.post(
+            response = _HTTP.post(
                 f"{base_url}/api/station/login",
                 headers={"X-Device-Token": device_token},
                 json={
@@ -207,7 +209,7 @@ def _backend_request(cfg, path: str, payload: dict) -> dict:
             "message": "Backend de VYNTRA no configurado.",
         }
     try:
-        response = requests.post(
+        response = _HTTP.post(
             f"{base_url}{path}",
             headers={"X-Device-Token": device_token},
             json=payload,

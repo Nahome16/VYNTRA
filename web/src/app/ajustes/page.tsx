@@ -259,6 +259,7 @@ export default function SettingsPage() {
   const [accessCodes, setAccessCodes] = useState<AccessCode[]>([]);
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [settingsError, setSettingsError] = useState(false);
   const [currentPanelPassword, setCurrentPanelPassword] = useState("");
   const [newPanelPassword, setNewPanelPassword] = useState("");
   const [confirmPanelPassword, setConfirmPanelPassword] = useState("");
@@ -323,10 +324,12 @@ export default function SettingsPage() {
       setRules([]);
       setUncategorized([]);
       setAccessCodes([]);
+      setSettingsError(false);
       setStatusText(t("Selecciona una empresa en Sistema para administrar ajustes"));
       return;
     }
     setLoading(true);
+    setSettingsError(false);
     setStatusText(t("Actualizando ajustes..."));
     const companyQuery = isSystemAdmin && activeCompanyId ? `?company_id=${encodeURIComponent(activeCompanyId)}` : "";
     const companyLimitQuery = isSystemAdmin && activeCompanyId
@@ -356,6 +359,7 @@ export default function SettingsPage() {
       );
       setStatusText(t("Datos actualizados"));
     } catch {
+      setSettingsError(true);
       setStatusText(t("No se pudieron cargar ajustes"));
     } finally {
       setLoading(false);
@@ -914,7 +918,19 @@ export default function SettingsPage() {
           />
         ) : null}
 
-        {currentSection === "usuarios" ? (
+        {settingsError && !noCompanySelected ? (
+          <EmptyBlock
+            title={t("No se pudieron cargar ajustes")}
+            description={t("Revisa la conexion con la API o vuelve a intentar.")}
+            action={
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => void loadSettings()}>
+                {t("Reintentar")}
+              </button>
+            }
+          />
+        ) : null}
+
+        {!settingsError && !noCompanySelected && currentSection === "usuarios" ? (
           <section className={styles.section} aria-label={t(sectionLabels.usuarios)}>
             <div className="toolbar">
               <SearchField
@@ -1069,7 +1085,7 @@ export default function SettingsPage() {
           </section>
         ) : null}
 
-        {currentSection === "accesos" ? (
+        {!settingsError && !noCompanySelected && currentSection === "accesos" ? (
           <section className={styles.section} aria-label={t(sectionLabels.accesos)}>
             <div className="toolbar">
               <SearchField
@@ -1175,7 +1191,7 @@ export default function SettingsPage() {
           </section>
         ) : null}
 
-        {currentSection === "reglas" ? (
+        {!settingsError && !noCompanySelected && currentSection === "reglas" ? (
           <section className={styles.section} aria-label={t(sectionLabels.reglas)}>
             <div className="toolbar">
               <SearchField
@@ -1382,13 +1398,13 @@ export default function SettingsPage() {
           </section>
         ) : null}
 
-        {currentSection === "incidencias" ? (
+        {!settingsError && !noCompanySelected && currentSection === "incidencias" ? (
           <section className={styles.section} aria-label={t(sectionLabels.incidencias)}>
             <IncidentsPanel active={currentSection === "incidencias"} />
           </section>
         ) : null}
 
-        {currentSection === "cuenta" ? (
+        {!settingsError && !noCompanySelected && currentSection === "cuenta" ? (
           <section className={styles.accountGrid} aria-label={t(sectionLabels.cuenta)}>
             <div className={styles.card}>
               <header className={styles.cardHead}>
@@ -1462,7 +1478,7 @@ export default function SettingsPage() {
           </section>
         ) : null}
 
-        {currentSection !== "incidencias" ? <StatusLine>{statusText}</StatusLine> : null}
+        {!settingsError && !noCompanySelected && currentSection !== "incidencias" ? <StatusLine>{statusText}</StatusLine> : null}
       </div>
 
       <Drawer

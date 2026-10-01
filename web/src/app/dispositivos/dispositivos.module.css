@@ -110,6 +110,116 @@
   background: var(--muted-soft);
 }
 
+/* --- Inventario ----------------------------------------------------------- */
+.deviceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.deviceCard {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--muted-soft);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  transition:
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease),
+    box-shadow 0.15s var(--ease);
+}
+
+.deviceCard:hover {
+  border-color: var(--line-strong);
+  border-left-color: var(--muted-soft);
+  background: var(--surface-hover);
+  box-shadow: var(--shadow-sm);
+}
+
+.deviceOnline {
+  border-left-color: var(--good);
+}
+
+.deviceOnline:hover {
+  border-left-color: var(--good);
+}
+
+.deviceRevoked {
+  border-left-color: var(--bad);
+}
+
+.deviceRevoked:hover {
+  border-left-color: var(--bad);
+}
+
+.deviceSelected {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.deviceMain {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 15px 8px 15px 14px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.deviceMain:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -3px;
+}
+
+.deviceTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.deviceFacts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.deviceFacts span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-xs);
+  background: var(--surface-sunken);
+  padding: 8px 9px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.deviceFacts strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.deviceMenu {
+  display: flex;
+  align-items: flex-start;
+  padding: 10px 8px 0 0;
+}
+
 /* --- Token emitido -------------------------------------------------------- */
 .token {
   display: grid;
@@ -308,6 +418,10 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .deviceGrid {
+    grid-template-columns: 1fr;
+  }
+
   .count {
     display: none;
   }
@@ -315,8 +429,13 @@
 
 @media (max-width: 520px) {
   .kpis,
-  .summary {
+  .summary,
+  .deviceFacts {
     grid-template-columns: 1fr;
+  }
+
+  .deviceTop {
+    display: grid;
   }
 
   .summary div + div {

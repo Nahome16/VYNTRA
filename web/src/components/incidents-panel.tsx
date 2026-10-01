@@ -29,6 +29,8 @@ const statusTone: Record<IncidentStatus, "plain" | "good" | "warn" | "bad"> = {
 };
 
 const incidentTypeLabels: Record<string, string> = {
+  late_start: "Entrada tardia",
+  idle_excess: "Inactividad prolongada",
   correccion_marcaje: "Correccion de marcaje",
   permiso_vacaciones: "Permiso o vacaciones",
   tiempo_perdido: "Falla tecnica",
@@ -143,9 +145,12 @@ export function IncidentsPanel({ active = true }: { active?: boolean }) {
       const response = await apiGet<IncidentResponse>(
         `/api/incidents${params.toString() ? `?${params.toString()}` : ""}`,
       );
-      setIncidents(response.incidents);
+      const nextIncidents = statusFilter
+        ? response.incidents.filter((incident) => incident.status === statusFilter)
+        : response.incidents;
+      setIncidents(nextIncidents);
       setStatusText(t("Incidencias actualizadas"));
-      const firstIncident = response.incidents[0] || null;
+      const firstIncident = nextIncidents[0] || null;
       setSelectedIncidentId(firstIncident?.id || "");
       setResolutionStatus(firstIncident ? defaultResolutionStatus(firstIncident) : "approved");
       setResolutionNotes(firstIncident?.resolution_notes || "");

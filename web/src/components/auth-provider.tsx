@@ -40,6 +40,7 @@ const companyScopedReadPrefixes = [
   "/api/settings/access-codes",
   "/api/settings/restore-codes",
   "/api/devices",
+  "/api/incidents",
   "/api/attendance/overview",
   "/api/reports/operations.pdf",
 ];

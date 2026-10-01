@@ -114,9 +114,14 @@ const positions = [
 ];
 
 const employees = [
-  { id: "emp-001", employee_code: "EMP-001", full_name: "Ana Lopez", email: "ana@demo.local", department_id: "dep-soporte", position_id: "pos-analista", status: "active" },
-  { id: "emp-002", employee_code: "EMP-002", full_name: "Luis Gomez", email: "luis@demo.local", department_id: "dep-ventas", position_id: "pos-ejecutivo", status: "active" },
-  { id: "emp-003", employee_code: "EMP-003", full_name: "Marta Reyes", email: "marta@demo.local", department_id: "dep-operacion", position_id: "pos-supervisor", status: "active" },
+  { id: "emp-001", company_id: "cmp-vyntra-demo", employee_code: "EMP-001", full_name: "Ana Lopez", email: "ana@demo.local", department_id: "dep-soporte", position_id: "pos-analista", status: "active" },
+  { id: "emp-002", company_id: "cmp-vyntra-demo", employee_code: "EMP-002", full_name: "Luis Gomez", email: "luis@demo.local", department_id: "dep-ventas", position_id: "pos-ejecutivo", status: "active" },
+  { id: "emp-003", company_id: "cmp-vyntra-demo", employee_code: "EMP-003", full_name: "Marta Reyes", email: "marta@demo.local", department_id: "dep-operacion", position_id: "pos-supervisor", status: "active" },
+  { id: "emp-norte-001", company_id: "cmp-norte", employee_code: "NOR-001", full_name: "Carla Mendez", email: "carla@norte.local", department_id: "dep-operacion", position_id: "pos-supervisor", status: "active" },
+  { id: "emp-norte-002", company_id: "cmp-norte", employee_code: "NOR-002", full_name: "Diego Ruiz", email: "diego@norte.local", department_id: "dep-soporte", position_id: "pos-analista", status: "active" },
+  { id: "emp-norte-003", company_id: "cmp-norte", employee_code: "NOR-003", full_name: "Elena Torres", email: "elena@norte.local", department_id: "dep-ventas", position_id: "pos-ejecutivo", status: "active" },
+  { id: "emp-norte-004", company_id: "cmp-norte", employee_code: "NOR-004", full_name: "Marco Diaz", email: "marco@norte.local", department_id: "dep-operacion", position_id: "pos-analista", status: "active" },
+  { id: "emp-norte-005", company_id: "cmp-norte", employee_code: "NOR-005", full_name: "Sofia Castillo", email: "sofia@norte.local", department_id: "dep-soporte", position_id: "pos-ejecutivo", status: "active" },
 ];
 
 const devices = [
@@ -224,6 +229,26 @@ const incidents = [
   },
 ];
 
+const agentDownloads = [
+  {
+    filename: "VyntraAgent-Setup-1.4.2.exe",
+    platform: "Windows",
+    size_bytes: 48_234_112,
+    updated_at: "2026-09-28T14:30:00Z",
+    download_url: "/api/downloads/agent/VyntraAgent-Setup-1.4.2.exe",
+  },
+  {
+    filename: "VyntraAgent-Update-1.4.2.zip",
+    platform: "Windows",
+    size_bytes: 18_102_272,
+    updated_at: "2026-09-28T14:35:00Z",
+    download_url: "/api/downloads/agent/VyntraAgent-Update-1.4.2.zip",
+  },
+];
+
+const productivityRules = [];
+const accessCodes = [];
+
 function send(res, status, data, headers = {}) {
   const isString = typeof data === "string";
   res.writeHead(status, {
@@ -268,6 +293,32 @@ function companyOverview() {
   }));
 }
 
+function companyFromRequest(url) {
+  const companyId = url.searchParams.get("company_id");
+  return companies.find((company) => company.id === companyId) || companies[0];
+}
+
+function employeesForCompany(companyId) {
+  return employees.filter((employee) => employee.company_id === companyId);
+}
+
+function attendanceEmployeesForCompany(companyId) {
+  return employeesForCompany(companyId).map((employee) => ({
+    ...employee,
+    department: departments.find((item) => item.id === employee.department_id)?.name || null,
+    position: positions.find((item) => item.id === employee.position_id)?.name || null,
+    schedule: {
+      id: `sch-${employee.id}`,
+      start_time: "08:00",
+      end_time: "17:00",
+      expected_break_minutes: 15,
+      expected_lunch_minutes: 60,
+      effective_from: "2026-08-01",
+      timezone: "America/Managua",
+    },
+  }));
+}
+
 function csvLogs(logs) {
   const rows = [["created_at", "actor_email", "action", "entity_type", "entity_id", "reason"]];
   for (const log of logs) {
@@ -276,7 +327,8 @@ function csvLogs(logs) {
   return rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n");
 }
 
-function dashboardPayload() {
+function dashboardPayload(company) {
+  const scopedEmployees = employeesForCompany(company.id);
   const totals = {
     total_seconds: 201600,
     active_seconds: 176400,
@@ -296,7 +348,7 @@ function dashboardPayload() {
     idle_pct: 14,
   };
   return {
-    company: companyBase,
+    company: { id: company.id, name: company.name },
     filters: { date_from: null, date_to: null, employee_id: null, department_id: null },
     totals,
     days: [
@@ -305,7 +357,7 @@ function dashboardPayload() {
       { block_date: "2026-08-20", ...totals, productivity_pct: 71 },
     ],
     adjustments: [],
-    blocks: employees.map((employee, index) => ({
+    blocks: scopedEmployees.map((employee, index) => ({
       id: `blk-${employee.id}`,
       employee_id: employee.id,
       employee: employee.full_name,
@@ -320,13 +372,13 @@ function dashboardPayload() {
   };
 }
 
-function catalogsPayload() {
+function catalogsPayload(company) {
   return {
-    company: companyBase,
+    company: { id: company.id, name: company.name },
     classifications: ["productive", "neutral", "non_productive", "uncategorized"],
     departments,
     positions,
-    employees,
+    employees: employeesForCompany(company.id),
   };
 }
 
@@ -461,8 +513,23 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (path === "/api/downloads/agent" && req.method === "GET") {
+    send(res, 200, { count: agentDownloads.length, directory_ready: true, downloads: agentDownloads });
+    return;
+  }
+
+  const downloadMatch = path.match(/^\/api\/downloads\/agent\/([^/]+)$/);
+  if (downloadMatch && req.method === "GET") {
+    send(res, 200, `mock installer: ${decodeURIComponent(downloadMatch[1])}`, {
+      "content-disposition": `attachment; filename="${decodeURIComponent(downloadMatch[1]).replaceAll('"', "")}"`,
+    });
+    return;
+  }
+
   if (path === "/api/devices" && req.method === "GET") {
-    send(res, 200, { company: companyBase, count: devices.length, devices });
+    const company = companyFromRequest(url);
+    const scopedDevices = devices.filter((device) => device.company_id === company.id);
+    send(res, 200, { company: { id: company.id, name: company.name }, count: scopedDevices.length, devices: scopedDevices });
     return;
   }
 
@@ -487,7 +554,7 @@ const server = http.createServer(async (req, res) => {
       last_seen_at: null,
     };
     devices.unshift(device);
-    send(res, 200, { device, device_token: `device-${randomUUID()}` });
+    send(res, 200, { device, credentials: { device_token: `device-${randomUUID()}` } });
     return;
   }
 
@@ -522,26 +589,34 @@ const server = http.createServer(async (req, res) => {
       send(res, 404, { detail: "Equipo no encontrado" });
       return;
     }
-    send(res, 200, { device, device_token: `device-${randomUUID()}` });
+    send(res, 200, { device, credentials: { device_token: `device-${randomUUID()}` } });
     return;
   }
 
   if (path === "/api/audit/logs" && req.method === "GET") {
+    const companyId = url.searchParams.get("company_id");
+    const scopedLogs = companyId ? auditLogs.filter((log) => log.company_id === companyId) : auditLogs;
     if (url.searchParams.get("export") === "csv") {
-      send(res, 200, csvLogs(auditLogs), { "content-disposition": "attachment; filename=audit_logs.csv" });
+      send(res, 200, csvLogs(scopedLogs), { "content-disposition": "attachment; filename=audit_logs.csv" });
       return;
     }
-    send(res, 200, { company_id: null, count: auditLogs.length, items: auditLogs, filters: {} });
+    send(res, 200, { company_id: companyId, count: scopedLogs.length, items: scopedLogs, filters: {} });
     return;
   }
 
   if (path === "/api/productivity/catalogs") {
-    send(res, 200, catalogsPayload());
+    send(res, 200, catalogsPayload(companyFromRequest(url)));
+    return;
+  }
+
+  if (path === "/api/productivity/rules" && req.method === "GET") {
+    const company = companyFromRequest(url);
+    send(res, 200, { rules: productivityRules.filter((rule) => rule.company_id === company.id) });
     return;
   }
 
   if (path === "/api/productivity/dashboard") {
-    send(res, 200, dashboardPayload());
+    send(res, 200, dashboardPayload(companyFromRequest(url)));
     return;
   }
 
@@ -550,8 +625,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (path === "/api/settings/access-codes" && req.method === "GET") {
+    const company = companyFromRequest(url);
+    send(res, 200, { codes: accessCodes.filter((code) => code.company_id === company.id) });
+    return;
+  }
+
   if (path === "/api/incidents" && req.method === "GET") {
-    send(res, 200, { company: companyBase, count: incidents.length, incidents });
+    const company = companyFromRequest(url);
+    const scopedIncidents = incidents.filter((incident) => incident.company_id === company.id);
+    send(res, 200, { company: { id: company.id, name: company.name }, count: scopedIncidents.length, incidents: scopedIncidents });
     return;
   }
 
@@ -569,7 +652,20 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (path === "/api/attendance/overview") {
-    send(res, 200, { company: companyBase, filters: { date_from: null, date_to: null, employee_id: null, department_id: null }, employees: [], time_adjustments: [], shifts: [] });
+    const company = companyFromRequest(url);
+    const scopedEmployees = attendanceEmployeesForCompany(company.id);
+    send(res, 200, {
+      company: { id: company.id, name: company.name },
+      filters: {
+        date_from: url.searchParams.get("date_from"),
+        date_to: url.searchParams.get("date_to"),
+        employee_id: url.searchParams.get("employee_id"),
+        department_id: url.searchParams.get("department_id"),
+      },
+      employees: scopedEmployees,
+      time_adjustments: [],
+      shifts: [],
+    });
     return;
   }
 

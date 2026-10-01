@@ -16,12 +16,6 @@ const DEFAULT_LIMIT = "200";
 
 type Tone = "plain" | "good" | "warn" | "bad" | "info";
 
-function payloadText(payload: AuditLogEntry["payload"]) {
-  if (!payload) return "{}";
-  if (typeof payload === "string") return payload;
-  return JSON.stringify(payload);
-}
-
 function payloadPretty(payload: AuditLogEntry["payload"]) {
   if (!payload) return "{}";
   if (typeof payload === "string") {
@@ -32,6 +26,87 @@ function payloadPretty(payload: AuditLogEntry["payload"]) {
     }
   }
   return JSON.stringify(payload, null, 2);
+}
+
+const actionLabels: Record<string, string> = {
+  system_company_controls_updated: "Controles de empresa actualizados",
+  device_token_rotated: "Token del equipo rotado",
+  incident_resolved: "Incidencia resuelta",
+  incident_approved: "Incidencia aprobada",
+  incident_rejected: "Incidencia rechazada",
+  employee_created: "Empleado creado",
+  employee_updated: "Empleado actualizado",
+  employee_archived: "Empleado eliminado",
+  employee_restored: "Empleado restaurado",
+  access_code_created: "Codigo de acceso generado",
+  productivity_rule_created: "Regla productiva creada",
+  productivity_rule_updated: "Regla productiva actualizada",
+  audit_exported: "Auditoria exportada",
+};
+
+const entityLabels: Record<string, string> = {
+  company: "Empresa",
+  device: "Equipo",
+  employee: "Empleado",
+  incident: "Incidencia",
+  user: "Usuario",
+  shift: "Jornada",
+  access_code: "Codigo de acceso",
+  productivity_rule: "Regla productiva",
+};
+
+const payloadLabels: Record<string, string> = {
+  reason: "Motivo",
+  employee_limit: "Limite de empleados",
+  hostname: "Equipo",
+  status: "Estado",
+  role: "Rol",
+  email: "Correo",
+  full_name: "Nombre",
+  company_id: "Empresa",
+  device_id: "Equipo",
+  employee_id: "Empleado",
+  resolution_notes: "Nota de resolucion",
+};
+
+function humanizeCode(value: string) {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function actionLabel(action: string, t: (text: string) => string) {
+  return t(actionLabels[action] || humanizeCode(action || "Evento"));
+}
+
+function entityLabel(entity: string, t: (text: string) => string) {
+  return t(entityLabels[entity] || humanizeCode(entity || "Entidad"));
+}
+
+function payloadRecord(payload: AuditLogEntry["payload"]): Record<string, unknown> {
+  if (!payload) return {};
+  if (typeof payload === "string") {
+    try {
+      const parsed = JSON.parse(payload);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : { valor: payload };
+    } catch {
+      return { valor: payload };
+    }
+  }
+  if (Array.isArray(payload)) return { elementos: payload.length };
+  return payload;
+}
+
+function formatPayloadValue(value: unknown) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "boolean") return value ? "Si" : "No";
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
+
+function payloadSummary(payload: AuditLogEntry["payload"]) {
+  return Object.entries(payloadRecord(payload)).slice(0, 4);
 }
 
 /** Tono del chip segun el tipo de accion auditada. */
@@ -236,11 +311,13 @@ export default function AuditPage() {
 
   const firstRow = logs.length ? (currentPage - 1) * AUDIT_PAGE_SIZE + 1 : 0;
   const lastRow = Math.min(currentPage * AUDIT_PAGE_SIZE, logs.length);
+  const auditScopeName = companies.find((company) => company.id === companyId)?.name || (companyId ? t("Empresa") : t("Sistema"));
 
   return (
     <AppShell
       title={t("Auditoría")}
-      description={`${user?.company || t("Sistema")} · ${t("acciones administrativas y eventos sensibles")}`}
+      description={`${auditScopeName} · ${t("acciones administrativas y eventos sensibles")}`}
+      status={statusText}
       actions={
         <>
           <RefreshButton loading={loading} onClick={() => void loadAudit()} />
@@ -414,25 +491,44 @@ export default function AuditPage() {
                         <td>{log.company || "-"}</td>
                         <td>
                           <Chip tone={actionTone(log.action)} dot={false}>
-                            <span className={styles.code}>{log.action}</span>
+                            {actionLabel(log.action, t)}
                           </Chip>
+                          <small className={`${styles.code} ${styles.mutedLine}`}>{log.action}</small>
                         </td>
                         <td>
                           <div className={styles.stack}>
-                            <span>{log.entity_type || "-"}</span>
+                            <span>{entityLabel(log.entity_type, t)}</span>
                             <small className={styles.code}>{log.entity_id || "-"}</small>
                           </div>
                         </td>
                         <td className={styles.code}>{log.ip_address || "-"}</td>
                         <td className={styles.payloadCell}>
                           <span className={`${styles.chevron} ${expanded ? styles.chevronOpen : ""}`}>{icons.chevron}</span>
-                          <code className={styles.payload}>{payloadText(log.payload)}</code>
+                          <span className={styles.payload}>
+                            {payloadSummary(log.payload).map(([key, value]) => `${t(payloadLabels[key] || humanizeCode(key))}: ${formatPayloadValue(value)}`).join(" · ") || t("Sin detalle")}
+                          </span>
                         </td>
                       </tr>
                       {expanded ? (
                         <tr className={styles.detailRow}>
                           <td colSpan={7}>
-                            <pre className={styles.pre}>{payloadPretty(log.payload)}</pre>
+                            <div className={styles.detailGrid}>
+                              {payloadSummary(log.payload).length ? payloadSummary(log.payload).map(([key, value]) => (
+                                <div key={key}>
+                                  <dt>{t(payloadLabels[key] || humanizeCode(key))}</dt>
+                                  <dd>{formatPayloadValue(value)}</dd>
+                                </div>
+                              )) : (
+                                <div>
+                                  <dt>{t("Detalle")}</dt>
+                                  <dd>{t("Sin cambios registrados")}</dd>
+                                </div>
+                              )}
+                            </div>
+                            <details className={styles.technical}>
+                              <summary>{t("Ver dato tecnico")}</summary>
+                              <pre className={styles.pre}>{payloadPretty(log.payload)}</pre>
+                            </details>
                           </td>
                         </tr>
                       ) : null}

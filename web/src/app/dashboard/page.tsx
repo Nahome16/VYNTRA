@@ -2,14 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
-import { EmptyBlock, Panel, RefreshButton, StatusLine } from "@/components/ui";
+import { EmptyBlock, Panel, RefreshButton } from "@/components/ui";
 import { BarTrendChart, DonutChart, DonutSegment, StatTile } from "@/components/charts";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { formatDuration, fullDate, metricTone } from "@/lib/format";
 import {
+  AttendanceOverviewResponse,
   CatalogsResponse,
   DashboardResponse,
+  DevicesResponse,
+  Incident,
   SystemCompany,
   SystemOverviewResponse,
 } from "@/lib/types";
@@ -68,6 +71,23 @@ function buildParams({
 
 type Delta = { text: string; direction: "up" | "down"; tone: "plain" | "good" | "bad"; note: string };
 
+type IncidentResponse = {
+  company: { id: string; name: string };
+  count: number;
+  incidents: Incident[];
+};
+
+type OperationsSnapshot = {
+  pendingIncidents: number;
+  firstIncidentLabel: string;
+  offlineDevices: number;
+  firstOfflineDevice: string;
+  working: number;
+  paused: number;
+  missing: number;
+  totalEmployees: number;
+};
+
 /**
  * Comparacion con el periodo anterior en puntos porcentuales. Se omite cuando
  * no aporta: sin datos previos o sin cambio apreciable.
@@ -108,6 +128,7 @@ export default function DashboardPage() {
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
+  const [operationsSnapshot, setOperationsSnapshot] = useState<OperationsSnapshot | null>(null);
 
   const { t } = usePreferences();
   const isSystemAdmin = user?.role === "system_admin";
@@ -157,6 +178,54 @@ export default function DashboardPage() {
     }
   }, [activeCompanyId, apiGet, isSystemAdmin, setActiveCompanyId, t, user]);
 
+  const loadOperationsSnapshot = useCallback(async () => {
+    if (isSystemAdmin && !activeCompanyId) return;
+    const companyQuery = effectiveCompanyId ? `company_id=${encodeURIComponent(effectiveCompanyId)}` : "";
+    const departmentQuery = selectedDepartment ? `department_id=${encodeURIComponent(selectedDepartment)}` : "";
+    const scoped = [companyQuery, departmentQuery].filter(Boolean).join("&");
+    const scopedSuffix = scoped ? `&${scoped}` : "";
+    const scopedQuery = scoped ? `?${scoped}` : "";
+    const today = todayISO();
+    const [incidentsResult, devicesResult, attendanceResult] = await Promise.allSettled([
+      apiGet<IncidentResponse>(`/api/incidents?status_filter=pending${scopedSuffix}`),
+      apiGet<DevicesResponse>(`/api/devices${scopedQuery}`),
+      apiGet<AttendanceOverviewResponse>(`/api/attendance/overview?date_from=${today}&date_to=${today}${scopedSuffix}`),
+    ]);
+
+    const pendingIncidents = incidentsResult.status === "fulfilled"
+      ? incidentsResult.value.incidents.filter((incident) => incident.status === "pending")
+      : [];
+    const offlineDevices = devicesResult.status === "fulfilled"
+      ? devicesResult.value.devices.filter((device) => device.status === "offline" || !device.is_active)
+      : [];
+    const attendance = attendanceResult.status === "fulfilled" ? attendanceResult.value : null;
+    const employees = (attendance?.employees || []).filter((employee) => employee.status === "active");
+    const latestShift = new Map<string, NonNullable<AttendanceOverviewResponse["shifts"]>[number]>();
+    (attendance?.shifts || []).forEach((shift) => {
+      if (!latestShift.has(shift.employee_id)) latestShift.set(shift.employee_id, shift);
+    });
+    let working = 0;
+    let paused = 0;
+    employees.forEach((employee) => {
+      const shift = latestShift.get(employee.id);
+      const phase = (shift?.current_phase || "").toUpperCase();
+      if (!shift?.started_at || shift.ended_at || shift.status === "closed" || phase === "TERMINADO") return;
+      if (phase === "BREAK" || phase === "LUNCH" || phase === "PAUSADO") paused += 1;
+      else working += 1;
+    });
+
+    setOperationsSnapshot({
+      pendingIncidents: pendingIncidents.length,
+      firstIncidentLabel: pendingIncidents[0]?.employee || pendingIncidents[0]?.title || t("Incidencia pendiente"),
+      offlineDevices: offlineDevices.length,
+      firstOfflineDevice: offlineDevices[0]?.hostname || offlineDevices[0]?.name || t("Equipo sin conexion"),
+      working,
+      paused,
+      missing: Math.max(0, employees.length - working - paused),
+      totalEmployees: employees.length,
+    });
+  }, [activeCompanyId, apiGet, effectiveCompanyId, isSystemAdmin, selectedDepartment, t]);
+
   const loadDashboard = useCallback(async () => {
     if (isSystemAdmin && !activeCompanyId) {
       setStatusText(t("Selecciona una empresa en Sistema para ver el dashboard"));
@@ -183,12 +252,13 @@ export default function DashboardPage() {
       setPreviousDashboard(nextPrevious);
       setCatalogs(nextCatalogs);
       setStatusText(t("Datos actualizados"));
+      void loadOperationsSnapshot();
     } catch {
       setStatusText(t("No se pudieron cargar los datos"));
     } finally {
       setLoading(false);
     }
-  }, [activeCompanyId, apiGet, currentParams, dateFrom, dateTo, effectiveCompanyId, isSystemAdmin, selectedDepartment, t]);
+  }, [activeCompanyId, apiGet, currentParams, dateFrom, dateTo, effectiveCompanyId, isSystemAdmin, loadOperationsSnapshot, selectedDepartment, t]);
 
   useEffect(() => {
     if (!user) return;
@@ -275,6 +345,7 @@ export default function DashboardPage() {
     <AppShell
       title={t("Dashboard")}
       description={`${selectedCompanyName} · ${selectedDepartmentName} · ${dateFrom === dateTo ? fullDate(dateTo) : `${fullDate(dateFrom)} – ${fullDate(dateTo)}`}`}
+      status={statusText}
       actions={(
         <>
           <button className="btn btn-outline" onClick={downloadReport} disabled={reportLoading || !totals}>
@@ -289,21 +360,6 @@ export default function DashboardPage() {
       )}
     >
       <section className={`toolbar ${styles.toolbar}`} aria-label={t("Filtros del dashboard")}>
-        {isSystemAdmin ? (
-          <select
-            aria-label={t("Empresa")}
-            value={activeCompanyId}
-            onChange={(event) => {
-              const company = companies.find((item) => item.id === event.target.value);
-              setActiveCompanyId(event.target.value, company?.name);
-              setSelectedDepartment("");
-            }}
-          >
-            {companies.map((company) => (
-              <option key={company.id} value={company.id}>{company.name}</option>
-            ))}
-          </select>
-        ) : null}
         <select
           aria-label={t("Departamento")}
           value={selectedDepartment}
@@ -354,6 +410,26 @@ export default function DashboardPage() {
         />
       ) : (
         <>
+          {operationsSnapshot ? (
+            <section className={styles.attentionGrid} aria-label={t("Requiere atencion")}>
+              <div className={styles.attentionCard}>
+                <span>{t("Requiere atencion")}</span>
+                <strong>{operationsSnapshot.pendingIncidents} {t("incidencias pendientes")}</strong>
+                <small>{operationsSnapshot.pendingIncidents ? operationsSnapshot.firstIncidentLabel : t("Sin solicitudes pendientes")}</small>
+              </div>
+              <div className={styles.attentionCard}>
+                <span>{t("Equipos")}</span>
+                <strong>{operationsSnapshot.offlineDevices} {t("sin conexion")}</strong>
+                <small>{operationsSnapshot.offlineDevices ? operationsSnapshot.firstOfflineDevice : t("Todos los equipos reportando")}</small>
+              </div>
+              <div className={styles.attentionCard}>
+                <span>{t("Ahora mismo")}</span>
+                <strong>{operationsSnapshot.working} {t("trabajando")} · {operationsSnapshot.paused} {t("en pausa")}</strong>
+                <small>{operationsSnapshot.totalEmployees ? `${operationsSnapshot.missing} ${t("sin entrada o finalizados")}` : t("Sin asistencia en vivo")}</small>
+              </div>
+            </section>
+          ) : null}
+
           <section className={styles.kpis} aria-label={t("Indicadores")}>
             <StatTile
               label={t("Tiempo activo")}
@@ -407,8 +483,24 @@ export default function DashboardPage() {
                 ariaLabel={`${t("Productivo")} ${totals.productivity_pct}%`}
               />
             </Panel>
+
+            <Panel title={t("Ahora mismo")} meta={operationsSnapshot ? `${operationsSnapshot.totalEmployees} ${t("personas")}` : undefined}>
+              <div className={styles.liveNow}>
+                <div>
+                  <span>{t("Trabajando")}</span>
+                  <strong>{operationsSnapshot?.working ?? 0}</strong>
+                </div>
+                <div>
+                  <span>{t("En pausa")}</span>
+                  <strong>{operationsSnapshot?.paused ?? 0}</strong>
+                </div>
+                <div>
+                  <span>{t("Sin entrada")}</span>
+                  <strong>{operationsSnapshot?.missing ?? 0}</strong>
+                </div>
+              </div>
+            </Panel>
           </section>
-          <StatusLine>{statusText}</StatusLine>
         </>
       )}
     </AppShell>

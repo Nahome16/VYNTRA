@@ -194,3 +194,17 @@ def test_shift_window_constants_are_conservative():
 
     assert SHIFT_START_MAX_FUTURE == timedelta(minutes=5)
     assert SHIFT_START_MAX_PAST == timedelta(hours=24)
+
+
+def test_report_workday_seconds_keeps_lunch_inside_shift():
+    from app.reports import workday_seconds
+
+    shift = {
+        "started_at": "2026-10-01T10:00:00+00:00",
+        "ended_at": "2026-10-01T19:00:00+00:00",
+        "work_seconds": 8 * 60 * 60,
+        "break_seconds": 0,
+        "lunch_seconds": 60 * 60,
+    }
+
+    assert workday_seconds(shift) == 9 * 60 * 60

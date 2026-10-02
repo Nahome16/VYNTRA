@@ -941,7 +941,7 @@ export default function AttendancePage() {
                               <strong className="tabular">{timeOnly(row.todayShift?.ended_at || null)}</strong>
                             </span>
                             <span>
-                              {t("Trabajado")}
+                              {t("Jornada")}
                               <strong className="tabular">{formatDuration(workedSeconds(row.todayShift))}</strong>
                             </span>
                           </div>

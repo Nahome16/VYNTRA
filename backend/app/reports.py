@@ -63,13 +63,26 @@ def safe_text(value: object, fallback: str = "-") -> str:
     return text if text else fallback
 
 
-def worked_seconds(shift: dict) -> int:
+def workday_seconds(shift: dict, now: datetime | None = None) -> int:
+    started_at = shift.get("started_at")
+    if started_at:
+        try:
+            start = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
+            end_value = shift.get("ended_at")
+            end = (
+                datetime.fromisoformat(str(end_value).replace("Z", "+00:00"))
+                if end_value
+                else now or datetime.now(start.tzinfo)
+            )
+            return max(0, int((end - start).total_seconds()))
+        except (TypeError, ValueError):
+            pass
+
     return max(
         0,
         int(shift.get("work_seconds") or 0)
-        - int(shift.get("break_seconds") or 0)
-        - int(shift.get("lunch_seconds") or 0)
-        + int(shift.get("justified_seconds") or 0),
+        + int(shift.get("break_seconds") or 0)
+        + int(shift.get("lunch_seconds") or 0),
     )
 
 
@@ -273,7 +286,7 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
     shifts = attendance.get("shifts") or []
     started = [shift for shift in shifts if shift.get("started_at")]
     finished = [shift for shift in shifts if shift.get("ended_at") or shift.get("status") == "closed"]
-    total_work = sum(worked_seconds(shift) for shift in shifts)
+    total_work = sum(workday_seconds(shift) for shift in shifts)
     active_now = len([shift for shift in shifts if shift.get("started_at") and not shift.get("ended_at") and shift.get("status") != "closed"])
     attendance_cards = [
         ("Empleados", str(len(employees)), "Incluidos en el filtro", BLUE),
@@ -284,7 +297,7 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
     for index, card in enumerate(attendance_cards):
         draw_card(pdf, MARGIN + index * (card_w + gap), card_y, card_w, 31 * mm, *card)
 
-    draw_section_title(pdf, MARGIN, section_y, "Resumen de asistencia", f"Tiempo trabajado {fmt_duration(total_work)}")
+    draw_section_title(pdf, MARGIN, section_y, "Resumen de asistencia", f"Jornada total {fmt_duration(total_work)}")
     employee_lookup = {employee.get("id"): employee for employee in employees}
     by_employee: dict[str, dict] = {}
     for shift in shifts:
@@ -301,7 +314,7 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
             },
         )
         row["shifts"] += 1 if shift.get("started_at") else 0
-        row["work"] += worked_seconds(shift)
+        row["work"] += workday_seconds(shift)
         row["breaks"] += int(shift.get("break_seconds") or 0) + int(shift.get("lunch_seconds") or 0)
         row["justified"] += int(shift.get("justified_seconds") or 0)
     top_employees = sorted(by_employee.values(), key=lambda row: row["work"], reverse=True)[:8]
@@ -310,7 +323,7 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
         MARGIN,
         section_y - 5 * mm,
         [65 * mm, 44 * mm, 26 * mm, 34 * mm, 34 * mm, 34 * mm],
-        ["Empleado", "Departamento", "Jornadas", "Trabajado", "Break/Lunch", "Justificado"],
+        ["Empleado", "Departamento", "Jornadas", "Jornada", "Break/Lunch", "Justificado"],
         [
             [
                 row["employee"],
@@ -343,7 +356,7 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
                 safe_text(employee.get("full_name"), "Sin empleado"),
                 fmt_datetime(shift.get("started_at"))[-5:] if shift.get("started_at") else "-",
                 fmt_datetime(shift.get("ended_at"))[-5:] if shift.get("ended_at") else "-",
-                fmt_duration(worked_seconds(shift)),
+                fmt_duration(workday_seconds(shift)),
                 safe_text(shift.get("status"), "-"),
             ]
         )
@@ -352,7 +365,7 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
         MARGIN,
         details_y - 5 * mm,
         [28 * mm, 83 * mm, 26 * mm, 26 * mm, 38 * mm, 34 * mm],
-        ["Fecha", "Empleado", "Entrada", "Salida", "Trabajado", "Estado"],
+        ["Fecha", "Empleado", "Entrada", "Salida", "Jornada", "Estado"],
         detail_rows or [["Sin datos", "-", "-", "-", "-", "-"]],
     )
     draw_footer(pdf)

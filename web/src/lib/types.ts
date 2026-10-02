@@ -376,6 +376,7 @@ export type EmployeeDetailResponse = {
   }>;
   adjustments: TimeAdjustment[];
   blocks: ProductivityBlock[];
+  evidence_total: number;
   evidence: Array<{
     id: string;
     captured_at: string;

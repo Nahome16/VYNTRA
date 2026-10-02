@@ -338,10 +338,74 @@
 }
 
 /* --- Evidencias ----------------------------------------------------------- */
+.evidenceSummary {
+  display: grid;
+  gap: 12px;
+}
+
+.evidenceSummaryHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.evidenceSummaryHead h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.evidenceSummaryHead > div > span,
+.evidenceSummaryMeta {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.evidenceSummaryMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: -4px;
+}
+
+.evidenceLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  color: var(--primary-ink);
+  padding: 2px 0;
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.evidenceLink:hover {
+  color: var(--primary);
+}
+
+.evidenceLink svg {
+  width: 15px;
+  height: 15px;
+}
+
 .gallery {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
   gap: 14px;
+}
+
+.summaryGallery {
+  grid-auto-columns: minmax(260px, 1fr);
+  grid-auto-flow: column;
+  grid-template-columns: none;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
 }
 
 .tile {
@@ -353,12 +417,17 @@
   transition: border-color 0.15s var(--ease), box-shadow 0.15s var(--ease);
 }
 
+.summaryTile {
+  min-width: 0;
+}
+
 .tile:hover {
   border-color: var(--line-strong);
   box-shadow: var(--shadow-sm);
 }
 
 .thumb {
+  position: relative;
   display: grid;
   width: 100%;
   aspect-ratio: 16 / 10;
@@ -371,6 +440,10 @@
   padding: 0;
   font-size: 12px;
   font-weight: 500;
+}
+
+.summaryTile .thumb {
+  aspect-ratio: 16 / 9;
 }
 
 .thumb:not(:disabled) {
@@ -397,6 +470,22 @@
 
 .thumb:not(:disabled):hover img {
   transform: scale(1.03);
+}
+
+.timeBadge {
+  position: absolute;
+  left: 10px;
+  bottom: 9px;
+  border-radius: 6px;
+  background: rgba(20, 27, 32, 0.82);
+  color: #fff;
+  padding: 4px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.16);
 }
 
 .placeholder {

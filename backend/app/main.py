@@ -6729,6 +6729,7 @@ def employee_detail(
     employee_id: str,
     date_from: str | None = None,
     date_to: str | None = None,
+    evidence_limit: int = 8,
     admin: AdminPrincipal = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
@@ -6818,8 +6819,10 @@ def employee_detail(
         evidence_query = evidence_query.where(EvidenceFile.captured_at >= parse_client_datetime(f"{date_from}T00:00:00+00:00"))
     if date_to:
         evidence_query = evidence_query.where(EvidenceFile.captured_at <= parse_client_datetime(f"{date_to}T23:59:59+00:00"))
+    evidence_total = int(db.execute(select(func.count()).select_from(evidence_query.subquery())).scalar() or 0)
+    evidence_limit = max(1, min(200, evidence_limit))
     evidence = db.execute(
-        evidence_query.order_by(EvidenceFile.captured_at.desc()).limit(8)
+        evidence_query.order_by(EvidenceFile.captured_at.desc()).limit(evidence_limit)
     ).scalars().all()
 
     return {
@@ -6839,6 +6842,7 @@ def employee_detail(
         ],
         "adjustments": [serialize_time_adjustment(row) for row in adjustments],
         "blocks": block_rows,
+        "evidence_total": evidence_total,
         "evidence": [
             {
                 "id": row.id,

@@ -15,6 +15,8 @@ import styles from "./employee-profile.module.css";
 
 const activityHours = [9, 10, 11, 12, 13, 14, 15, 16, 17];
 const EMPTY_PREVIEWS: Record<string, string> = {};
+const SUMMARY_EVIDENCE_LIMIT = 8;
+const FULL_EVIDENCE_LIMIT = 200;
 
 type EvidenceItem = EmployeeDetailResponse["evidence"][number];
 type ProfileTab = "resumen" | "actividad" | "evidencias";
@@ -156,6 +158,21 @@ function statusTone(status: string) {
   return "plain" as const;
 }
 
+function captureTime(value: string) {
+  return new Date(value).toLocaleTimeString("es-NI", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function captureDate(value: string) {
+  return new Date(value).toLocaleDateString("es-NI", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
 export function EmployeeProfile({
   employeeId,
   initialDateFrom,
@@ -182,12 +199,13 @@ export function EmployeeProfile({
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const loadProfile = useCallback(async (nextDateFrom: string, nextDateTo: string) => {
+  const loadProfile = useCallback(async (nextDateFrom: string, nextDateTo: string, evidenceLimit = SUMMARY_EVIDENCE_LIMIT) => {
     setLoading(true);
     setStatusText(t("Cargando perfil empleado..."));
     const params = new URLSearchParams();
     if (nextDateFrom) params.set("date_from", nextDateFrom);
     if (nextDateTo) params.set("date_to", nextDateTo);
+    params.set("evidence_limit", String(evidenceLimit));
 
     try {
       const detail = await apiGet<EmployeeDetailResponse>(
@@ -213,7 +231,9 @@ export function EmployeeProfile({
   function changeRange(nextFrom: string, nextTo: string) {
     setDateFrom(nextFrom);
     setDateTo(nextTo);
-    if (nextFrom && nextTo && nextFrom <= nextTo) void loadProfile(nextFrom, nextTo);
+    if (nextFrom && nextTo && nextFrom <= nextTo) {
+      void loadProfile(nextFrom, nextTo, tab === "evidencias" ? FULL_EVIDENCE_LIMIT : SUMMARY_EVIDENCE_LIMIT);
+    }
   }
 
   const evidenceList = employeeDetail?.evidence;
@@ -331,14 +351,27 @@ export function EmployeeProfile({
     ? distractingApps
     : (employeeDetail?.apps || []).filter((app) => app.classification !== "productive").slice(0, 5);
 
-  function renderEvidenceGallery(items: EvidenceItem[]) {
+  function showAllEvidence() {
+    setTab("evidencias");
+    if (!employeeDetail || employeeDetail.evidence.length >= employeeDetail.evidence_total) return;
+    void loadProfile(dateFrom, dateTo, FULL_EVIDENCE_LIMIT);
+  }
+
+  function changeTab(nextTab: ProfileTab) {
+    setTab(nextTab);
+    if (nextTab === "evidencias" && employeeDetail && employeeDetail.evidence.length < employeeDetail.evidence_total) {
+      void loadProfile(dateFrom, dateTo, FULL_EVIDENCE_LIMIT);
+    }
+  }
+
+  function renderEvidenceGallery(items: EvidenceItem[], mode: "summary" | "full" = "full") {
     return items.length ? (
-      <div className={styles.gallery}>
+      <div className={`${styles.gallery}${mode === "summary" ? ` ${styles.summaryGallery}` : ""}`}>
         {items.map((item) => {
           const preview = evidencePreviews[item.id];
           const isImage = item.content_type.includes("image");
           return (
-            <article className={styles.tile} key={item.id}>
+            <article className={`${styles.tile}${mode === "summary" ? ` ${styles.summaryTile}` : ""}`} key={item.id}>
               <LazyEvidenceThumb
                 className={styles.thumb}
                 resetKey={evidenceList}
@@ -369,10 +402,11 @@ export function EmployeeProfile({
                     {isImage ? "IMG" : "FILE"}
                   </span>
                 )}
+                <b className={styles.timeBadge}>{captureTime(item.captured_at)}</b>
               </LazyEvidenceThumb>
               <div className={styles.caption}>
                 <strong title={item.original_filename}>{item.original_filename}</strong>
-                <span>{new Date(item.captured_at).toLocaleString("es-NI")}</span>
+                <span>{captureDate(item.captured_at)} · {captureTime(item.captured_at)}</span>
                 <div className={styles.captionFoot}>
                   <small title={item.equipment}>{item.equipment}</small>
                   <Chip dot={false}>{t(item.status)}</Chip>
@@ -496,7 +530,7 @@ export function EmployeeProfile({
           <div className={styles.tabsBar}>
           <Tabs<ProfileTab>
             value={tab}
-            onChange={setTab}
+            onChange={changeTab}
             tabs={[
               { id: "resumen", label: t("Resumen") },
               { id: "actividad", label: t("Actividad") },
@@ -600,9 +634,25 @@ export function EmployeeProfile({
                 </Panel>
               </div>
 
-              <Panel title={t("Revision de capturas")} meta={`${employeeDetail.evidence.length} ${t("archivos")}`} className={styles.section}>
-                {renderEvidenceGallery(employeeDetail.evidence.slice(0, 4))}
-              </Panel>
+              <section className={`panel ${styles.section} ${styles.evidenceSummary}`}>
+                <div className={styles.evidenceSummaryHead}>
+                  <div>
+                    <h2>{t("Ultimas capturas")}</h2>
+                    <span>{fullDate(dateFrom)} – {fullDate(dateTo)}</span>
+                  </div>
+                  <button type="button" className={styles.evidenceLink} onClick={showAllEvidence}>
+                    <span>{t("Ver capturas")}</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M5 12h14M13 6l6 6-6 6" />
+                    </svg>
+                  </button>
+                </div>
+                <div className={styles.evidenceSummaryMeta}>
+                  <span>{Math.min(employeeDetail.evidence.length, SUMMARY_EVIDENCE_LIMIT)} {t("de")} {employeeDetail.evidence_total} {t("capturas en este rango")}</span>
+                  <span>{t("Sincronizado con el periodo seleccionado")}</span>
+                </div>
+                {renderEvidenceGallery(employeeDetail.evidence.slice(0, SUMMARY_EVIDENCE_LIMIT), "summary")}
+              </section>
             </>
           ) : null}
 
@@ -684,7 +734,11 @@ export function EmployeeProfile({
           ) : null}
 
           {tab === "evidencias" ? (
-            <Panel title={t("Revision de capturas")} meta={`${employeeDetail.evidence.length} ${t("archivos")}`} className={styles.section}>
+            <Panel
+              title={t("Revision de capturas")}
+              meta={`${employeeDetail.evidence.length} ${t("de")} ${employeeDetail.evidence_total} ${t("archivos")}`}
+              className={styles.section}
+            >
               {renderEvidenceGallery(employeeDetail.evidence)}
             </Panel>
           ) : null}

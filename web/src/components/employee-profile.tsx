@@ -331,6 +331,62 @@ export function EmployeeProfile({
     ? distractingApps
     : (employeeDetail?.apps || []).filter((app) => app.classification !== "productive").slice(0, 5);
 
+  function renderEvidenceGallery(items: EvidenceItem[]) {
+    return items.length ? (
+      <div className={styles.gallery}>
+        {items.map((item) => {
+          const preview = evidencePreviews[item.id];
+          const isImage = item.content_type.includes("image");
+          return (
+            <article className={styles.tile} key={item.id}>
+              <LazyEvidenceThumb
+                className={styles.thumb}
+                resetKey={evidenceList}
+                onVisible={() => void requestEvidencePreview(item)}
+                onClick={() => setSelectedEvidenceId(item.id)}
+                disabled={!preview}
+                title={preview ? `${t("Ver evidencia")}: ${item.original_filename}` : t("Vista previa no disponible")}
+              >
+                {preview ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={preview} alt={item.original_filename} loading="lazy" />
+                ) : (
+                  <span className={styles.placeholder}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      {isImage ? (
+                        <>
+                          <rect x="3" y="4" width="18" height="16" rx="2" />
+                          <circle cx="9" cy="10" r="1.8" />
+                          <path d="m21 16-5-5-9 9" />
+                        </>
+                      ) : (
+                        <>
+                          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+                          <path d="M14 3v5h5" />
+                        </>
+                      )}
+                    </svg>
+                    {isImage ? "IMG" : "FILE"}
+                  </span>
+                )}
+              </LazyEvidenceThumb>
+              <div className={styles.caption}>
+                <strong title={item.original_filename}>{item.original_filename}</strong>
+                <span>{new Date(item.captured_at).toLocaleString("es-NI")}</span>
+                <div className={styles.captionFoot}>
+                  <small title={item.equipment}>{item.equipment}</small>
+                  <Chip dot={false}>{t(item.status)}</Chip>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    ) : (
+      <EmptyBlock title={t("No hay capturas asociadas a este empleado en el rango.")} />
+    );
+  }
+
   return (
     <div className={styles.view}>
       <section className={`toolbar ${styles.toolbar}`} aria-label={t("Periodo")}>
@@ -543,6 +599,10 @@ export function EmployeeProfile({
                   )}
                 </Panel>
               </div>
+
+              <Panel title={t("Revision de capturas")} meta={`${employeeDetail.evidence.length} ${t("archivos")}`} className={styles.section}>
+                {renderEvidenceGallery(employeeDetail.evidence.slice(0, 4))}
+              </Panel>
             </>
           ) : null}
 
@@ -625,59 +685,7 @@ export function EmployeeProfile({
 
           {tab === "evidencias" ? (
             <Panel title={t("Revision de capturas")} meta={`${employeeDetail.evidence.length} ${t("archivos")}`} className={styles.section}>
-              {employeeDetail.evidence.length ? (
-                <div className={styles.gallery}>
-                  {employeeDetail.evidence.map((item) => {
-                    const preview = evidencePreviews[item.id];
-                    const isImage = item.content_type.includes("image");
-                    return (
-                      <article className={styles.tile} key={item.id}>
-                        <LazyEvidenceThumb
-                          className={styles.thumb}
-                          resetKey={evidenceList}
-                          onVisible={() => void requestEvidencePreview(item)}
-                          onClick={() => setSelectedEvidenceId(item.id)}
-                          disabled={!preview}
-                          title={preview ? `${t("Ver evidencia")}: ${item.original_filename}` : t("Vista previa no disponible")}
-                        >
-                          {preview ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={preview} alt={item.original_filename} loading="lazy" />
-                          ) : (
-                            <span className={styles.placeholder}>
-                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                                {isImage ? (
-                                  <>
-                                    <rect x="3" y="4" width="18" height="16" rx="2" />
-                                    <circle cx="9" cy="10" r="1.8" />
-                                    <path d="m21 16-5-5-9 9" />
-                                  </>
-                                ) : (
-                                  <>
-                                    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-                                    <path d="M14 3v5h5" />
-                                  </>
-                                )}
-                              </svg>
-                              {isImage ? "IMG" : "FILE"}
-                            </span>
-                          )}
-                        </LazyEvidenceThumb>
-                        <div className={styles.caption}>
-                          <strong title={item.original_filename}>{item.original_filename}</strong>
-                          <span>{new Date(item.captured_at).toLocaleString("es-NI")}</span>
-                          <div className={styles.captionFoot}>
-                            <small title={item.equipment}>{item.equipment}</small>
-                            <Chip dot={false}>{t(item.status)}</Chip>
-                          </div>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              ) : (
-                <EmptyBlock title={t("No hay capturas asociadas a este empleado en el rango.")} />
-              )}
+              {renderEvidenceGallery(employeeDetail.evidence)}
             </Panel>
           ) : null}
         </div>

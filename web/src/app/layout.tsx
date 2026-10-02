@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
+import Script from "next/script";
 import { AuthProvider } from "@/components/auth-provider";
 import { PreferencesProvider } from "@/components/preferences-provider";
 import { RouteGuard } from "@/components/route-guard";
@@ -34,12 +35,13 @@ export default async function RootLayout({
       suppressHydrationWarning
       className="h-full antialiased"
     >
-      <head>
+      <head suppressHydrationWarning>
         {/* El navegador oculta el atributo nonce tras cargar la pagina, por eso
             se suprime el aviso de hidratacion de este script. */}
-        <script
+        <Script
           id="vyntra-preferences"
           nonce={nonce}
+          strategy="beforeInteractive"
           suppressHydrationWarning
           dangerouslySetInnerHTML={{ __html: PREFERENCES_BOOT_SCRIPT }}
         />

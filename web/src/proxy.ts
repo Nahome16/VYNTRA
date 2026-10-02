@@ -18,7 +18,9 @@ function buildCsp(nonce: string) {
   const extraConnect = (process.env.VYNTRA_CSP_CONNECT_SRC || "").trim();
   const directives = [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
+    isDev
+      ? "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+      : `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' blob: data:",
     "font-src 'self' data:",
@@ -35,11 +37,12 @@ function buildCsp(nonce: string) {
 }
 
 export function proxy(request: NextRequest) {
-  const nonce = btoa(crypto.randomUUID());
+  const isDev = process.env.NODE_ENV === "development";
+  const nonce = isDev ? "" : btoa(crypto.randomUUID());
   const csp = buildCsp(nonce);
 
   const requestHeaders = new Headers(request.headers);
-  requestHeaders.set("x-nonce", nonce);
+  if (!isDev) requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("Content-Security-Policy", csp);
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });

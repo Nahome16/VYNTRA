@@ -304,14 +304,18 @@ export function useAuth() {
 }
 
 function passwordPolicyOk(password: string) {
+  return passwordPolicyChecks(password).every((check) => check.ok);
+}
+
+function passwordPolicyChecks(password: string) {
   const signs = "!@#$%*?_-.";
-  return (
-    password.length >= 8
-    && /[a-z]/.test(password)
-    && /[A-Z]/.test(password)
-    && /\d/.test(password)
-    && Array.from(password).some((char) => signs.includes(char))
-  );
+  return [
+    { label: "8 caracteres o más", ok: password.length >= 8 },
+    { label: "Una letra minúscula", ok: /[a-z]/.test(password) },
+    { label: "Una letra mayúscula", ok: /[A-Z]/.test(password) },
+    { label: "Un número", ok: /\d/.test(password) },
+    { label: "Un signo (!@#$%*?_-.)", ok: Array.from(password).some((char) => signs.includes(char)) },
+  ];
 }
 
 function PasswordChangeGate() {
@@ -321,21 +325,23 @@ function PasswordChangeGate() {
   const [confirmation, setConfirmation] = useState("");
   const [statusText, setStatusText] = useState("");
   const [saving, setSaving] = useState(false);
+  const checks = passwordPolicyChecks(newPassword);
+  const passwordsMatch = Boolean(confirmation) && newPassword === confirmation;
   const canSubmit = Boolean(currentPassword) && passwordPolicyOk(newPassword) && newPassword === confirmation && !saving;
 
   async function submitPasswordChange(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSubmit) {
-      setStatusText("La nueva contrasena debe cumplir la politica y coincidir.");
+      setStatusText("La nueva contraseña debe cumplir la política y coincidir.");
       return;
     }
     setSaving(true);
-    setStatusText("Actualizando contrasena...");
+    setStatusText("Actualizando contraseña...");
     try {
       await changePassword(currentPassword, newPassword);
-      setStatusText("Contrasena actualizada.");
+      setStatusText("Contraseña actualizada.");
     } catch {
-      setStatusText("No se pudo cambiar. Revisa la contrasena temporal.");
+      setStatusText("No se pudo cambiar. Revisa la contraseña temporal.");
     } finally {
       setSaving(false);
     }
@@ -346,11 +352,11 @@ function PasswordChangeGate() {
       <form className="password-gate-panel" onSubmit={submitPasswordChange}>
         <header>
           <span>Credencial temporal</span>
-          <h2 id="password-gate-title">Cambia tu contrasena para continuar</h2>
-          <p>Tu acceso fue creado con una contrasena temporal. Define una nueva contrasena antes de usar el panel.</p>
+          <h2 id="password-gate-title">Cambia tu contraseña para continuar</h2>
+          <p>Tu acceso fue creado con una contraseña temporal. Define una nueva contraseña antes de usar el panel.</p>
         </header>
         <label>
-          Contrasena temporal
+          Contraseña temporal
           <input
             type="password"
             value={currentPassword}
@@ -361,7 +367,7 @@ function PasswordChangeGate() {
           />
         </label>
         <label>
-          Nueva contrasena
+          Nueva contraseña
           <input
             type="password"
             value={newPassword}
@@ -370,8 +376,15 @@ function PasswordChangeGate() {
             required
           />
         </label>
+        <ul className="password-requirements" aria-label="Requisitos de contraseña">
+          {checks.map((check) => (
+            <li key={check.label} className={check.ok ? "ok" : ""}>
+              {check.label}
+            </li>
+          ))}
+        </ul>
         <label>
-          Confirmar nueva contrasena
+          Confirmar nueva contraseña
           <input
             type="password"
             value={confirmation}
@@ -380,7 +393,9 @@ function PasswordChangeGate() {
             required
           />
         </label>
-        <small>Minimo 8 caracteres, mayuscula, minuscula, numero y signo.</small>
+        <small className={passwordsMatch ? "password-match ok" : "password-match"}>
+          {passwordsMatch ? "Las contraseñas coinciden." : "Repite la nueva contraseña para confirmar."}
+        </small>
         <p className="password-gate-status" role="status" aria-live="polite" hidden={!statusText}>{statusText}</p>
         <button type="submit" disabled={!canSubmit}>
           {saving ? "Guardando..." : "Guardar y continuar"}

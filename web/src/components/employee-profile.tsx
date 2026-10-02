@@ -192,6 +192,7 @@ export function EmployeeProfile({
   const previewUrlsRef = useRef<string[]>([]);
   const previewRequestedRef = useRef<Set<string>>(new Set());
   const previewGenerationRef = useRef(0);
+  const profileRequestRef = useRef(0);
   const [selectedEvidenceId, setSelectedEvidenceId] = useState("");
   const [dateFrom, setDateFrom] = useState(initialDateFrom || monthStartISO());
   const [dateTo, setDateTo] = useState(initialDateTo || todayISO());
@@ -200,6 +201,8 @@ export function EmployeeProfile({
   const [loading, setLoading] = useState(false);
 
   const loadProfile = useCallback(async (nextDateFrom: string, nextDateTo: string, evidenceLimit = SUMMARY_EVIDENCE_LIMIT) => {
+    const requestId = profileRequestRef.current + 1;
+    profileRequestRef.current = requestId;
     setLoading(true);
     setStatusText(t("Cargando perfil empleado..."));
     const params = new URLSearchParams();
@@ -211,12 +214,14 @@ export function EmployeeProfile({
       const detail = await apiGet<EmployeeDetailResponse>(
         `/api/employees/${employeeId}/detail?${params.toString()}`,
       );
+      if (requestId !== profileRequestRef.current) return;
       setEmployeeDetail(detail);
       setStatusText(t("Perfil actualizado"));
     } catch {
+      if (requestId !== profileRequestRef.current) return;
       setStatusText(t("No se pudo cargar el perfil empleado"));
     } finally {
-      setLoading(false);
+      if (requestId === profileRequestRef.current) setLoading(false);
     }
   }, [apiGet, employeeId, t]);
 
@@ -443,7 +448,10 @@ export function EmployeeProfile({
           />
         </div>
         <div className={styles.actions}>
-          <RefreshButton loading={loading} onClick={() => void loadProfile(dateFrom, dateTo)} />
+          <RefreshButton
+            loading={loading}
+            onClick={() => void loadProfile(dateFrom, dateTo, tab === "evidencias" ? FULL_EVIDENCE_LIMIT : SUMMARY_EVIDENCE_LIMIT)}
+          />
           <button className="btn btn-outline" onClick={exportProfileCsv} disabled={!employeeDetail}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />

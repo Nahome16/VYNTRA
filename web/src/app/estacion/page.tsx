@@ -3,9 +3,7 @@
 import { FormEvent, useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   AlertIcon,
-  ArrowIcon,
   ClockInIcon,
-  DashboardIcon,
   EyeIcon,
   GlobeIcon,
   LiveClock,
@@ -90,9 +88,6 @@ const stationLoginCopy = {
     resetTitle: "Recuperar contraseña",
     cancel: "Cancelar",
     extensionTitle: "Extensión del navegador",
-    adminPrompt: "¿Eres administrador?",
-    adminLink: "Ir al panel administrativo",
-    adminHint: "Revisa equipos, incidencias y reportes.",
     privacy: "Privacidad",
     secured: "Sesión protegida por empresa",
     howWorks: "Cómo funciona",
@@ -176,9 +171,6 @@ const stationLoginCopy = {
     resetTitle: "Reset password",
     cancel: "Cancel",
     extensionTitle: "Browser extension",
-    adminPrompt: "Are you an administrator?",
-    adminLink: "Go to the admin panel",
-    adminHint: "Review teams, incidents and reports.",
     privacy: "Privacy",
     secured: "Session scoped by company",
     howWorks: "How it works",
@@ -262,9 +254,6 @@ const stationLoginCopy = {
   resetTitle: string;
   cancel: string;
   extensionTitle: string;
-  adminPrompt: string;
-  adminLink: string;
-  adminHint: string;
   privacy: string;
   secured: string;
   howWorks: string;
@@ -1842,23 +1831,6 @@ export default function StationPage() {
             <button type="button" className={`${authStyles.textButton} ${authStyles.mobileOnly}`} onClick={() => setHowWorksDialogOpen(true)}>
               {loginText.howWorks}
             </button>
-
-            <div className={authStyles.divider}>
-              <span>{loginText.adminPrompt}</span>
-            </div>
-
-            <a className={authStyles.station} href="/login">
-              <span className={authStyles.stationIcon}>
-                <DashboardIcon />
-              </span>
-              <span className={authStyles.stationCopy}>
-                <strong>{loginText.adminLink}</strong>
-                <small>{loginText.adminHint}</small>
-              </span>
-              <span className={authStyles.stationArrow}>
-                <ArrowIcon />
-              </span>
-            </a>
           </div>
 
           <footer className={authStyles.footer}>

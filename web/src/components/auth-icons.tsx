@@ -76,17 +76,6 @@ export function ClockInIcon() {
   );
 }
 
-export function DashboardIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <rect x="3.5" y="3.5" width="7" height="8" rx="1.5" />
-      <rect x="13.5" y="3.5" width="7" height="5" rx="1.5" />
-      <rect x="13.5" y="11.5" width="7" height="9" rx="1.5" />
-      <rect x="3.5" y="14.5" width="7" height="6" rx="1.5" />
-    </svg>
-  );
-}
-
 export function PuzzleIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">

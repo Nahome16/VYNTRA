@@ -2,6 +2,7 @@
 
 import { FormEvent, KeyboardEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
+import { BillingPanel } from "@/components/billing-panel";
 import {
   AttentionList,
   Chip,
@@ -812,6 +813,15 @@ export default function SystemPage() {
     } else if (status === "past_due") {
       alerts.push({ key: `due-${company.id}`, tone: "warn", text: fill(t("{name}: pago pendiente"), { name: company.name }), ...openPlan });
     }
+    const pendingInvoice = company.billing?.pending_period;
+    if (pendingInvoice) {
+      alerts.push({
+        key: `invoice-${company.id}`,
+        tone: "warn",
+        text: fill(t("{name}: factura del {period} pendiente de envío"), { name: company.name, period: pendingInvoice.label }),
+        ...openPlan,
+      });
+    }
     const limit = company.controls.employee_limit;
     if (limit > 0 && company.employees_count >= limit) {
       alerts.push({
@@ -1393,6 +1403,10 @@ export default function SystemPage() {
                     </button>
                   </div>
                 </form>
+              ) : null}
+
+              {detailTab === "plan" && !selectedArchived ? (
+                <BillingPanel companyId={controlsCompany.id} onSent={() => void loadSystem()} />
               ) : null}
 
               {detailTab === "risk" ? (

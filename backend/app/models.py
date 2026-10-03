@@ -585,6 +585,37 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
+class Invoice(Base):
+    """Factura mensual de una empresa (una por empresa y periodo; reenviar actualiza la fila)."""
+
+    __tablename__ = "invoices"
+    __table_args__ = (UniqueConstraint("company_id", "period_start", name="uq_invoice_company_period"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False)
+    # VYN-{YYYYMM del fin del periodo}-{secuencia de 4 digitos}
+    number: Mapped[str] = mapped_column(String(40), nullable=False, unique=True)
+    period_start: Mapped[str] = mapped_column(String(10), nullable=False)
+    period_end: Mapped[str] = mapped_column(String(10), nullable=False)
+    issued_on: Mapped[str] = mapped_column(String(10), nullable=False)
+    due_on: Mapped[str] = mapped_column(String(10), nullable=False)
+    active_users: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unit_price_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    subtotal_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tax_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default="USD")
+    # sent | partial | failed | not_configured
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="failed")
+    # Lista de {email, full_name, status} del ultimo envio.
+    recipients_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    send_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sent_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
 class EvidenceUploadAttempt(Base):
     __tablename__ = "evidence_upload_attempts"
     __table_args__ = (Index("ix_evidence_upload_attempts_created", "created_at"),)

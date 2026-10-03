@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="es" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <title>Factura VYN-202610-0001 · VYNTRA</title>
+  <!--
+    Plantilla de correo de factura VYNTRA.
+    - Maquetada con tablas y estilos en línea para que se vea igual en Gmail, Outlook y Apple Mail.
+    - Campos variables por empresa y periodo: número de factura, empresa, administrador, fechas,
+      usuarios activos e importes (marcados con el comentario "VARIABLE").
+    - Los datos bancarios NO van en el repositorio (es público): el backend los toma de las
+      variables BILLING_* del servidor. La versión real la genera render_invoice_email().
+    - Reglas: USD 15.00 por usuario monitoreado activo, sin IVA, periodo del 15 al 14 del mes
+      siguiente, emisión el día 15 y vencimiento a los 4 días hábiles.
+  -->
+  <style>
+    @media only screen and (max-width: 620px) {
+      .container { width: 100% !important; }
+      .px { padding-left: 20px !important; padding-right: 20px !important; }
+      .stack { display: block !important; width: 100% !important; padding-left: 0 !important; padding-right: 0 !important; text-align: left !important; }
+      .stack-gap { padding-top: 16px !important; }
+      .amount { font-size: 34px !important; }
+      .hide-sm { display: none !important; }
+    }
+  </style>
+</head>
+<body style="margin:0; padding:0; background-color:#f2f4f7; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%;">
+
+  <!-- Texto de vista previa en la bandeja de entrada -->
+  <div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#f2f4f7;">
+    Factura VYN-202610-0001 · USD 105.00 · vence el miércoles 21 de octubre de 2026.
+  </div>
+
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f2f4f7" style="background-color:#f2f4f7;">
+    <tr>
+      <td align="center" style="padding:32px 12px;">
+
+        <table role="presentation" class="container" width="600" cellspacing="0" cellpadding="0" border="0" style="width:600px; max-width:600px;">
+
+          <!-- Encabezado negro con logotipo -->
+          <tr>
+            <td bgcolor="#0a0a0a" class="px" style="background-color:#0a0a0a; padding:28px 36px; border-radius:14px 14px 0 0;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td valign="middle">
+                    <img src="https://app.vyntralab.com/brand/vyntra-wordmark-white.png" width="150" height="24" alt="VYNTRA" style="display:block; border:0; outline:none; text-decoration:none; width:150px; height:24px; color:#ffffff; font-family:Arial, sans-serif; font-size:20px; font-weight:bold; letter-spacing:4px;">
+                  </td>
+                  <td valign="middle" align="right" style="font-family:'Segoe UI', Arial, Helvetica, sans-serif; color:#a3a9b6; font-size:12px; letter-spacing:2px; text-transform:uppercase;">
+                    Factura<br>
+                    <!-- VARIABLE: número de factura -->
+                    <span style="color:#ffffff; font-size:14px; letter-spacing:0.5px; font-weight:600; text-transform:none;">VYN-202610-0001</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Cuerpo -->
+          <tr>
+            <td bgcolor="#ffffff" class="px" style="background-color:#ffffff; padding:36px 36px 8px; font-family:'Segoe UI', Arial, Helvetica, sans-serif; color:#0b0d12;">
+
+              <!-- VARIABLE: nombre del administrador y empresa -->
+              <p style="margin:0 0 6px; font-size:15px; line-height:22px; color:#344054;">Hola, Admin del sistema:</p>
+              <p style="margin:0 0 28px; font-size:15px; line-height:23px; color:#344054;">
+                Esta es la factura de <strong style="color:#0b0d12;">Vyntra Demo S.A.</strong> por el servicio VYNTRA del periodo
+                <strong style="color:#0b0d12;">15 de septiembre al 14 de octubre de 2026</strong>.
+              </p>
+
+              <!-- Bloque principal: monto y vencimiento -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #e4e7ec; border-radius:12px;">
+                <tr>
+                  <td style="padding:24px 26px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td class="stack" valign="top" style="font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                          <p style="margin:0 0 6px; font-size:13px; font-weight:600; color:#5f6878;">Monto a pagar</p>
+                          <!-- VARIABLE: total -->
+                          <p class="amount" style="margin:0; font-size:40px; line-height:44px; font-weight:700; letter-spacing:-1px; color:#0b0d12;">
+                            <span style="font-size:20px; font-weight:600; color:#5f6878; letter-spacing:0;">USD</span> 105.00
+                          </p>
+                        </td>
+                        <td class="stack stack-gap" valign="top" align="right" style="font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                          <p style="margin:0 0 6px; font-size:13px; font-weight:600; color:#5f6878;">Fecha límite de pago</p>
+                          <!-- VARIABLE: vencimiento (emisión + 4 días hábiles) -->
+                          <p style="margin:0 0 8px; font-size:17px; line-height:22px; font-weight:700; color:#0b0d12;">Mié. 21 oct. 2026</p>
+                          <span style="display:inline-block; padding:4px 10px; border-radius:999px; background-color:#fffaeb; color:#b54708; font-size:12px; font-weight:700;">4 días hábiles para pagar</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Datos de la factura -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:28px;">
+                <tr>
+                  <td class="stack" valign="top" width="50%" style="padding-right:12px; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                    <p style="margin:0 0 8px; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Facturado a</p>
+                    <!-- VARIABLE: datos de la empresa cliente -->
+                    <p style="margin:0; font-size:14px; line-height:21px; color:#344054;">
+                      <strong style="color:#0b0d12;">Vyntra Demo S.A.</strong><br>
+                      Admin del sistema<br>
+                      admin@vyntrademo.com<br>
+                      Managua, Nicaragua
+                    </p>
+                  </td>
+                  <td class="stack stack-gap" valign="top" width="50%" style="padding-left:12px; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                    <p style="margin:0 0 8px; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Detalles</p>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:14px; line-height:21px; color:#344054;">
+                      <tr>
+                        <td style="padding:0 0 2px;">Emisión</td>
+                        <td align="right" style="padding:0 0 2px; color:#0b0d12; font-weight:600;">15 oct. 2026</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:0 0 2px;">Periodo</td>
+                        <td align="right" style="padding:0 0 2px; color:#0b0d12; font-weight:600;">15 sep. – 14 oct. 2026</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:0 0 2px;">Vencimiento</td>
+                        <td align="right" style="padding:0 0 2px; color:#0b0d12; font-weight:600;">21 oct. 2026</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:0;">Moneda</td>
+                        <td align="right" style="padding:0; color:#0b0d12; font-weight:600;">Dólares (USD)</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Detalle del cobro -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:30px; border-collapse:collapse; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                <tr>
+                  <th align="left" style="padding:0 0 10px; border-bottom:1px solid #d0d5dd; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Descripción</th>
+                  <th align="right" class="hide-sm" style="padding:0 0 10px; border-bottom:1px solid #d0d5dd; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Cant.</th>
+                  <th align="right" class="hide-sm" style="padding:0 0 10px 16px; border-bottom:1px solid #d0d5dd; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Precio unit.</th>
+                  <th align="right" style="padding:0 0 10px 16px; border-bottom:1px solid #d0d5dd; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Importe</th>
+                </tr>
+                <tr>
+                  <td style="padding:16px 0; border-bottom:1px solid #e4e7ec; font-size:14px; line-height:20px; color:#0b0d12;">
+                    <strong style="font-weight:600;">Licencia VYNTRA por usuario monitoreado</strong><br>
+                    <!-- VARIABLE: usuarios activos y periodo -->
+                    <span style="font-size:13px; color:#5f6878;">7 usuarios activos · 15/09/2026 al 14/10/2026</span>
+                  </td>
+                  <td align="right" class="hide-sm" style="padding:16px 0; border-bottom:1px solid #e4e7ec; font-size:14px; color:#0b0d12;">7</td>
+                  <td align="right" class="hide-sm" style="padding:16px 0 16px 16px; border-bottom:1px solid #e4e7ec; font-size:14px; color:#0b0d12; white-space:nowrap;">USD 15.00</td>
+                  <td align="right" style="padding:16px 0 16px 16px; border-bottom:1px solid #e4e7ec; font-size:14px; font-weight:600; color:#0b0d12; white-space:nowrap;">USD 105.00</td>
+                </tr>
+              </table>
+
+              <!-- Totales -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:6px; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                <tr>
+                  <td class="hide-sm" width="45%">&nbsp;</td>
+                  <td>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:14px; line-height:20px; color:#344054;">
+                      <tr>
+                        <td style="padding:8px 0;">Subtotal</td>
+                        <td align="right" style="padding:8px 0; color:#0b0d12; white-space:nowrap;">USD 105.00</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:8px 0; border-bottom:1px solid #e4e7ec;">IVA <span style="color:#98a2b3;">(no aplica)</span></td>
+                        <td align="right" style="padding:8px 0; border-bottom:1px solid #e4e7ec; color:#0b0d12; white-space:nowrap;">USD 0.00</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:14px 0 0; font-size:15px; font-weight:700; color:#0b0d12;">Total a pagar</td>
+                        <td align="right" style="padding:14px 0 0; font-size:18px; font-weight:700; color:#0b0d12; white-space:nowrap;">USD 105.00</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Cómo pagar -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:32px; background-color:#f9fafb; border:1px solid #e4e7ec; border-radius:12px;">
+                <tr>
+                  <td style="padding:20px 22px; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                    <p style="margin:0 0 12px; font-size:14px; font-weight:700; color:#0b0d12;">Cómo pagar</p>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:13.5px; line-height:21px; color:#344054;">
+                      <tr>
+                        <td style="padding:0 0 3px; color:#5f6878;">Método</td>
+                        <td align="right" style="padding:0 0 3px; color:#0b0d12; font-weight:600;">Transferencia bancaria</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:0 0 3px; color:#5f6878;">Banco</td>
+                        <td align="right" style="padding:0 0 3px; color:#0b0d12; font-weight:600;">[BILLING_BANK_NAME]</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:0 0 3px; color:#5f6878;">Cuenta en dólares</td>
+                        <td align="right" style="padding:0 0 3px; color:#0b0d12; font-weight:600;">[BILLING_ACCOUNT_NUMBER]</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:0 0 3px; color:#5f6878;">IBAN</td>
+                        <td align="right" style="padding:0 0 3px 12px; color:#0b0d12; font-weight:600;">[BILLING_IBAN]</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:0 0 3px; color:#5f6878;">Titular</td>
+                        <td align="right" style="padding:0 0 3px; color:#0b0d12; font-weight:600;">[BILLING_ACCOUNT_HOLDER]</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:0; color:#5f6878;">Referencia</td>
+                        <td align="right" style="padding:0; color:#2563eb; font-weight:700;">VYN-202610-0001</td>
+                      </tr>
+                    </table>
+                    <p style="margin:12px 0 0; font-size:12.5px; line-height:19px; color:#5f6878;">
+                      Escribe el número de factura como referencia y envía el comprobante a
+                      <a href="mailto:notificaciones@vyntralab.com?subject=Pago%20factura%20VYN-202610-0001" style="color:#2563eb; font-weight:600; text-decoration:none;">notificaciones@vyntralab.com</a>
+                      para confirmar el pago.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Condiciones -->
+              <p style="margin:28px 0 8px; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Condiciones</p>
+              <ul style="margin:0 0 8px; padding:0 0 0 18px; font-size:13px; line-height:21px; color:#5f6878;">
+                <li>Se cobran USD 15.00 por cada usuario monitoreado activo durante el periodo.</li>
+                <li>Esta factura no incluye IVA.</li>
+                <li>El pago vence 4 días hábiles después de la fecha de emisión.</li>
+                <!-- VARIABLE: siguiente periodo -->
+                <li>Próximo periodo de facturación: 15 de octubre al 14 de noviembre de 2026.</li>
+              </ul>
+            </td>
+          </tr>
+
+          <!-- Pie -->
+          <tr>
+            <td bgcolor="#ffffff" class="px" style="background-color:#ffffff; padding:20px 36px 32px; border-radius:0 0 14px 14px; border-top:1px solid #e4e7ec; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+              <p style="margin:0 0 4px; font-size:13px; line-height:20px; color:#344054;">
+                ¿Dudas sobre esta factura? Escríbenos a
+                <a href="mailto:notificaciones@vyntralab.com" style="color:#2563eb; font-weight:600; text-decoration:none;">notificaciones@vyntralab.com</a>.
+              </p>
+              <p style="margin:0; font-size:12px; line-height:19px; color:#98a2b3;">
+                VYNTRA · Managua, Nicaragua<br>
+                Recibes este correo porque eres administrador de Vyntra Demo S.A. en VYNTRA.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -137,7 +137,27 @@ FORWARDED_ALLOW_IPS=*
 RETENTION_EVIDENCE_DAYS=90
 RETENTION_TELEMETRY_DAYS=365
 LOG_LEVEL=INFO
+# Facturacion mensual (consola sistema > empresa > facturas). Periodos del dia
+# ancla de BILLING_START_DATE al dia anterior del mes siguiente; vencimiento a
+# BILLING_DUE_BUSINESS_DAYS dias habiles de la emision. Sin IVA.
+BILLING_START_DATE=2026-09-15
+BILLING_UNIT_PRICE_CENTS=1500
+BILLING_CURRENCY=USD
+BILLING_DUE_BUSINESS_DAYS=4
+BILLING_CONTACT_EMAIL=notificaciones@tudominio.com
+BILLING_LOGO_URL=https://app.tudominio.com/brand/vyntra-wordmark-white.png
+# Datos bancarios que se muestran en la factura: completarlos SOLO en el .env
+# del servidor (nunca en el repositorio). Si quedan vacios, la factura dice
+# "Te enviaremos los datos de pago por separado".
+BILLING_BANK_NAME=
+BILLING_ACCOUNT_NUMBER=
+BILLING_IBAN=
+BILLING_ACCOUNT_HOLDER=
 ```
+
+Las facturas se envian por SMTP (una por destinatario owner/admin activo); sin
+`SMTP_HOST`/`SMTP_FROM_EMAIL` la factura queda guardada con estado
+`not_configured`.
 
 `scripts/check_production_env.sh` comprueba estos valores (y rechaza
 placeholders) antes de desplegar.

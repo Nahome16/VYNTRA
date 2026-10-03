@@ -1,5 +1,6 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 
 const port = Number(process.env.PORT || 8000);
 
@@ -290,6 +291,7 @@ function companyOverview() {
     ...company,
     users_count: users.filter((user) => user.company_id === company.id).length,
     devices_count: devices.filter((device) => device.company_id === company.id).length,
+    billing: billingSummary(company),
   }));
 }
 
@@ -422,6 +424,113 @@ function catalogsPayload(company) {
   };
 }
 
+
+// --- Facturacion (simulada) ------------------------------------------------
+// Fecha simulada para ver el recordatorio de un periodo ya cerrado.
+const BILLING_TODAY = process.env.MOCK_BILLING_TODAY || "2026-10-16";
+const BILLING_START = "2026-09-15";
+const UNIT_PRICE_CENTS = 1500;
+const invoices = [];
+const monthsShort = ["ene.", "feb.", "mar.", "abr.", "may.", "jun.", "jul.", "ago.", "sep.", "oct.", "nov.", "dic."];
+
+function isoAddMonths(iso, months) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1 + months, d));
+  return date.toISOString().slice(0, 10);
+}
+
+function isoAddDays(iso, days) {
+  const date = new Date(`${iso}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function periodLabel(start, end) {
+  const [, sm, sd] = start.split("-").map(Number);
+  const [ey, em, ed] = end.split("-").map(Number);
+  return `${sd} ${monthsShort[sm - 1]} – ${ed} ${monthsShort[em - 1]} ${ey}`;
+}
+
+function billingPeriods(companyId) {
+  const periods = [];
+  let start = BILLING_START;
+  while (start <= BILLING_TODAY) {
+    const end = isoAddDays(isoAddMonths(start, 1), -1);
+    const invoice = invoices.find((row) => row.company_id === companyId && row.period_start === start) || null;
+    periods.push({
+      start,
+      end,
+      label: periodLabel(start, end),
+      status: end < BILLING_TODAY ? "closed" : "open",
+      invoice: invoice ? { id: invoice.id, number: invoice.number, status: invoice.status, sent_at: invoice.sent_at } : null,
+    });
+    start = isoAddMonths(start, 1);
+  }
+  return periods.reverse();
+}
+
+function dueDate(issued) {
+  let date = issued;
+  let count = 0;
+  while (count < 4) {
+    date = isoAddDays(date, 1);
+    const day = new Date(`${date}T00:00:00Z`).getUTCDay();
+    if (day !== 0 && day !== 6) count += 1;
+  }
+  return date;
+}
+
+function billingRecipients(companyId) {
+  return users
+    .filter((user) => user.company_id === companyId && user.status === "active" && (user.role === "owner" || user.role === "admin"))
+    .map((user) => ({ id: user.id, email: user.email, full_name: user.full_name, role: user.role }));
+}
+
+function invoiceAmounts(company, body) {
+  const start = body.period_start;
+  const end = isoAddDays(isoAddMonths(start, 1), -1);
+  const existing = invoices.find((row) => row.company_id === company.id && row.period_start === start);
+  const prefix = `VYN-${end.slice(0, 4)}${end.slice(5, 7)}-`;
+  const number = existing?.number || `${prefix}${String(invoices.filter((row) => row.number.startsWith(prefix)).length + 1).padStart(4, "0")}`;
+  const activeUsers = Number.isFinite(Number(body.active_users)) ? Number(body.active_users) : company.employees_count;
+  return {
+    number,
+    period_start: start,
+    period_end: end,
+    period_label: periodLabel(start, end),
+    issued_on: BILLING_TODAY,
+    due_on: dueDate(BILLING_TODAY),
+    active_users: activeUsers,
+    unit_price_cents: UNIT_PRICE_CENTS,
+    subtotal_cents: activeUsers * UNIT_PRICE_CENTS,
+    tax_cents: 0,
+    total_cents: activeUsers * UNIT_PRICE_CENTS,
+    currency: "USD",
+  };
+}
+
+function invoiceHtml(company, amounts) {
+  // La plantilla real la genera el backend; aqui solo se sustituyen los valores de ejemplo.
+  const template = fs.readFileSync(new URL("../docs/factura/factura-correo.html", import.meta.url), "utf8");
+  const total = (amounts.total_cents / 100).toFixed(2);
+  return template
+    .replaceAll("VYN-202610-0001", amounts.number)
+    .replaceAll("105.00", total)
+    .replaceAll("Vyntra Demo S.A.", company.legal_name || company.name)
+    .replaceAll("7 usuarios activos", `${amounts.active_users} usuarios activos`)
+    .replace(/>7</, `>${amounts.active_users}<`);
+}
+
+function billingSummary(company) {
+  const periods = billingPeriods(company.id);
+  const pending = periods.find((row) => row.status === "closed" && !(row.invoice && ["sent", "partial"].includes(row.invoice.status)));
+  const last = invoices.filter((row) => row.company_id === company.id).sort((a, b) => b.period_start.localeCompare(a.period_start))[0];
+  return {
+    pending_period: pending ? { start: pending.start, end: pending.end, label: pending.label } : null,
+    last_invoice: last ? { number: last.number, period_start: last.period_start, period_end: last.period_end, status: last.status, sent_at: last.sent_at } : null,
+  };
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     send(res, 204, {});
@@ -450,6 +559,68 @@ const server = http.createServer(async (req, res) => {
 
   if (path === "/api/admin/company-notice") {
     send(res, 200, { messages: [{ type: "warning", message: companies[0].controls.admin_notice }] });
+    return;
+  }
+
+
+  const billingMatch = path.match(/^\/api\/system\/companies\/([^/]+)\/billing$/);
+  if (billingMatch && req.method === "GET") {
+    const company = companies.find((row) => row.id === billingMatch[1]);
+    if (!company) return send(res, 404, { detail: "Empresa no encontrada" });
+    const periods = billingPeriods(company.id);
+    const pending = periods.find((row) => row.status === "closed" && !(row.invoice && ["sent", "partial"].includes(row.invoice.status)));
+    send(res, 200, {
+      company: { id: company.id, name: company.name, legal_name: company.legal_name },
+      settings: { unit_price_cents: UNIT_PRICE_CENTS, currency: "USD", due_business_days: 4, billing_start: BILLING_START, payment_configured: true, contact_email: "notificaciones@vyntralab.com" },
+      active_users: company.employees_count,
+      recipients: billingRecipients(company.id),
+      periods,
+      default_period_start: (pending || periods.find((row) => row.status === "closed") || periods[0]).start,
+      invoices: invoices.filter((row) => row.company_id === company.id).sort((a, b) => b.period_start.localeCompare(a.period_start)),
+    });
+    return;
+  }
+
+  const invoiceActionMatch = path.match(/^\/api\/system\/companies\/([^/]+)\/invoices\/(preview|send)$/);
+  if (invoiceActionMatch && req.method === "POST") {
+    const company = companies.find((row) => row.id === invoiceActionMatch[1]);
+    if (!company) return send(res, 404, { detail: "Empresa no encontrada" });
+    const body = await readBody(req);
+    if (!billingPeriods(company.id).some((row) => row.start === body.period_start)) return send(res, 400, { detail: "Periodo de facturación no válido" });
+    const eligible = billingRecipients(company.id);
+    const chosen = (body.recipients?.length ? eligible.filter((row) => body.recipients.includes(row.email)) : eligible);
+    if (!chosen.length) return send(res, 400, { detail: "Selecciona al menos un destinatario" });
+    const amounts = invoiceAmounts(company, body);
+    const html = invoiceHtml(company, amounts);
+    const subject = `Factura ${amounts.number} · VYNTRA · ${amounts.period_label}`;
+    if (invoiceActionMatch[2] === "preview") {
+      const existing = invoices.find((row) => row.company_id === company.id && row.period_start === body.period_start);
+      send(res, 200, { invoice: amounts, subject, html, recipients: chosen.map(({ email, full_name }) => ({ email, full_name })), already_sent: Boolean(existing) });
+      return;
+    }
+    let invoice = invoices.find((row) => row.company_id === company.id && row.period_start === body.period_start);
+    const recipients = chosen.map(({ email, full_name }) => ({ email, full_name, status: "sent" }));
+    if (!invoice) {
+      invoice = { id: `inv-${randomUUID().slice(0, 8)}`, company_id: company.id, send_count: 0, created_at: new Date().toISOString() };
+      invoices.push(invoice);
+    }
+    Object.assign(invoice, amounts, {
+      status: "sent",
+      recipients,
+      send_count: invoice.send_count + 1,
+      sent_at: new Date().toISOString(),
+      sent_by: { id: adminUser.id, full_name: adminUser.full_name, email: adminUser.email },
+    });
+    send(res, 200, { invoice, delivery: recipients.map(({ email, status }) => ({ email, status })) });
+    return;
+  }
+
+  const invoiceHtmlMatch = path.match(/^\/api\/system\/invoices\/([^/]+)\/html$/);
+  if (invoiceHtmlMatch && req.method === "GET") {
+    const invoice = invoices.find((row) => row.id === invoiceHtmlMatch[1]);
+    if (!invoice) return send(res, 404, { detail: "Factura no encontrada" });
+    const company = companies.find((row) => row.id === invoice.company_id);
+    send(res, 200, { subject: `Factura ${invoice.number} · VYNTRA · ${invoice.period_label}`, html: invoiceHtml(company, invoice) });
     return;
   }
 

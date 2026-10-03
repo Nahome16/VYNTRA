@@ -28,6 +28,77 @@ export type SystemCompany = {
     subscription_ends_at: string;
     admin_notice: string;
   };
+  /** Recordatorio de facturación: periodo cerrado aún sin factura enviada. */
+  billing?: {
+    pending_period: { start: string; end: string; label: string } | null;
+    last_invoice: { number: string; period_start: string; period_end: string; status: InvoiceStatus; sent_at: string | null } | null;
+  };
+};
+
+export type InvoiceStatus = "sent" | "partial" | "failed" | "not_configured";
+
+export type InvoiceAmounts = {
+  number: string;
+  period_start: string;
+  period_end: string;
+  period_label: string;
+  issued_on: string;
+  due_on: string;
+  active_users: number;
+  unit_price_cents: number;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  currency: string;
+};
+
+export type InvoiceRecord = InvoiceAmounts & {
+  id: string;
+  company_id: string;
+  status: InvoiceStatus;
+  recipients: Array<{ email: string; full_name: string; status: string }>;
+  send_count: number;
+  sent_at: string | null;
+  sent_by: { id: string; full_name: string; email: string } | null;
+  created_at: string | null;
+};
+
+export type BillingPeriod = {
+  start: string;
+  end: string;
+  label: string;
+  status: "open" | "closed";
+  invoice: { id: string; number: string; status: InvoiceStatus; sent_at: string | null } | null;
+};
+
+export type BillingResponse = {
+  company: { id: string; name: string; legal_name: string };
+  settings: {
+    unit_price_cents: number;
+    currency: string;
+    due_business_days: number;
+    billing_start: string;
+    payment_configured: boolean;
+    contact_email: string;
+  };
+  active_users: number;
+  recipients: Array<{ id: string; email: string; full_name: string; role: string }>;
+  periods: BillingPeriod[];
+  default_period_start: string;
+  invoices: InvoiceRecord[];
+};
+
+export type InvoicePreviewResponse = {
+  invoice: InvoiceAmounts;
+  subject: string;
+  html: string;
+  recipients: Array<{ email: string; full_name: string }>;
+  already_sent: boolean;
+};
+
+export type InvoiceSendResponse = {
+  invoice: InvoiceRecord;
+  delivery: Array<{ email: string; status: string }>;
 };
 
 export type PanelUser = {

@@ -3,12 +3,14 @@ main.py - VYNTRA Evidence API.
 """
 
 from collections import defaultdict, deque
+import calendar
 import csv
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from email.message import EmailMessage
 import base64
 import io
 import hashlib
+import html as html_lib
 import json
 import logging
 import math
@@ -17,9 +19,11 @@ import re
 import secrets
 import smtplib
 import socket
+from string import Template
 import tempfile
 from time import monotonic
 from typing import Literal
+from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import BackgroundTasks, Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
@@ -64,6 +68,7 @@ from app.models import (
     EvidenceFile,
     EvidenceUploadAttempt,
     Incident,
+    Invoice,
     LoginAttempt,
     LoginLockout,
     Position,
@@ -298,6 +303,12 @@ class SystemUserPasswordResetPayload(StrictPayload):
     reason: str | None = Field(default=None, max_length=180)
 
 
+class InvoiceRequestPayload(StrictPayload):
+    period_start: str = Field(..., min_length=1, max_length=40)
+    active_users: int | None = Field(default=None, ge=0, le=100000)
+    recipients: list[str] | None = Field(default=None, max_length=50)
+
+
 class DeviceCreatePayload(StrictPayload):
     company_id: str | None = Field(default=None, max_length=36)
     employee_id: str | None = Field(default=None, max_length=36)
@@ -373,6 +384,18 @@ def smtp_configured() -> bool:
 
 
 def send_plain_email(to_email: str, subject: str, body: str) -> str:
+    return send_email(to_email, subject, body)
+
+
+def send_email(
+    to_email: str,
+    subject: str,
+    body: str,
+    *,
+    html: str | None = None,
+    reply_to: str | None = None,
+) -> str:
+    """Envia un correo de texto (con alternativa HTML opcional). Devuelve sent/failed/not_configured."""
     recipient = clean_email(to_email)
     if not smtp_configured():
         return "not_configured"
@@ -381,7 +404,11 @@ def send_plain_email(to_email: str, subject: str, body: str) -> str:
     message["Subject"] = subject
     message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
     message["To"] = recipient
+    if reply_to:
+        message["Reply-To"] = reply_to
     message.set_content(body)
+    if html:
+        message.add_alternative(html, subtype="html")
 
     try:
         if settings.smtp_use_ssl:
@@ -3585,6 +3612,824 @@ def health_ready():
     return {"ok": True, "database": "ok"}
 
 
+# ---------------------------------------------------------------------------
+# Facturacion mensual a empresas
+# ---------------------------------------------------------------------------
+# Reglas: USD 15.00 (BILLING_UNIT_PRICE_CENTS) por usuario monitoreado activo,
+# sin IVA. Los periodos van del dia ancla (el dia de BILLING_START_DATE) de un
+# mes al dia anterior del mes siguiente: 15 sep - 14 oct, 15 oct - 14 nov...
+# Emision = hoy en la zona de la empresa; vencimiento = emision + N dias
+# habiles (lunes a viernes, sin feriados). El envio es manual desde la consola
+# sistema. Los textos fuera de ASCII se escriben con escapes \u o entidades HTML
+# para mantener el codigo fuente en ASCII.
+
+DEFAULT_BILLING_START = date(2026, 9, 15)
+INVOICE_DELIVERED_STATUSES = ("sent", "partial")
+INVOICE_RECIPIENT_ROLES = ("owner", "admin")
+SPANISH_MONTHS = (
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+)
+SPANISH_MONTHS_SHORT = (
+    "ene.", "feb.", "mar.", "abr.", "may.", "jun.",
+    "jul.", "ago.", "sep.", "oct.", "nov.", "dic.",
+)
+SPANISH_WEEKDAYS = ("lunes", "martes", "mi\u00e9rcoles", "jueves", "viernes", "s\u00e1bado", "domingo")
+SPANISH_WEEKDAYS_SHORT = ("Lun.", "Mar.", "Mi\u00e9.", "Jue.", "Vie.", "S\u00e1b.", "Dom.")
+CURRENCY_LABELS = {"USD": "D\u00f3lares (USD)"}
+MIDDOT = "\u00b7"
+EN_DASH = "\u2013"
+
+
+def billing_start_date() -> date:
+    try:
+        return date.fromisoformat((settings.billing_start_date or "").strip())
+    except ValueError:
+        return DEFAULT_BILLING_START
+
+
+def billing_today(company: Company | None) -> date:
+    """Fecha de hoy en la zona de la empresa (se reemplaza en pruebas)."""
+    return datetime.now(company_zoneinfo(company)).date()
+
+
+def _shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
+    index = year * 12 + (month - 1) + delta
+    return index // 12, index % 12 + 1
+
+
+def _anchor_date(year: int, month: int, anchor_day: int) -> date:
+    return date(year, month, min(anchor_day, calendar.monthrange(year, month)[1]))
+
+
+def next_billing_period_start(period_start: date, start: date | None = None) -> date:
+    anchor_day = (start or billing_start_date()).day
+    year, month = _shift_month(period_start.year, period_start.month, 1)
+    return _anchor_date(year, month, anchor_day)
+
+
+def billing_period_from_start(period_start: date, start: date | None = None) -> tuple[date, date]:
+    return period_start, next_billing_period_start(period_start, start) - timedelta(days=1)
+
+
+def billing_period_for(day: date, start: date | None = None) -> tuple[date, date]:
+    """Periodo (inicio, fin) que contiene `day`."""
+    start = start or billing_start_date()
+    candidate = _anchor_date(day.year, day.month, start.day)
+    if day < candidate:
+        year, month = _shift_month(day.year, day.month, -1)
+        candidate = _anchor_date(year, month, start.day)
+    return billing_period_from_start(candidate, start)
+
+
+def is_billing_period_start(value: date, start: date | None = None) -> bool:
+    return billing_period_for(value, start)[0] == value
+
+
+def current_billing_period(today: date, start: date | None = None) -> tuple[date, date]:
+    """Periodo abierto: el que contiene hoy, o el primero si aun no empieza la facturacion."""
+    start = start or billing_start_date()
+    if today < start:
+        return billing_period_from_start(start, start)
+    return billing_period_for(today, start)
+
+
+def billing_periods_until(today: date, start: date | None = None) -> list[tuple[date, date]]:
+    """Periodos desde el inicio de facturacion hasta el abierto, del mas nuevo al mas viejo."""
+    start = start or billing_start_date()
+    open_start = current_billing_period(today, start)[0]
+    periods = []
+    cursor = start
+    while cursor <= open_start:
+        periods.append(billing_period_from_start(cursor, start))
+        cursor = next_billing_period_start(cursor, start)
+    return list(reversed(periods))
+
+
+def latest_undelivered_closed_period(
+    periods: list[tuple[date, date]],
+    status_by_start: dict[str, str],
+    today: date,
+) -> tuple[date, date] | None:
+    """Periodo cerrado mas reciente sin factura enviada (sent/partial)."""
+    for period_start, period_end in periods:
+        if period_end >= today:
+            continue
+        if status_by_start.get(period_start.isoformat()) not in INVOICE_DELIVERED_STATUSES:
+            return period_start, period_end
+    return None
+
+
+def default_billing_period_start(
+    periods: list[tuple[date, date]],
+    status_by_start: dict[str, str],
+    today: date,
+) -> date:
+    pending = latest_undelivered_closed_period(periods, status_by_start, today)
+    if pending:
+        return pending[0]
+    closed = [period for period in periods if period[1] < today]
+    if closed:
+        return closed[0][0]
+    return periods[0][0]
+
+
+def add_business_days(day: date, count: int) -> date:
+    current = day
+    added = 0
+    while added < max(0, count):
+        current += timedelta(days=1)
+        if current.weekday() < 5:
+            added += 1
+    return current
+
+
+def invoice_amounts(active_users: int, unit_price_cents: int) -> dict:
+    subtotal = max(0, int(active_users)) * max(0, int(unit_price_cents))
+    tax = 0  # IVA no aplica
+    return {"subtotal_cents": subtotal, "tax_cents": tax, "total_cents": subtotal + tax}
+
+
+def format_amount(cents: int) -> str:
+    sign = "-" if cents < 0 else ""
+    value = abs(int(cents))
+    return f"{sign}{value // 100:,}.{value % 100:02d}"
+
+
+def format_money(cents: int, currency: str) -> str:
+    return f"{currency} {format_amount(cents)}"
+
+
+def format_date_short(value: date) -> str:
+    return f"{value.day} {SPANISH_MONTHS_SHORT[value.month - 1]} {value.year}"
+
+
+def format_date_weekday_short(value: date) -> str:
+    return f"{SPANISH_WEEKDAYS_SHORT[value.weekday()]} {format_date_short(value)}"
+
+
+def format_date_long(value: date, with_weekday: bool = False) -> str:
+    text_value = f"{value.day} de {SPANISH_MONTHS[value.month - 1]} de {value.year}"
+    return f"{SPANISH_WEEKDAYS[value.weekday()]} {text_value}" if with_weekday else text_value
+
+
+def format_date_numeric(value: date) -> str:
+    return value.strftime("%d/%m/%Y")
+
+
+def format_period_label(period_start: date, period_end: date) -> str:
+    """'15 sep. - 14 oct. 2026' (con guion largo)."""
+    if period_start.year == period_end.year:
+        first = f"{period_start.day} {SPANISH_MONTHS_SHORT[period_start.month - 1]}"
+    else:
+        first = format_date_short(period_start)
+    return f"{first} {EN_DASH} {format_date_short(period_end)}"
+
+
+def format_period_long(period_start: date, period_end: date) -> str:
+    """'15 de septiembre al 14 de octubre de 2026'."""
+    if period_start.year == period_end.year:
+        first = f"{period_start.day} de {SPANISH_MONTHS[period_start.month - 1]}"
+    else:
+        first = format_date_long(period_start)
+    return f"{first} al {format_date_long(period_end)}"
+
+
+def business_days_text(count: int) -> str:
+    return "1 d\u00eda h\u00e1bil" if count == 1 else f"{count} d\u00edas h\u00e1biles"
+
+
+def active_users_text(count: int) -> str:
+    return "1 usuario activo" if count == 1 else f"{count} usuarios activos"
+
+
+def invoice_number_prefix(period_end: date) -> str:
+    return f"VYN-{period_end.strftime('%Y%m')}-"
+
+
+def next_invoice_number(db: Session, period_end: date) -> str:
+    prefix = invoice_number_prefix(period_end)
+    existing = db.execute(
+        select(func.count()).select_from(Invoice).where(Invoice.number.startswith(prefix))
+    ).scalar_one()
+    sequence = int(existing or 0) + 1
+    while db.execute(select(Invoice.id).where(Invoice.number == f"{prefix}{sequence:04d}")).first():
+        sequence += 1
+    return f"{prefix}{sequence:04d}"
+
+
+def invoice_delivery_status(statuses: list[str]) -> str:
+    if statuses and all(item == "sent" for item in statuses):
+        return "sent"
+    if any(item == "sent" for item in statuses):
+        return "partial"
+    if statuses and all(item == "not_configured" for item in statuses):
+        return "not_configured"
+    return "failed"
+
+
+def billing_payment_rows() -> list[tuple[str, str]]:
+    """Filas bancarias configuradas por entorno (nunca en el codigo: el repo es publico)."""
+    account_label = "Cuenta en d\u00f3lares" if settings.billing_currency.strip().upper() == "USD" else "Cuenta"
+    rows = [
+        ("Banco", settings.billing_bank_name),
+        (account_label, settings.billing_account_number),
+        ("IBAN", settings.billing_iban),
+        ("Titular", settings.billing_account_holder),
+    ]
+    return [(label, value.strip()) for label, value in rows if (value or "").strip()]
+
+
+def billing_payment_configured() -> bool:
+    return bool(settings.billing_account_number.strip() or settings.billing_iban.strip())
+
+
+INVOICE_EMAIL_TEMPLATE = Template("""<!doctype html>
+<html lang="es" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <title>Factura ${number} &middot; VYNTRA</title>
+  <style>
+    @media only screen and (max-width: 620px) {
+      .container { width: 100% !important; }
+      .px { padding-left: 20px !important; padding-right: 20px !important; }
+      .stack { display: block !important; width: 100% !important; padding-left: 0 !important; padding-right: 0 !important; text-align: left !important; }
+      .stack-gap { padding-top: 16px !important; }
+      .amount { font-size: 34px !important; }
+      .hide-sm { display: none !important; }
+    }
+  </style>
+</head>
+<body style="margin:0; padding:0; background-color:#f2f4f7; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%;">
+
+  <div style="display:none; max-height:0; overflow:hidden; mso-hide:all; font-size:1px; line-height:1px; color:#f2f4f7;">
+    ${preheader}
+  </div>
+
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f2f4f7" style="background-color:#f2f4f7;">
+    <tr>
+      <td align="center" style="padding:32px 12px;">
+
+        <table role="presentation" class="container" width="600" cellspacing="0" cellpadding="0" border="0" style="width:600px; max-width:600px;">
+
+          <tr>
+            <td bgcolor="#0a0a0a" class="px" style="background-color:#0a0a0a; padding:28px 36px; border-radius:14px 14px 0 0;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td valign="middle">
+                    <img src="${logo_url}" width="150" height="24" alt="VYNTRA" style="display:block; border:0; outline:none; text-decoration:none; width:150px; height:24px; color:#ffffff; font-family:Arial, sans-serif; font-size:20px; font-weight:bold; letter-spacing:4px;">
+                  </td>
+                  <td valign="middle" align="right" style="font-family:'Segoe UI', Arial, Helvetica, sans-serif; color:#a3a9b6; font-size:12px; letter-spacing:2px; text-transform:uppercase;">
+                    Factura<br>
+                    <span style="color:#ffffff; font-size:14px; letter-spacing:0.5px; font-weight:600; text-transform:none;">${number}</span>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td bgcolor="#ffffff" class="px" style="background-color:#ffffff; padding:36px 36px 8px; font-family:'Segoe UI', Arial, Helvetica, sans-serif; color:#0b0d12;">
+
+              <p style="margin:0 0 6px; font-size:15px; line-height:22px; color:#344054;">${greeting}</p>
+              <p style="margin:0 0 28px; font-size:15px; line-height:23px; color:#344054;">
+                Esta es la factura de <strong style="color:#0b0d12;">${company}</strong> por el servicio VYNTRA del periodo
+                <strong style="color:#0b0d12;">${period_long}</strong>.
+              </p>
+
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #e4e7ec; border-radius:12px;">
+                <tr>
+                  <td style="padding:24px 26px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td class="stack" valign="top" style="font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                          <p style="margin:0 0 6px; font-size:13px; font-weight:600; color:#5f6878;">Monto a pagar</p>
+                          <p class="amount" style="margin:0; font-size:40px; line-height:44px; font-weight:700; letter-spacing:-1px; color:#0b0d12;">
+                            <span style="font-size:20px; font-weight:600; color:#5f6878; letter-spacing:0;">${currency}</span> ${total_amount}
+                          </p>
+                        </td>
+                        <td class="stack stack-gap" valign="top" align="right" style="font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                          <p style="margin:0 0 6px; font-size:13px; font-weight:600; color:#5f6878;">Fecha l&iacute;mite de pago</p>
+                          <p style="margin:0 0 8px; font-size:17px; line-height:22px; font-weight:700; color:#0b0d12;">${due_weekday}</p>
+                          <span style="display:inline-block; padding:4px 10px; border-radius:999px; background-color:#fffaeb; color:#b54708; font-size:12px; font-weight:700;">${due_days} para pagar</span>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:28px;">
+                <tr>
+                  <td class="stack" valign="top" width="50%" style="padding-right:12px; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                    <p style="margin:0 0 8px; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Facturado a</p>
+                    <p style="margin:0; font-size:14px; line-height:21px; color:#344054;">
+                      ${billed_to}
+                    </p>
+                  </td>
+                  <td class="stack stack-gap" valign="top" width="50%" style="padding-left:12px; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                    <p style="margin:0 0 8px; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Detalles</p>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:14px; line-height:21px; color:#344054;">
+                      <tr>
+                        <td style="padding:0 0 2px;">Emisi&oacute;n</td>
+                        <td align="right" style="padding:0 0 2px; color:#0b0d12; font-weight:600;">${issued_short}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:0 0 2px;">Periodo</td>
+                        <td align="right" style="padding:0 0 2px; color:#0b0d12; font-weight:600;">${period_label}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:0 0 2px;">Vencimiento</td>
+                        <td align="right" style="padding:0 0 2px; color:#0b0d12; font-weight:600;">${due_short}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:0;">Moneda</td>
+                        <td align="right" style="padding:0; color:#0b0d12; font-weight:600;">${currency_label}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:30px; border-collapse:collapse; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                <tr>
+                  <th align="left" style="padding:0 0 10px; border-bottom:1px solid #d0d5dd; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Descripci&oacute;n</th>
+                  <th align="right" class="hide-sm" style="padding:0 0 10px; border-bottom:1px solid #d0d5dd; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Cant.</th>
+                  <th align="right" class="hide-sm" style="padding:0 0 10px 16px; border-bottom:1px solid #d0d5dd; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Precio unit.</th>
+                  <th align="right" style="padding:0 0 10px 16px; border-bottom:1px solid #d0d5dd; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Importe</th>
+                </tr>
+                <tr>
+                  <td style="padding:16px 0; border-bottom:1px solid #e4e7ec; font-size:14px; line-height:20px; color:#0b0d12;">
+                    <strong style="font-weight:600;">Licencia VYNTRA por usuario monitoreado</strong><br>
+                    <span style="font-size:13px; color:#5f6878;">${line_detail}</span>
+                  </td>
+                  <td align="right" class="hide-sm" style="padding:16px 0; border-bottom:1px solid #e4e7ec; font-size:14px; color:#0b0d12;">${active_users}</td>
+                  <td align="right" class="hide-sm" style="padding:16px 0 16px 16px; border-bottom:1px solid #e4e7ec; font-size:14px; color:#0b0d12; white-space:nowrap;">${unit_price}</td>
+                  <td align="right" style="padding:16px 0 16px 16px; border-bottom:1px solid #e4e7ec; font-size:14px; font-weight:600; color:#0b0d12; white-space:nowrap;">${subtotal}</td>
+                </tr>
+              </table>
+
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:6px; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                <tr>
+                  <td class="hide-sm" width="45%">&nbsp;</td>
+                  <td>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:14px; line-height:20px; color:#344054;">
+                      <tr>
+                        <td style="padding:8px 0;">Subtotal</td>
+                        <td align="right" style="padding:8px 0; color:#0b0d12; white-space:nowrap;">${subtotal}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:8px 0; border-bottom:1px solid #e4e7ec;">IVA <span style="color:#98a2b3;">(no aplica)</span></td>
+                        <td align="right" style="padding:8px 0; border-bottom:1px solid #e4e7ec; color:#0b0d12; white-space:nowrap;">${tax}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:14px 0 0; font-size:15px; font-weight:700; color:#0b0d12;">Total a pagar</td>
+                        <td align="right" style="padding:14px 0 0; font-size:18px; font-weight:700; color:#0b0d12; white-space:nowrap;">${total}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:32px; background-color:#f9fafb; border:1px solid #e4e7ec; border-radius:12px;">
+                <tr>
+                  <td style="padding:20px 22px; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+                    <p style="margin:0 0 12px; font-size:14px; font-weight:700; color:#0b0d12;">C&oacute;mo pagar</p>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="font-size:13.5px; line-height:21px; color:#344054;">
+${payment_rows}
+                      <tr>
+                        <td style="padding:0; color:#5f6878;">Referencia</td>
+                        <td align="right" style="padding:0; color:#2563eb; font-weight:700;">${number}</td>
+                      </tr>
+                    </table>
+                    <p style="margin:12px 0 0; font-size:12.5px; line-height:19px; color:#5f6878;">
+                      Escribe el n&uacute;mero de factura como referencia y env&iacute;a el comprobante a
+                      <a href="${payment_mailto}" style="color:#2563eb; font-weight:600; text-decoration:none;">${contact_email}</a>
+                      para confirmar el pago.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:28px 0 8px; font-size:11px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase; color:#98a2b3;">Condiciones</p>
+              <ul style="margin:0 0 8px; padding:0 0 0 18px; font-size:13px; line-height:21px; color:#5f6878;">
+                <li>Se cobran ${unit_price} por cada usuario monitoreado activo durante el periodo.</li>
+                <li>Esta factura no incluye IVA.</li>
+                <li>El pago vence ${due_days} despu&eacute;s de la fecha de emisi&oacute;n.</li>
+                <li>Pr&oacute;ximo periodo de facturaci&oacute;n: ${next_period}.</li>
+              </ul>
+            </td>
+          </tr>
+
+          <tr>
+            <td bgcolor="#ffffff" class="px" style="background-color:#ffffff; padding:20px 36px 32px; border-radius:0 0 14px 14px; border-top:1px solid #e4e7ec; font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
+              <p style="margin:0 0 4px; font-size:13px; line-height:20px; color:#344054;">
+                &iquest;Dudas sobre esta factura? Escr&iacute;benos a
+                <a href="${contact_mailto}" style="color:#2563eb; font-weight:600; text-decoration:none;">${contact_email}</a>.
+              </p>
+              <p style="margin:0; font-size:12px; line-height:19px; color:#98a2b3;">
+                VYNTRA &middot; Managua, Nicaragua<br>
+                Recibes este correo porque eres administrador de ${company} en VYNTRA.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+""")
+
+
+def _invoice_payment_row_html(label: str, value: str, extra_value_style: str = "") -> str:
+    return (
+        "                      <tr>\n"
+        f'                        <td style="padding:0 0 3px; color:#5f6878;">{html_lib.escape(label)}</td>\n'
+        f'                        <td align="right" style="padding:0 0 3px{extra_value_style}; color:#0b0d12; '
+        f'font-weight:600;">{html_lib.escape(value)}</td>\n'
+        "                      </tr>"
+    )
+
+
+def invoice_greeting(company_name: str, recipients: list[dict]) -> str:
+    if len(recipients) > 1:
+        return f"Hola, equipo de {company_name}:"
+    if recipients:
+        return f"Hola, {(recipients[0].get('full_name') or '').strip() or 'equipo'}:"
+    return "Hola, equipo:"
+
+
+def render_invoice_email(
+    *,
+    number: str,
+    company_name: str,
+    period_start: date,
+    period_end: date,
+    issued_on: date,
+    due_on: date,
+    active_users: int,
+    unit_price_cents: int,
+    subtotal_cents: int,
+    tax_cents: int,
+    total_cents: int,
+    currency: str,
+    recipients: list[dict],
+    due_business_days: int | None = None,
+) -> tuple[str, str, str]:
+    """Devuelve (asunto, html, texto plano) de la factura. Puro: no toca la base de datos."""
+    esc = html_lib.escape
+    due_days = settings.billing_due_business_days if due_business_days is None else due_business_days
+    contact_email = (settings.billing_contact_email or "").strip()
+    next_start, next_end = billing_period_for(period_end + timedelta(days=1))
+    period_label = format_period_label(period_start, period_end)
+    period_long = format_period_long(period_start, period_end)
+    next_period = format_period_long(next_start, next_end)
+    total_money = format_money(total_cents, currency)
+    subtotal_money = format_money(subtotal_cents, currency)
+    tax_money = format_money(tax_cents, currency)
+    unit_money = format_money(unit_price_cents, currency)
+    greeting = invoice_greeting(company_name, recipients)
+    line_detail = (
+        f"{active_users_text(active_users)} {MIDDOT} "
+        f"{format_date_numeric(period_start)} al {format_date_numeric(period_end)}"
+    )
+    preheader = (
+        f"Factura {number} {MIDDOT} {total_money} {MIDDOT} vence el {format_date_long(due_on, with_weekday=True)}."
+    )
+    subject = f"Factura {number} {MIDDOT} VYNTRA {MIDDOT} {period_label}"
+
+    billed_lines = [f'<strong style="color:#0b0d12;">{esc(company_name)}</strong>']
+    for recipient in recipients:
+        name = (recipient.get("full_name") or "").strip()
+        if name:
+            billed_lines.append(esc(name))
+        billed_lines.append(esc(recipient.get("email") or ""))
+    billed_to = "<br>\n                      ".join(billed_lines)
+
+    bank_rows = billing_payment_rows()
+    if bank_rows:
+        row_html = [_invoice_payment_row_html("M\u00e9todo", "Transferencia bancaria")]
+        for label, value in bank_rows:
+            row_html.append(_invoice_payment_row_html(label, value, " 12px" if label == "IBAN" else ""))
+        payment_rows = "\n".join(row_html)
+    else:
+        payment_rows = (
+            "                      <tr>\n"
+            '                        <td colspan="2" style="padding:0 0 8px; color:#344054;">'
+            "Te enviaremos los datos de pago por separado.</td>\n"
+            "                      </tr>"
+        )
+
+    contact_mailto = f"mailto:{contact_email}"
+    payment_subject = quote(f"Pago factura {number}")
+    payment_mailto = f"{contact_mailto}?subject={payment_subject}"
+    html_body = INVOICE_EMAIL_TEMPLATE.substitute(
+        number=esc(number),
+        preheader=esc(preheader),
+        logo_url=esc(settings.billing_logo_url or "", quote=True),
+        greeting=esc(greeting),
+        company=esc(company_name),
+        period_long=esc(period_long),
+        currency=esc(currency),
+        total_amount=esc(format_amount(total_cents)),
+        due_weekday=esc(format_date_weekday_short(due_on)),
+        due_days=esc(business_days_text(due_days)),
+        billed_to=billed_to,
+        issued_short=esc(format_date_short(issued_on)),
+        period_label=esc(period_label),
+        due_short=esc(format_date_short(due_on)),
+        currency_label=esc(CURRENCY_LABELS.get(currency.upper(), currency)),
+        line_detail=esc(line_detail),
+        active_users=esc(str(active_users)),
+        unit_price=esc(unit_money),
+        subtotal=esc(subtotal_money),
+        tax=esc(tax_money),
+        total=esc(total_money),
+        payment_rows=payment_rows,
+        payment_mailto=esc(payment_mailto, quote=True),
+        contact_mailto=esc(contact_mailto, quote=True),
+        contact_email=esc(contact_email),
+        next_period=esc(next_period),
+    )
+
+    plain_lines = [
+        greeting,
+        "",
+        f"Esta es la factura de {company_name} por el servicio VYNTRA del periodo {period_long}.",
+        "",
+        f"Factura: {number}",
+        f"Monto a pagar: {total_money}",
+        f"Fecha l\u00edmite de pago: {format_date_weekday_short(due_on)} ({business_days_text(due_days)} para pagar)",
+        f"Emisi\u00f3n: {format_date_short(issued_on)}",
+        f"Periodo: {period_label}",
+        "",
+        "Detalle:",
+        f"Licencia VYNTRA por usuario monitoreado: {active_users} x {unit_money} = {subtotal_money}",
+        f"Subtotal: {subtotal_money}",
+        f"IVA (no aplica): {tax_money}",
+        f"Total a pagar: {total_money}",
+        "",
+        "C\u00f3mo pagar:",
+    ]
+    if bank_rows:
+        plain_lines.append("M\u00e9todo: Transferencia bancaria")
+        plain_lines.extend(f"{label}: {value}" for label, value in bank_rows)
+    else:
+        plain_lines.append("Te enviaremos los datos de pago por separado.")
+    plain_lines.extend(
+        [
+            f"Referencia: {number}",
+            "Escribe el n\u00famero de factura como referencia y env\u00eda el comprobante a "
+            f"{contact_email} para confirmar el pago.",
+            "",
+            "Condiciones:",
+            f"- Se cobran {unit_money} por cada usuario monitoreado activo durante el periodo.",
+            "- Esta factura no incluye IVA.",
+            f"- El pago vence {business_days_text(due_days)} despu\u00e9s de la fecha de emisi\u00f3n.",
+            f"- Pr\u00f3ximo periodo de facturaci\u00f3n: {next_period}.",
+            "",
+            f"\u00bfDudas sobre esta factura? Escr\u00edbenos a {contact_email}.",
+            f"Recibes este correo porque eres administrador de {company_name} en VYNTRA.",
+        ]
+    )
+    return subject, html_body, "\n".join(plain_lines)
+
+
+def get_billing_company(db: Session, company_id: str, require_active: bool = False) -> Company:
+    company = db.get(Company, company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if require_active and company.status == "archived":
+        raise HTTPException(status_code=400, detail="La empresa esta archivada; restaurala antes de facturar.")
+    return company
+
+
+def count_active_monitored_users(db: Session, company_id: str) -> int:
+    return int(
+        db.execute(
+            select(func.count()).select_from(Employee).where(
+                Employee.company_id == company_id,
+                Employee.status == "active",
+            )
+        ).scalar_one()
+        or 0
+    )
+
+
+def eligible_invoice_recipients(db: Session, company_id: str) -> list[dict]:
+    """Usuarios activos owner/admin de la empresa (owner primero)."""
+    rows = db.execute(
+        select(User, Role.name)
+        .join(Role, Role.id == User.role_id)
+        .where(
+            User.company_id == company_id,
+            User.status == "active",
+            Role.name.in_(INVOICE_RECIPIENT_ROLES),
+        )
+        .order_by(Role.name.desc(), User.created_at, User.email)
+    ).all()
+    return [
+        {"id": user.id, "email": user.email.lower(), "full_name": user.full_name, "role": role_name}
+        for user, role_name in rows
+    ]
+
+
+def resolve_invoice_recipients(eligible: list[dict], requested: list[str] | None) -> list[dict]:
+    if requested is None:
+        return list(eligible)
+    by_email = {row["email"]: row for row in eligible}
+    selected: list[dict] = []
+    for raw in requested:
+        email = clean_text(raw, 180).lower()
+        if email not in by_email:
+            shown = email or "(vacio)"
+            raise HTTPException(
+                status_code=400,
+                detail=f"El correo {shown} no es un destinatario valido: debe ser owner o admin activo de la empresa.",
+            )
+        if by_email[email] not in selected:
+            selected.append(by_email[email])
+    return selected
+
+
+def resolve_invoice_period(raw_period_start: str, today: date) -> tuple[date, date]:
+    start = billing_start_date()
+    try:
+        period_start = date.fromisoformat(clean_text(raw_period_start, 40))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Periodo invalido: usa el formato YYYY-MM-DD.") from exc
+    open_start = current_billing_period(today, start)[0]
+    if not is_billing_period_start(period_start, start) or period_start < start or period_start > open_start:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Periodo invalido: debe iniciar el dia {start.day} de un mes, desde {start.isoformat()} "
+                f"hasta el periodo en curso ({open_start.isoformat()})."
+            ),
+        )
+    return billing_period_from_start(period_start, start)
+
+
+def find_company_invoice(db: Session, company_id: str, period_start: date) -> Invoice | None:
+    return db.execute(
+        select(Invoice).where(
+            Invoice.company_id == company_id,
+            Invoice.period_start == period_start.isoformat(),
+        )
+    ).scalar_one_or_none()
+
+
+def prepare_invoice_draft(db: Session, company: Company, payload: InvoiceRequestPayload) -> dict:
+    """Calcula cantidad, importes, fechas, numero y destinatarios sin persistir nada."""
+    today = billing_today(company)
+    period_start, period_end = resolve_invoice_period(payload.period_start, today)
+    recipients = resolve_invoice_recipients(eligible_invoice_recipients(db, company.id), payload.recipients)
+    active_users = (
+        payload.active_users if payload.active_users is not None else count_active_monitored_users(db, company.id)
+    )
+    unit_price_cents = max(0, int(settings.billing_unit_price_cents))
+    existing = find_company_invoice(db, company.id, period_start)
+    return {
+        "existing": existing,
+        "number": existing.number if existing else next_invoice_number(db, period_end),
+        "period_start": period_start,
+        "period_end": period_end,
+        "issued_on": today,
+        "due_on": add_business_days(today, settings.billing_due_business_days),
+        "active_users": int(active_users),
+        "unit_price_cents": unit_price_cents,
+        "currency": (settings.billing_currency or "USD").strip().upper()[:8] or "USD",
+        "recipients": recipients,
+        **invoice_amounts(active_users, unit_price_cents),
+    }
+
+
+def render_invoice_draft(company: Company, draft: dict) -> tuple[str, str, str]:
+    return render_invoice_email(
+        number=draft["number"],
+        company_name=company.legal_name or company.name,
+        period_start=draft["period_start"],
+        period_end=draft["period_end"],
+        issued_on=draft["issued_on"],
+        due_on=draft["due_on"],
+        active_users=draft["active_users"],
+        unit_price_cents=draft["unit_price_cents"],
+        subtotal_cents=draft["subtotal_cents"],
+        tax_cents=draft["tax_cents"],
+        total_cents=draft["total_cents"],
+        currency=draft["currency"],
+        recipients=draft["recipients"],
+    )
+
+
+def invoice_recipients(invoice: Invoice) -> list[dict]:
+    value = parse_json_payload(invoice.recipients_json or "[]")
+    if not isinstance(value, list):
+        return []
+    return [
+        {
+            "email": str(item.get("email") or ""),
+            "full_name": str(item.get("full_name") or ""),
+            "status": str(item.get("status") or ""),
+        }
+        for item in value
+        if isinstance(item, dict)
+    ]
+
+
+def render_stored_invoice(company: Company | None, invoice: Invoice) -> tuple[str, str, str]:
+    company_name = (company.legal_name or company.name) if company else ""
+    return render_invoice_email(
+        number=invoice.number,
+        company_name=company_name,
+        period_start=date.fromisoformat(invoice.period_start),
+        period_end=date.fromisoformat(invoice.period_end),
+        issued_on=date.fromisoformat(invoice.issued_on),
+        due_on=date.fromisoformat(invoice.due_on),
+        active_users=invoice.active_users,
+        unit_price_cents=invoice.unit_price_cents,
+        subtotal_cents=invoice.subtotal_cents,
+        tax_cents=invoice.tax_cents,
+        total_cents=invoice.total_cents,
+        currency=invoice.currency,
+        recipients=invoice_recipients(invoice),
+    )
+
+
+def serialize_invoice(db: Session, invoice: Invoice) -> dict:
+    sent_by = db.get(User, invoice.sent_by_user_id) if invoice.sent_by_user_id else None
+    return {
+        "id": invoice.id,
+        "number": invoice.number,
+        "company_id": invoice.company_id,
+        "period_start": invoice.period_start,
+        "period_end": invoice.period_end,
+        "period_label": format_period_label(
+            date.fromisoformat(invoice.period_start), date.fromisoformat(invoice.period_end)
+        ),
+        "issued_on": invoice.issued_on,
+        "due_on": invoice.due_on,
+        "active_users": invoice.active_users,
+        "unit_price_cents": invoice.unit_price_cents,
+        "subtotal_cents": invoice.subtotal_cents,
+        "tax_cents": invoice.tax_cents,
+        "total_cents": invoice.total_cents,
+        "currency": invoice.currency,
+        "status": invoice.status,
+        "recipients": invoice_recipients(invoice),
+        "send_count": invoice.send_count,
+        "sent_at": invoice.sent_at.isoformat() if invoice.sent_at else None,
+        "sent_by": (
+            {"id": sent_by.id, "full_name": sent_by.full_name, "email": sent_by.email} if sent_by else None
+        ),
+        "created_at": invoice.created_at.isoformat() if invoice.created_at else None,
+    }
+
+
+def company_billing_summary(db: Session, company: Company) -> dict:
+    """Recordatorio para la consola sistema: periodo cerrado pendiente y ultima factura."""
+    if company.status == "archived":
+        return {"pending_period": None, "last_invoice": None}
+    rows = db.execute(
+        select(Invoice.number, Invoice.period_start, Invoice.period_end, Invoice.status, Invoice.sent_at)
+        .where(Invoice.company_id == company.id)
+        .order_by(Invoice.period_start.desc())
+    ).all()
+    today = billing_today(company)
+    pending = latest_undelivered_closed_period(
+        billing_periods_until(today), {row.period_start: row.status for row in rows}, today
+    )
+    last = rows[0] if rows else None
+    return {
+        "pending_period": (
+            {
+                "start": pending[0].isoformat(),
+                "end": pending[1].isoformat(),
+                "label": format_period_label(*pending),
+            }
+            if pending
+            else None
+        ),
+        "last_invoice": (
+            {
+                "number": last.number,
+                "period_start": last.period_start,
+                "period_end": last.period_end,
+                "status": last.status,
+                "sent_at": last.sent_at.isoformat() if last.sent_at else None,
+            }
+            if last
+            else None
+        ),
+    }
+
+
 def serialize_admin_user(db: Session, user: User, role_name: str | None = None) -> dict:
     role = db.get(Role, user.role_id) if user.role_id and role_name is None else None
     resolved_role = role_name or (role.name if role else "")
@@ -3636,6 +4481,7 @@ def serialize_system_company(db: Session, company: Company) -> dict:
         "users_count": int(users_count or 0),
         "devices_count": int(devices_count or 0),
         "controls": company_controls(db, company.id),
+        "billing": company_billing_summary(db, company),
     }
 
 
@@ -4382,6 +5228,204 @@ def restore_system_company(
     db.commit()
     db.refresh(company)
     return {"ok": True, "company": serialize_system_company(db, company)}
+
+
+def invoice_period_ref(invoice: Invoice | None) -> dict | None:
+    if invoice is None:
+        return None
+    return {
+        "id": invoice.id,
+        "number": invoice.number,
+        "status": invoice.status,
+        "sent_at": invoice.sent_at.isoformat() if invoice.sent_at else None,
+    }
+
+
+@app.get("/api/system/companies/{company_id}/billing")
+def system_company_billing(
+    company_id: str,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    company = get_billing_company(db, company_id)
+    today = billing_today(company)
+    invoices = db.execute(
+        select(Invoice)
+        .where(Invoice.company_id == company.id)
+        .order_by(Invoice.period_start.desc())
+    ).scalars().all()
+    by_start = {invoice.period_start: invoice for invoice in invoices}
+    periods = billing_periods_until(today)
+    status_by_start = {invoice.period_start: invoice.status for invoice in invoices}
+    return {
+        "company": {"id": company.id, "name": company.name, "legal_name": company.legal_name},
+        "settings": {
+            "unit_price_cents": max(0, int(settings.billing_unit_price_cents)),
+            "currency": (settings.billing_currency or "USD").strip().upper()[:8] or "USD",
+            "due_business_days": settings.billing_due_business_days,
+            "billing_start": billing_start_date().isoformat(),
+            "payment_configured": billing_payment_configured(),
+            "contact_email": (settings.billing_contact_email or "").strip(),
+        },
+        "active_users": count_active_monitored_users(db, company.id),
+        "recipients": eligible_invoice_recipients(db, company.id),
+        "periods": [
+            {
+                "start": period_start.isoformat(),
+                "end": period_end.isoformat(),
+                "label": format_period_label(period_start, period_end),
+                "status": "closed" if period_end < today else "open",
+                "invoice": invoice_period_ref(by_start.get(period_start.isoformat())),
+            }
+            for period_start, period_end in periods
+        ],
+        "default_period_start": default_billing_period_start(periods, status_by_start, today).isoformat(),
+        "invoices": [serialize_invoice(db, invoice) for invoice in invoices],
+    }
+
+
+@app.post("/api/system/companies/{company_id}/invoices/preview")
+def preview_company_invoice(
+    company_id: str,
+    payload: InvoiceRequestPayload,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    company = get_billing_company(db, company_id, require_active=True)
+    draft = prepare_invoice_draft(db, company, payload)
+    subject, html_body, _plain = render_invoice_draft(company, draft)
+    existing = draft["existing"]
+    return {
+        "invoice": {
+            "number": draft["number"],
+            "period_start": draft["period_start"].isoformat(),
+            "period_end": draft["period_end"].isoformat(),
+            "period_label": format_period_label(draft["period_start"], draft["period_end"]),
+            "issued_on": draft["issued_on"].isoformat(),
+            "due_on": draft["due_on"].isoformat(),
+            "active_users": draft["active_users"],
+            "unit_price_cents": draft["unit_price_cents"],
+            "subtotal_cents": draft["subtotal_cents"],
+            "tax_cents": draft["tax_cents"],
+            "total_cents": draft["total_cents"],
+            "currency": draft["currency"],
+        },
+        "subject": subject,
+        "html": html_body,
+        "recipients": [{"email": row["email"], "full_name": row["full_name"]} for row in draft["recipients"]],
+        "already_sent": bool(existing and existing.status in INVOICE_DELIVERED_STATUSES),
+    }
+
+
+@app.post("/api/system/companies/{company_id}/invoices/send")
+def send_company_invoice(
+    company_id: str,
+    payload: InvoiceRequestPayload,
+    request: Request,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    company = get_billing_company(db, company_id, require_active=True)
+    draft = prepare_invoice_draft(db, company, payload)
+    if not draft["recipients"]:
+        raise HTTPException(
+            status_code=400,
+            detail="No hay destinatarios: la empresa necesita al menos un owner o admin activo.",
+        )
+
+    invoice = draft["existing"]
+    if invoice is None:
+        invoice = Invoice(
+            company_id=company.id,
+            number=draft["number"],
+            period_start=draft["period_start"].isoformat(),
+            send_count=0,
+        )
+        db.add(invoice)
+    invoice.period_end = draft["period_end"].isoformat()
+    invoice.issued_on = draft["issued_on"].isoformat()
+    invoice.due_on = draft["due_on"].isoformat()
+    invoice.active_users = draft["active_users"]
+    invoice.unit_price_cents = draft["unit_price_cents"]
+    invoice.subtotal_cents = draft["subtotal_cents"]
+    invoice.tax_cents = draft["tax_cents"]
+    invoice.total_cents = draft["total_cents"]
+    invoice.currency = draft["currency"]
+    invoice.status = "failed"
+    invoice.recipients_json = json_text(
+        [{"email": row["email"], "full_name": row["full_name"], "status": "pending"} for row in draft["recipients"]]
+    )
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Otra factura se genero al mismo tiempo; intenta de nuevo.") from exc
+
+    subject, html_body, plain_body = render_invoice_draft(company, draft)
+    reply_to = (settings.billing_contact_email or "").strip() or None
+    delivery = []
+    for row in draft["recipients"]:
+        try:
+            delivery_status = send_email(row["email"], subject, plain_body, html=html_body, reply_to=reply_to)
+        except HTTPException:
+            delivery_status = "failed"
+        delivery.append({"email": row["email"], "status": delivery_status})
+
+    status_by_email = {item["email"]: item["status"] for item in delivery}
+    invoice.status = invoice_delivery_status([item["status"] for item in delivery])
+    invoice.recipients_json = json_text(
+        [
+            {"email": row["email"], "full_name": row["full_name"], "status": status_by_email[row["email"]]}
+            for row in draft["recipients"]
+        ]
+    )
+    invoice.send_count = int(invoice.send_count or 0) + 1
+    invoice.sent_at = now_utc()
+    invoice.sent_by_user_id = admin.user_id
+    invoice.updated_at = now_utc()
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="invoice_sent",
+            entity_type="invoice",
+            entity_id=invoice.id,
+            ip_address=client_ip(request),
+            payload_json=json_text(
+                {
+                    "number": invoice.number,
+                    "period_start": invoice.period_start,
+                    "period_end": invoice.period_end,
+                    "active_users": invoice.active_users,
+                    "total_cents": invoice.total_cents,
+                    "currency": invoice.currency,
+                    "status": invoice.status,
+                    "send_count": invoice.send_count,
+                    "recipients": delivery,
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(invoice)
+    return {"invoice": serialize_invoice(db, invoice), "delivery": delivery}
+
+
+@app.get("/api/system/invoices/{invoice_id}/html")
+def system_invoice_html(
+    invoice_id: str,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    require_system_admin(admin)
+    invoice = db.get(Invoice, invoice_id)
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    subject, html_body, _plain = render_stored_invoice(db.get(Company, invoice.company_id), invoice)
+    return {"subject": subject, "html": html_body}
 
 
 @app.post("/api/system/users")

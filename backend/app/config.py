@@ -105,6 +105,20 @@ class Settings:
     # Retencion (RNF-13): evidencia visual 90 dias, telemetria 12 meses.
     retention_evidence_days: int = int(os.environ.get("RETENTION_EVIDENCE_DAYS", "90"))
     retention_telemetry_days: int = int(os.environ.get("RETENTION_TELEMETRY_DAYS", "365"))
+    # Facturacion mensual a empresas (periodos del dia ancla al dia anterior del mes siguiente).
+    billing_start_date: str = os.environ.get("BILLING_START_DATE", "2026-09-15")
+    billing_unit_price_cents: int = int(os.environ.get("BILLING_UNIT_PRICE_CENTS", "1500"))
+    billing_currency: str = os.environ.get("BILLING_CURRENCY", "USD")
+    billing_due_business_days: int = int(os.environ.get("BILLING_DUE_BUSINESS_DAYS", "4"))
+    billing_contact_email: str = os.environ.get("BILLING_CONTACT_EMAIL", "notificaciones@vyntralab.com")
+    billing_logo_url: str = os.environ.get(
+        "BILLING_LOGO_URL", "https://app.vyntralab.com/brand/vyntra-wordmark-white.png"
+    )
+    # Datos bancarios: solo por entorno. Nunca escribir valores reales en el codigo (repo publico).
+    billing_bank_name: str = os.environ.get("BILLING_BANK_NAME", "")
+    billing_account_number: str = os.environ.get("BILLING_ACCOUNT_NUMBER", "")
+    billing_iban: str = os.environ.get("BILLING_IBAN", "")
+    billing_account_holder: str = os.environ.get("BILLING_ACCOUNT_HOLDER", "")
 
     @property
     def is_development(self) -> bool:

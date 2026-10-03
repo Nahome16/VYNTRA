@@ -35,6 +35,7 @@ const incidentTypeLabels: Record<string, string> = {
   permiso_vacaciones: "Permiso o vacaciones",
   tiempo_perdido: "Falla tecnica",
   system_lost_time: "Falla tecnica",
+  overtime_request: "Solicitud de horas extra",
   general: "Incidencia",
 };
 
@@ -83,6 +84,8 @@ function evidenceRows(incident: Incident) {
   const rows: Array<[string, unknown]> = [
     ["Periodo sugerido", source.periodo_sugerido],
     ["Minutos estimados", source.minutos_estimados],
+    ["Dia solicitado", source.dia_solicitado],
+    ["Hora estimada de salida", source.hora_estimada_salida],
     ["App activa", source.app_activa],
     ["Ventana activa", source.ventana_activa],
     ["Estado de jornada", source.estado_jornada],
@@ -94,6 +97,7 @@ function evidenceRows(incident: Incident) {
 }
 
 function suggestedAdjustmentSeconds(incident: Incident) {
+  if (incident.incident_type === "overtime_request") return 0;
   if (incident.time_adjustment?.seconds) return incident.time_adjustment.seconds;
   const payload = payloadOf(incident);
   const evidence = payload.evidencia_tecnica;
@@ -106,6 +110,12 @@ function suggestedAdjustmentSeconds(incident: Incident) {
 }
 
 function resolutionImpactText(incident: Incident, status: IncidentStatus, t: (text: string) => string) {
+  if (incident.incident_type === "overtime_request") {
+    if (status === "approved") {
+      return t("La solicitud quedara aprobada sin crear ajuste de productividad. Emite el codigo de horas extra desde Ajustes.");
+    }
+    return t("La solicitud quedara cerrada sin autorizar horas extra ni alterar productividad.");
+  }
   const duration = formatDuration(suggestedAdjustmentSeconds(incident));
   if (status === "approved") {
     return `${t("Se agregaran")} ${duration} ${t("como tiempo justificado neutral en productividad y asistencia.")}`;

@@ -2915,7 +2915,31 @@ def incident_title(incident_type: str) -> str:
         "permiso_vacaciones": "Permisos o vacaciones",
         "tiempo_perdido": "Tiempo perdido por sistema",
         "system_lost_time": "Tiempo perdido por sistema",
+        "overtime_request": "Solicitud de horas extra",
     }.get(incident_type, "Incidencia")
+
+
+def overtime_request_incident_payload(payload: dict) -> dict:
+    """Normaliza una solicitud de horas extra para mostrarla en Incidencias."""
+    request_payload = dict(payload)
+    request_payload["tipo"] = "overtime_request"
+    request_payload.setdefault("titulo", "Solicitud de horas extra")
+    request_payload.setdefault("problema", "Horas extra")
+    request_payload["estado_solicitud"] = "pendiente"
+    evidence = request_payload.get("evidencia_tecnica")
+    if not isinstance(evidence, dict):
+        evidence = {}
+    evidence = {
+        **evidence,
+        "dia_solicitado": request_payload.get("dia") or request_payload.get("fecha"),
+        "hora_estimada_salida": request_payload.get("hora_salida"),
+        "estado_jornada": request_payload.get("estado"),
+        "equipo": request_payload.get("equipo"),
+    }
+    request_payload["evidencia_tecnica"] = {
+        key: value for key, value in evidence.items() if value not in (None, "")
+    }
+    return request_payload
 
 
 def find_incident_by_source_event(db: Session, company_id: str, source_event_id: str) -> Incident | None:
@@ -3196,6 +3220,8 @@ def process_agent_event(
         store_consent_record(db, device, event, payload, tz)
     elif event_type in {"incident_submitted", "incidence_created"}:
         store_incident_event(db, device, event, payload, tz)
+    elif event_type == "overtime_requested":
+        store_incident_event(db, device, event, overtime_request_incident_payload(payload), tz)
 
     ensure_web_station_extension_connected(event_type, payload)
     ensure_web_station_password_changed(db, device, event_type, payload)
@@ -6302,7 +6328,7 @@ def resolve_incident(
         raise HTTPException(status_code=400, detail="resolution_notes is required")
     incident.resolved_at = now_utc()
     adjustment = None
-    if incident.status == "approved":
+    if incident.status == "approved" and incident.incident_type != "overtime_request":
         adjustment = upsert_time_adjustment_for_incident(
             db,
             incident,

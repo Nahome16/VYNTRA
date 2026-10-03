@@ -463,6 +463,8 @@ const en: Record<string, string> = {
   "Evidencia tecnica": "Technical evidence",
   "Periodo sugerido": "Suggested period",
   "Minutos estimados": "Estimated minutes",
+  "Dia solicitado": "Requested day",
+  "Hora estimada de salida": "Estimated clock-out time",
   "App activa": "Active app",
   "Ventana activa": "Active window",
   "Estado de jornada": "Shift status",
@@ -471,6 +473,7 @@ const en: Record<string, string> = {
   "Correccion de marcaje": "Clock correction",
   "Permiso o vacaciones": "Leave or vacation",
   "Falla tecnica": "Technical failure",
+  "Solicitud de horas extra": "Overtime request",
   Resolucion: "Resolution",
   Aprobar: "Approve",
   Rechazar: "Reject",
@@ -485,6 +488,10 @@ const en: Record<string, string> = {
     "The associated time adjustment will be voided and will no longer count in reports.",
   "No se creara ajuste de tiempo y la incidencia quedara sin impacto en productividad.":
     "No time adjustment will be created and the incident will not affect productivity.",
+  "La solicitud quedara aprobada sin crear ajuste de productividad. Emite el codigo de horas extra desde Ajustes.":
+    "The request will be approved without creating a productivity adjustment. Issue the overtime code from Settings.",
+  "La solicitud quedara cerrada sin autorizar horas extra ni alterar productividad.":
+    "The request will be closed without authorizing overtime or changing productivity.",
   "El ajuste aparecera como neutral justificado, no como productividad artificial.":
     "The adjustment will appear as justified neutral time, not artificial productivity.",
   "La decision quedara auditada con la nota de revision.":

@@ -234,6 +234,36 @@ def test_web_station_shift_start_does_not_require_extension(db, setup, client):
     assert db.query(Shift).count() == 1
 
 
+def test_overtime_request_creates_pending_incident(db, setup, client):
+    start = datetime.now(timezone.utc) - timedelta(hours=7)
+    event = snapshot_event(
+        start,
+        [],
+        web_station=True,
+        dia=datetime.now(MANAGUA).date().isoformat(),
+        zona_horaria="America/Managua",
+        hora_salida="19:30",
+        motivo="Cierre mensual de reportes",
+        estado="pendiente_autorizacion",
+    )
+    event["tipo"] = "overtime_requested"
+
+    body = post_events(client, [event])
+
+    assert body["ok"] is True
+    db.expire_all()
+    incident = db.query(Incident).one()
+    assert incident.source_event_id == event["id"]
+    assert incident.incident_type == "overtime_request"
+    assert incident.status == "pending"
+    assert incident.title == "Solicitud de horas extra"
+    assert incident.description == "Cierre mensual de reportes"
+    payload = json.loads(incident.payload_json)
+    assert payload["hora_salida"] == "19:30"
+    assert payload["evidencia_tecnica"]["hora_estimada_salida"] == "19:30"
+    assert db.query(ShiftEvent).filter(ShiftEvent.event_type == "overtime_requested").count() == 1
+
+
 def test_unexpected_errors_do_not_leak_details(db, setup, client, monkeypatch):
     def boom(*_args, **_kwargs):
         raise RuntimeError("psycopg internal detail: password=hunter2")

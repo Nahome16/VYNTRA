@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { classifyLoginError, isApiError, retryAfterMinutes } from "@/lib/api";
+import styles from "./login-screen.module.css";
 
 const rememberEmailKey = "vyntra.admin.rememberEmail";
 
@@ -26,8 +27,7 @@ function loginGreeting(t: (text: string) => string, language: "es" | "en") {
   })
     .format(now)
     .replace(",", "");
-  const time = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
-  const timestamp = `${dateText.charAt(0).toUpperCase()}${dateText.slice(1)} · ${time}`;
+  const timestamp = `${dateText.charAt(0).toUpperCase()}${dateText.slice(1)}`;
   if (hour < 12) {
     return { full: t("Buenos días."), first: t("Buenos"), second: t("días."), timestamp };
   }
@@ -46,11 +46,19 @@ function formatCountdown(seconds: number) {
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+function formatClock(date: Date) {
+  return [date.getHours(), date.getMinutes(), date.getSeconds()].map((part) => String(part).padStart(2, "0")).join(":");
+}
+
+function cx(...names: Array<string | false | null | undefined>) {
+  return names.filter(Boolean).join(" ");
+}
+
 function MailIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <path d="M4 7.5h16v9H4z" />
-      <path d="m4.5 8 7.5 5.5L19.5 8" />
+      <rect x="3.5" y="5.5" width="17" height="13" rx="2.5" />
+      <path d="m4.5 7.5 7.5 5.5 7.5-5.5" />
     </svg>
   );
 }
@@ -58,28 +66,89 @@ function MailIcon() {
 function LockIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <path d="M7 10h10v9H7z" />
-      <path d="M9 10V7a3 3 0 0 1 6 0v3" />
+      <rect x="5" y="10.5" width="14" height="9.5" rx="2.5" />
+      <path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" />
     </svg>
   );
 }
 
-function EyeIcon() {
+function EyeIcon({ open }: { open: boolean }) {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <path d="M3.5 12s3-5 8.5-5 8.5 5 8.5 5-3 5-8.5 5-8.5-5-8.5-5Z" />
-      <path d="M12 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z" />
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+      <circle cx="12" cy="12" r="2.75" />
+      {open ? null : <path d="M4 4l16 16" />}
     </svg>
   );
 }
 
-function CalendarIcon() {
+function SunIcon() {
   return (
     <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <path d="M5 7h14v12H5z" />
-      <path d="M8 5v4M16 5v4M5 11h14" />
-      <path d="m8.5 15 2 2 4-4" />
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4" />
     </svg>
+  );
+}
+
+function MoonIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+      <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" />
+    </svg>
+  );
+}
+
+function GlobeIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M3.5 12h17M12 3.5c2.4 2.4 3.5 5.2 3.5 8.5s-1.1 6.1-3.5 8.5c-2.4-2.4-3.5-5.2-3.5-8.5s1.1-6.1 3.5-8.5Z" />
+    </svg>
+  );
+}
+
+function ClockInIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+      <circle cx="12" cy="13" r="7.5" />
+      <path d="M12 9.5V13l2.5 1.5M9.5 2.5h5" />
+    </svg>
+  );
+}
+
+function ArrowIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+function AlertIcon({ tone }: { tone: LoginAlert["tone"] }) {
+  if (tone === "success") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="m8.5 12.5 2.5 2.5 4.5-5" />
+      </svg>
+    );
+  }
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d={tone === "info" ? "M12 11v5M12 8h.01" : "M12 7.5v5M12 16h.01"} />
+    </svg>
+  );
+}
+
+function BrandMark({ className }: { className?: string }) {
+  return (
+    <span className={cx(styles.mark, className)} aria-hidden>
+      <svg viewBox="0 0 24 24" focusable="false">
+        <path d="M5 6.5 12 18l7-11.5" />
+      </svg>
+    </span>
   );
 }
 
@@ -97,9 +166,11 @@ export function LoginScreen() {
   const [greeting, setGreeting] = useState(() => defaultLoginGreeting(t));
   const [lockedUntil, setLockedUntil] = useState<number | null>(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
+  const [liveClock, setLiveClock] = useState("");
   const [loading, setLoading] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+  const refocusPassword = useRef(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -119,11 +190,17 @@ export function LoginScreen() {
     return () => window.clearTimeout(timer);
   }, [language, t]);
 
+  // Reloj en vivo del panel de marca; también alimenta la cuenta regresiva del bloqueo.
   useEffect(() => {
-    if (!lockedUntil) return undefined;
-    const interval = window.setInterval(() => setClockNow(Date.now()), 1000);
+    const tick = () => {
+      const now = new Date();
+      setClockNow(now.getTime());
+      setLiveClock(formatClock(now));
+    };
+    tick();
+    const interval = window.setInterval(tick, 1000);
     return () => window.clearInterval(interval);
-  }, [lockedUntil]);
+  }, []);
 
   const lockSeconds = lockedUntil ? Math.max(0, Math.ceil((lockedUntil - clockNow) / 1000)) : 0;
   const locked = lockSeconds > 0;
@@ -141,6 +218,13 @@ export function LoginScreen() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [locked, lockedUntil]);
+
+  // Los campos se deshabilitan mientras se valida; el foco se devuelve al reactivarse.
+  useEffect(() => {
+    if (busy || !refocusPassword.current) return;
+    refocusPassword.current = false;
+    passwordRef.current?.focus();
+  }, [busy]);
 
   function persistRememberedEmail(cleanEmail: string) {
     try {
@@ -213,7 +297,7 @@ export function LoginScreen() {
             : t("Espera unos minutos antes de volver a intentar."),
           field: "password",
         });
-        passwordRef.current?.focus();
+        refocusPassword.current = true;
       } else if (kind === "server") {
         setAlert({
           tone: "error",
@@ -233,7 +317,7 @@ export function LoginScreen() {
           message: t("Revisa el correo y la contraseña. El correo se conserva para que puedas corregir solo lo necesario."),
           field: "password",
         });
-        passwordRef.current?.focus();
+        refocusPassword.current = true;
       } else {
         setAlert({
           tone: "error",
@@ -246,177 +330,181 @@ export function LoginScreen() {
     }
   }
 
+  const themeLabel = theme === "dark" ? t("Cambiar a modo claro") : t("Cambiar a modo oscuro");
+
   return (
-    <main className="login-shell">
-      <div className="login-aurora" aria-hidden />
-      <div className="login-floating-prefs" aria-label={t("Preferencias")}>
-        <button
-          type="button"
-          className="pref-button icon"
-          onClick={toggleTheme}
-          title={theme === "dark" ? t("Cambiar a modo claro") : t("Cambiar a modo oscuro")}
-          aria-label={theme === "dark" ? t("Cambiar a modo claro") : t("Cambiar a modo oscuro")}
-        >
-          {theme === "dark" ? "CL" : "OS"}
-        </button>
-        <button
-          type="button"
-          className="pref-button icon lang"
-          onClick={toggleLanguage}
-          title={t("Cambiar idioma")}
-          aria-label={t("Cambiar idioma")}
-        >
-          {language === "es" ? "EN" : "ES"}
-        </button>
-      </div>
-      <section className="login-card" aria-label={t("Acceso administrativo")}>
-      <aside className="login-aside" aria-hidden>
-        <div className="login-aside-aurora" aria-hidden>
-          <i />
-          <i />
-          <i />
-        </div>
-        <svg className="login-ridges" viewBox="0 0 470 560" preserveAspectRatio="xMidYMid slice" aria-hidden>
-          <defs>
-            <linearGradient id="vyntra-login-hill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stopColor="#1b6f77" stopOpacity="0.85" />
-              <stop offset="1" stopColor="#081d20" stopOpacity="0" />
-            </linearGradient>
-            <filter id="vyntra-login-glow">
-              <feGaussianBlur stdDeviation="3" />
-            </filter>
-          </defs>
-          <path d="M-20 190 C70 170 120 150 180 138 C230 128 262 104 300 112 C350 122 400 170 490 178 L490 560 L-20 560Z" fill="url(#vyntra-login-hill)" opacity="0.75" />
-          <path d="M-30 250 C80 230 150 214 220 200 C290 186 330 200 380 226 C420 246 450 250 500 252 L500 560 L-30 560Z" fill="url(#vyntra-login-hill)" opacity="0.55" />
-          <path d="M0 190 C70 170 120 150 180 138 C230 128 262 104 300 112 C350 122 400 170 470 178" fill="none" stroke="#2ec4cb" strokeWidth="3" filter="url(#vyntra-login-glow)" opacity="0.8" />
-          <path d="M0 190 C70 170 120 150 180 138 C230 128 262 104 300 112 C350 122 400 170 470 178" fill="none" stroke="#b8f1f3" strokeWidth="1.2" opacity="0.9" />
-        </svg>
-        <div className="login-aside-brand">
-          <span className="brand-mark">V</span>
-          <div>
+    <main className={styles.shell}>
+      <aside className={styles.brand} aria-hidden>
+        <div className={styles.glow} />
+        <div className={styles.grid} />
+        <div className={styles.brandTop}>
+          <BrandMark />
+          <div className={styles.wordmark}>
             <strong>VYNTRA</strong>
             <small>{t("Control administrativo")}</small>
           </div>
         </div>
-        <div className="login-wave" aria-hidden />
-        <div className="login-aside-copy">
-          <span>{greeting.timestamp}</span>
-          <h2 aria-label={greeting.full}>
-            {greeting.first}
-            <strong>{greeting.second}</strong>
+
+        <div className={styles.brandCopy}>
+          <span className={styles.date}>{greeting.timestamp}</span>
+          <h2>
+            {greeting.first} <em>{greeting.second}</em>
           </h2>
           <p>{t("Revisa la jornada de tu equipo, las incidencias pendientes y los reportes de tu empresa.")}</p>
+          <ul className={styles.features}>
+            <li>{t("Asistencia en tiempo real")}</li>
+            <li>{t("Incidencias y horas extra")}</li>
+            <li>{t("Reportes por empresa")}</li>
+          </ul>
+        </div>
+
+        <div className={styles.brandFoot}>
+          <span className={styles.clock}>{liveClock || "--:--:--"}</span>
+          <span className={styles.clockLabel}>
+            <i className={styles.liveDot} />
+            {t("Hora local")}
+          </span>
         </div>
       </aside>
 
-      <section className="login-panel">
-        <div className="login-pref-row">
-          <button
-            type="button"
-            className="pref-button icon"
-            onClick={toggleTheme}
-            title={theme === "dark" ? t("Cambiar a modo claro") : t("Cambiar a modo oscuro")}
-            aria-label={theme === "dark" ? t("Cambiar a modo claro") : t("Cambiar a modo oscuro")}
-          >
-            {theme === "dark" ? "CL" : "OS"}
-          </button>
-          <button
-            type="button"
-            className="pref-button icon lang"
-            onClick={toggleLanguage}
-            title={t("Cambiar idioma")}
-            aria-label={t("Cambiar idioma")}
-          >
-            {language === "es" ? "EN" : "ES"}
-          </button>
-        </div>
-        <div className="login-mobile-brand">
-          <span className="brand-mark">V</span>
-          <div>
+      <section className={styles.panel} aria-label={t("Acceso administrativo")}>
+        <header className={styles.panelTop}>
+          <div className={styles.mobileBrand}>
+            <BrandMark className={styles.markSmall} />
             <strong>VYNTRA</strong>
-            <small>{t("Control administrativo")}</small>
           </div>
-        </div>
-        <h1>{t("Inicia sesión")}</h1>
-        <p>{t("Usa el correo con el que te invitaron al panel.")}</p>
-        {alert ? (
-          <div
-            className={`login-alert ${alert.tone}`}
-            id="login-alert"
-            role={alert.tone === "error" || alert.tone === "warning" ? "alert" : "status"}
-            aria-live={alert.tone === "error" || alert.tone === "warning" ? "assertive" : "polite"}
-          >
-            <strong>{alert.title}</strong>
-            <span>{alertMessage}</span>
+          <div className={styles.prefs} aria-label={t("Preferencias")}>
+            <button type="button" className={styles.prefButton} onClick={toggleTheme} title={themeLabel} aria-label={themeLabel}>
+              {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+            </button>
+            <button
+              type="button"
+              className={cx(styles.prefButton, styles.prefLang)}
+              onClick={toggleLanguage}
+              title={t("Cambiar idioma")}
+              aria-label={t("Cambiar idioma")}
+            >
+              <GlobeIcon />
+              <span>{language === "es" ? "EN" : "ES"}</span>
+            </button>
           </div>
-        ) : null}
-        <form onSubmit={handleLogin} className="login-form" noValidate>
-          <label className="login-field">
-            <span className="login-input-icon"><MailIcon /></span>
-            <span className="login-field-copy">
-              <span>{t("Correo")}</span>
-            <input
-              ref={emailRef}
-              type="email"
-              name="email"
-              value={email}
-              onChange={(event) => {
-                setEmail(event.target.value);
-                if (alert?.field === "email") setAlert(null);
-              }}
-              autoComplete="username"
-              inputMode="email"
-              placeholder="nombre@empresa.com"
-              disabled={busy}
-              aria-invalid={alert?.field === "email" ? "true" : undefined}
-              aria-describedby={alert?.field === "email" ? "login-alert" : undefined}
-              required
-            />
-            </span>
-          </label>
-          <label className="login-field">
-            <span className="login-input-icon"><LockIcon /></span>
-            <span className="login-field-copy">
-              <span>{t("Contraseña")}</span>
-            <div className="login-password-wrap">
-              <input
-                ref={passwordRef}
-                type={showPassword ? "text" : "password"}
-                name="password"
-                value={password}
-                onChange={(event) => {
-                  setPassword(event.target.value);
-                  if (alert?.field === "password") setAlert(null);
-                }}
-                onKeyDown={updateCapsLock}
-                onKeyUp={updateCapsLock}
-                onBlur={() => setCapsLock(false)}
-                autoComplete="current-password"
-                placeholder={t("Tu contraseña")}
-                disabled={busy}
-                aria-invalid={alert?.field === "password" ? "true" : undefined}
-                aria-describedby={alert?.field === "password" ? "login-alert" : capsLock ? "caps-lock-warning" : undefined}
-                required
-              />
-              <button
-                type="button"
-                className="password-toggle"
-                onClick={() => setShowPassword((current) => !current)}
-                disabled={busy}
-                aria-label={showPassword ? t("Ocultar contraseña") : t("Mostrar contraseña")}
-              >
-                <EyeIcon />
-              </button>
+        </header>
+
+        <div className={styles.formWrap}>
+          <div className={styles.heading}>
+            <h1>{t("Inicia sesión")}</h1>
+            <p>{t("Usa el correo con el que te invitaron al panel.")}</p>
+          </div>
+
+          {alert ? (
+            <div
+              className={cx(styles.alert, styles[alert.tone])}
+              id="login-alert"
+              role={alert.tone === "error" || alert.tone === "warning" ? "alert" : "status"}
+              aria-live={alert.tone === "error" || alert.tone === "warning" ? "assertive" : "polite"}
+            >
+              <AlertIcon tone={alert.tone} />
+              <div>
+                <strong>{alert.title}</strong>
+                <span>{alertMessage}</span>
+              </div>
             </div>
-            </span>
-          </label>
-          {capsLock ? (
-            <p className="caps-warning" id="caps-lock-warning" role="status">
-              {t("Bloq Mayús está activado.")}
-            </p>
           ) : null}
-          <div className="login-options">
-            <label className="remember-row">
+
+          <form onSubmit={handleLogin} className={styles.form} noValidate>
+            <div className={styles.field}>
+              <label htmlFor="login-email">{t("Correo")}</label>
+              <div className={styles.control}>
+                <span className={styles.controlIcon}>
+                  <MailIcon />
+                </span>
+                <input
+                  ref={emailRef}
+                  id="login-email"
+                  type="email"
+                  name="email"
+                  value={email}
+                  onChange={(event) => {
+                    setEmail(event.target.value);
+                    if (alert?.field === "email") setAlert(null);
+                  }}
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  inputMode="email"
+                  placeholder="nombre@empresa.com"
+                  disabled={busy}
+                  aria-invalid={alert?.field === "email" ? "true" : undefined}
+                  aria-describedby={alert?.field === "email" ? "login-alert" : undefined}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className={styles.field}>
+              <div className={styles.labelRow}>
+                <label htmlFor="login-password">{t("Contraseña")}</label>
+                <button
+                  type="button"
+                  className={styles.textButton}
+                  onClick={() => setShowPasswordHelp((current) => !current)}
+                  aria-expanded={showPasswordHelp}
+                  aria-controls="login-password-help"
+                >
+                  {t("¿Olvidaste tu contraseña?")}
+                </button>
+              </div>
+              <div className={styles.control}>
+                <span className={styles.controlIcon}>
+                  <LockIcon />
+                </span>
+                <input
+                  ref={passwordRef}
+                  id="login-password"
+                  type={showPassword ? "text" : "password"}
+                  name="password"
+                  value={password}
+                  onChange={(event) => {
+                    setPassword(event.target.value);
+                    if (alert?.field === "password") setAlert(null);
+                  }}
+                  onKeyDown={updateCapsLock}
+                  onKeyUp={updateCapsLock}
+                  onBlur={() => setCapsLock(false)}
+                  autoComplete="current-password"
+                  placeholder={t("Tu contraseña")}
+                  disabled={busy}
+                  aria-invalid={alert?.field === "password" ? "true" : undefined}
+                  aria-describedby={alert?.field === "password" ? "login-alert" : capsLock ? "caps-lock-warning" : undefined}
+                  required
+                />
+                <button
+                  type="button"
+                  className={styles.reveal}
+                  onClick={() => setShowPassword((current) => !current)}
+                  disabled={busy}
+                  aria-pressed={showPassword}
+                  aria-label={showPassword ? t("Ocultar contraseña") : t("Mostrar contraseña")}
+                  title={showPassword ? t("Ocultar contraseña") : t("Mostrar contraseña")}
+                >
+                  <EyeIcon open={!showPassword} />
+                </button>
+              </div>
+              {capsLock ? (
+                <p className={styles.caps} id="caps-lock-warning" role="status">
+                  {t("Bloq Mayús está activado.")}
+                </p>
+              ) : null}
+            </div>
+
+            {showPasswordHelp ? (
+              <div className={styles.help} id="login-password-help">
+                <strong>{t("Recuperación administrada")}</strong>
+                <p>{t("Pide a un administrador del sistema que genere una contraseña temporal nueva desde Sistema.")}</p>
+              </div>
+            ) : null}
+
+            <label className={styles.remember}>
               <input
                 type="checkbox"
                 checked={rememberEmail}
@@ -433,42 +521,47 @@ export function LoginScreen() {
               />
               <span>{t("Recordar mi correo")}</span>
             </label>
-            <button type="button" onClick={() => setShowPasswordHelp((current) => !current)}>
-              {t("¿Olvidaste tu contraseña?")}
+
+            <button type="submit" className={styles.submit} disabled={busy} aria-busy={loading || undefined}>
+              {loading ? (
+                <>
+                  <span className={styles.spinner} aria-hidden />
+                  {t("Validando...")}
+                </>
+              ) : locked ? (
+                `${t("Disponible en")} ${formatCountdown(lockSeconds)}`
+              ) : (
+                t("Iniciar sesión")
+              )}
             </button>
+          </form>
+
+          <div className={styles.divider}>
+            <span>{t("¿No eres administrador?")}</span>
           </div>
-          {showPasswordHelp ? (
-            <div className="login-help-box">
-              <strong>{t("Recuperación administrada")}</strong>
-              <p>{t("Pide a un administrador del sistema que genere una contraseña temporal nueva desde Sistema.")}</p>
-            </div>
-          ) : null}
-          <button type="submit" disabled={busy}>
-            {loading ? (
-              <>
-                <span className="login-spinner" aria-hidden />
-                {t("Validando...")}
-              </>
-            ) : locked ? (
-              `${t("Disponible en")} ${formatCountdown(lockSeconds)}`
-            ) : (
-              t("Iniciar sesión")
-            )}
-          </button>
-        </form>
-        <div className="login-station-cta">
-          <span>{t("¿No eres administrador?")}</span>
-          <a href="/estacion">
-            <CalendarIcon />
-            {t("Marcar jornada en la Estación web")}
+
+          <a className={styles.station} href="/estacion">
+            <span className={styles.stationIcon}>
+              <ClockInIcon />
+            </span>
+            <span className={styles.stationCopy}>
+              <strong>{t("Marcar jornada en la Estación web")}</strong>
+              <small>{t("Registra tu entrada y salida sin entrar al panel.")}</small>
+            </span>
+            <span className={styles.stationArrow}>
+              <ArrowIcon />
+            </span>
           </a>
         </div>
+
+        <footer className={styles.footer}>
+          <span>{t("Sesión protegida por empresa y rol")}</span>
+          <nav aria-label={t("Enlaces legales")}>
+            <a href="/privacidad">{t("Privacidad")}</a>
+            <span>© {new Date().getFullYear()} VYNTRA</span>
+          </nav>
+        </footer>
       </section>
-      </section>
-      <footer className="login-footer-links">
-        <a href="/privacidad">{t("Privacidad")}</a>
-        <span>© VYNTRA</span>
-      </footer>
     </main>
   );
 }

@@ -126,7 +126,6 @@
   color-scheme: dark;
 }
 
-:root[data-theme="dark"] .login-form button,
 :root[data-theme="dark"] .secondary-button {
   color: #0b1020;
   font-weight: 700;
@@ -251,46 +250,9 @@ textarea {
 }
 
 /* ==========================================================================
-   Acceso
+   Encabezado de pagina
    ========================================================================== */
 
-.login-shell {
-  display: grid;
-  position: relative;
-  min-height: 100vh;
-  place-items: center;
-  overflow: hidden;
-  padding: 24px;
-  background: var(--canvas);
-}
-
-.login-pref-row {
-  display: flex;
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  gap: 6px;
-}
-
-.login-pref-row .pref-button {
-  flex: 0 0 auto;
-  min-height: 30px;
-  padding: 0 10px;
-  font-size: 12px;
-}
-
-.login-panel {
-  position: relative;
-  width: min(432px, 100%);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  box-shadow: var(--shadow-lg);
-  padding: 40px 38px 34px;
-  animation: rise 0.5s var(--ease) both;
-}
-
-.login-panel h1,
 .topbar h1 {
   margin: 18px 0 6px;
   color: var(--ink);
@@ -300,7 +262,6 @@ textarea {
   line-height: 1.15;
 }
 
-.login-panel p,
 .topbar p {
   margin: 0;
   color: var(--muted);
@@ -323,13 +284,6 @@ textarea {
   line-height: 1;
 }
 
-.login-form {
-  display: grid;
-  gap: 16px;
-  margin-top: 28px;
-}
-
-.login-form label,
 .filter-row label,
 .settings-filter label,
 .detail-date-filter label,
@@ -383,12 +337,6 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
-.login-form input {
-  height: 46px;
-  padding: 0 14px;
-}
-
-.login-form button,
 .secondary-button {
   display: inline-flex;
   align-items: center;
@@ -407,16 +355,10 @@ textarea:focus-visible {
     box-shadow 0.16s var(--ease);
 }
 
-.login-form button {
-  margin-top: 6px;
-}
-
-.login-form button:hover:not(:disabled),
 .secondary-button:hover:not(:disabled) {
   background: var(--primary-dark);
 }
 
-.login-form button:active:not(:disabled),
 .secondary-button:active:not(:disabled) {
   transform: translateY(0);
 }
@@ -3300,7 +3242,6 @@ tbody tr:hover {
   font-size: 12px;
 }
 
-
 /* ==========================================================================
    Gráficas
    ========================================================================== */
@@ -4556,7 +4497,6 @@ tbody tr:hover {
 }
 
 @media (max-width: 420px) {
-  .login-panel,
   .panel,
   .settings-board,
   .attendance-card,
@@ -4570,7 +4510,6 @@ tbody tr:hover {
   .chips {gap: 6px;
   }
 }
-
 
 /* Ajustes en pantallas pequeñas: nada debe desbordar el ancho del teléfono.
    Los hijos flex necesitan min-width: 0 o se niegan a encogerse. */
@@ -4893,16 +4832,6 @@ tbody tr:hover {
     padding: 10px 14px;
   }
 
-  .login-shell {
-    padding: 16px;
-  }
-
-  .login-panel {
-    border-radius: var(--r);
-    padding: 28px 20px 24px;
-  }
-
-  .login-panel h1,
   .topbar h1 {
     font-size: 23px;
   }
@@ -4928,7 +4857,6 @@ tbody tr:hover {
     font-size: 16px;
   }
 
-  .login-form input,
   .date-range-control input,
   .employee-search-actions input,
   .filter-row input,

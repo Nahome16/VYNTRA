@@ -1,6 +1,6 @@
 /*
- * Acceso administrativo: marca en negro con acentos azules y panel de
- * formulario que sigue el tema (claro u oscuro).
+ * Pantallas de acceso (panel administrativo y estación web): marca en negro
+ * con acentos azules y panel de formulario que sigue el tema (claro u oscuro).
  */
 
 .shell {
@@ -799,6 +799,159 @@
   transform: translateX(3px);
 }
 
+/* Piezas propias de la estación web */
+
+.brandActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 28px;
+}
+
+.brandButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid rgba(148, 178, 230, 0.28);
+  border-radius: 9px;
+  background: rgba(9, 14, 26, 0.86);
+  color: #dbe6f7;
+  font-size: 13.5px;
+  font-weight: 550;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.brandButton:hover {
+  border-color: rgba(148, 178, 230, 0.5);
+  background: rgba(22, 32, 54, 0.92);
+}
+
+.brandButton svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--lg-line);
+  border-radius: 12px;
+  background: var(--lg-card);
+}
+
+.cardButton {
+  flex: none;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--lg-line-strong);
+  border-radius: 8px;
+  background: var(--lg-bg);
+  color: var(--lg-ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.cardButton:hover {
+  border-color: var(--lg-focus);
+  background: var(--lg-field-hover);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(22, 163, 74, 0.1);
+  color: #15803d;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chip::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+:global(html[data-theme="dark"]) .chip {
+  background: rgba(74, 222, 128, 0.12);
+  color: #86efac;
+}
+
+.resetBox {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--lg-line);
+  border-radius: 12px;
+  background: var(--lg-card);
+}
+
+.resetBox > strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--lg-ink);
+}
+
+.resetBox .control input {
+  padding-left: 14px;
+}
+
+.resetActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.secondaryButton {
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--lg-line-strong);
+  border-radius: 10px;
+  background: var(--lg-bg);
+  color: var(--lg-ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.secondaryButton:hover:not(:disabled) {
+  border-color: var(--lg-faint);
+  background: var(--lg-field-hover);
+}
+
+.resetBox .submit {
+  width: auto;
+  height: 40px;
+  margin: 0;
+  padding: 0 16px;
+  font-size: 13.5px;
+}
+
+.mobileOnly {
+  display: none;
+}
+
 /* Pie */
 
 .footer {
@@ -854,6 +1007,11 @@
 
   .mobileBrand {
     display: inline-flex;
+  }
+
+  .mobileOnly {
+    display: inline-flex;
+    margin-top: 14px;
   }
 
   .formWrap {

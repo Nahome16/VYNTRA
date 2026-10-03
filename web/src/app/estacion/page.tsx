@@ -1,7 +1,20 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState, type CSSProperties } from "react";
-import { VyntraMark } from "@/components/brand";
+import {
+  AlertIcon,
+  ArrowIcon,
+  ClockInIcon,
+  DashboardIcon,
+  EyeIcon,
+  GlobeIcon,
+  LiveClock,
+  LockIcon,
+  MailIcon,
+  PuzzleIcon,
+} from "@/components/auth-icons";
+import authStyles from "@/components/auth-layout.module.css";
+import { VyntraMark, VyntraWordmark } from "@/components/brand";
 import { classifyLoginError, isApiError, requestJson, retryAfterMinutes } from "@/lib/api";
 import { zonedDateISO } from "@/lib/dates";
 import { useDialog } from "@/lib/use-dialog";
@@ -64,70 +77,86 @@ const stationLoginCopy = {
   es: {
     languageToggleLabel: "Cambiar login a ingles",
     ariaStation: "VYNTRA Estacion",
-    brandSubtitle: "Estacion de marcaje",
+    brandSubtitle: "Estación de marcaje",
     hero: "Marca tu jornada de forma simple y segura.",
-    howWorks: "Como funciona",
-    installExtension: "Instalar extension",
-    updateExtension: "Actualizar extension",
-    signInTitle: "Iniciar sesion",
-    emailLabel: "Correo electronico",
-    emailPlaceholder: "Correo electronico",
-    passwordLabel: "Contrasena",
-    passwordPlaceholder: "Tu contrasena",
-    remember: "Recordarme",
-    forgotPassword: "Olvidaste tu contrasena?",
+    heroLead: "Marca tu jornada,",
+    heroEmphasis: "simple y segura.",
+    heroCopy: "Registra entrada, descansos, almuerzo y salida desde el navegador, con la zona horaria de tu equipo.",
+    features: ["Entrada, descansos y salida", "Zona horaria por colaborador", "Evidencias opcionales del navegador"],
+    localTime: "Hora local",
+    subtitle: "Usa tus credenciales laborales para marcar tu jornada.",
+    showPassword: "Mostrar contraseña",
+    hidePassword: "Ocultar contraseña",
+    resetTitle: "Recuperar contraseña",
+    cancel: "Cancelar",
+    extensionTitle: "Extensión del navegador",
+    adminPrompt: "¿Eres administrador?",
+    adminLink: "Ir al panel administrativo",
+    adminHint: "Revisa equipos, incidencias y reportes.",
+    privacy: "Privacidad",
+    secured: "Sesión protegida por empresa",
+    howWorks: "Cómo funciona",
+    installExtension: "Instalar extensión",
+    updateExtension: "Actualizar extensión",
+    signInTitle: "Inicia sesión",
+    emailLabel: "Correo electrónico",
+    emailPlaceholder: "nombre@empresa.com",
+    passwordLabel: "Contraseña",
+    passwordPlaceholder: "Tu contraseña",
+    remember: "Recordar mi correo",
+    forgotPassword: "¿Olvidaste tu contraseña?",
     verifying: "Verificando...",
     enter: "Entrar",
     resetEmail: "Correo",
-    sendCode: "Enviar codigo",
-    resetCode: "Codigo",
-    resetPassword: "Nueva contrasena",
+    sendCode: "Enviar código",
+    resetCode: "Código",
+    resetPassword: "Nueva contraseña",
     resetSubmit: "Restablecer",
     close: "Cerrar",
-    extensionReady: "✓ Extension conectada",
+    extensionReady: "Extensión conectada",
     extensionOutdated: (version: string | null) => `Actualizacion disponible · v${version || "anterior"}`,
-    extensionRequired: "Extension opcional para evidencias del navegador",
+    extensionRequired: "Opcional: agrega evidencias del navegador",
     install: "Instalar",
     update: "Actualizar",
-    howModalEyebrow: "Estacion de marcaje",
-    howModalTitle: "Como funciona",
-    howModalIntro: "La estacion registra tu jornada laboral y mantiene evidencia de actividad mientras estas marcado como trabajando.",
+    howModalEyebrow: "Estación de marcaje",
+    howModalTitle: "Cómo funciona",
+    howModalIntro: "La estación registra tu jornada laboral y mantiene evidencia de actividad mientras estás marcado como trabajando.",
     howModalItems: [
-      "Inicias sesion con tus credenciales laborales y marcas entrada, descansos, almuerzo y salida.",
-      "La extension es opcional y agrega capturas autorizadas y actividad de navegador cuando esta conectada.",
+      "Inicias sesión con tus credenciales laborales y marcas entrada, descansos, almuerzo y salida.",
+      "La extensión es opcional y agrega capturas autorizadas y actividad de navegador cuando está conectada.",
       "Durante la jornada activa toma capturas autorizadas cada 5 minutos como respaldo de trabajo.",
-      "La extension puede seguir registrando actividad del navegador si cierras la pestana, pero debes volver a la estacion para break, lunch o finalizar jornada.",
-      "La zona horaria se selecciona dentro de la estacion despues de iniciar sesion.",
+      "La extensión puede seguir registrando actividad del navegador si cierras la pestaña, pero debes volver a la estación para break, lunch o finalizar jornada.",
+      "La zona horaria se selecciona dentro de la estación después de iniciar sesión.",
     ],
-    howModalNote: "Puedes marcar jornada sin extension; instalala cuando necesites evidencias del navegador.",
-    extensionRequiredEyebrow: "Extension opcional",
-    extensionNewVersion: `Nueva version ${latestExtensionVersion}`,
-    extensionModalTitle: `Nueva version ${latestExtensionVersion}`,
-    extensionModalIntro: "Instala o actualiza VYNTRA Browser para usar la estacion de marcaje con actividad en otras pestanas y capturas autorizadas cada 5 minutos durante la jornada activa.",
+    howModalNote: "Puedes marcar jornada sin extensión; instálala cuando necesites evidencias del navegador.",
+    extensionRequiredEyebrow: "Extensión opcional",
+    extensionNewVersion: `Nueva versión ${latestExtensionVersion}`,
+    extensionModalTitle: `Nueva versión ${latestExtensionVersion}`,
+    extensionModalIntro: "Instala o actualiza VYNTRA Browser para usar la estación de marcaje con actividad en otras pestañas y capturas autorizadas cada 5 minutos durante la jornada activa.",
     extensionSteps: [
-      "Descarga el archivo de actualizacion.",
+      "Descarga el archivo de actualización.",
       "Descomprime el ZIP en una carpeta local.",
-      "Abre Chrome o Edge y entra a la pagina de extensiones.",
-      "Activa el modo de desarrollador y reemplaza la extension actual.",
-      "Vuelve a esta estacion y espera a que el estado cambie a actualizado.",
+      "Abre Chrome o Edge y entra a la página de extensiones.",
+      "Activa el modo de desarrollador y reemplaza la extensión actual.",
+      "Vuelve a esta estación y espera a que el estado cambie a actualizado.",
     ],
-    downloadUpdate: "Descargar actualizacion",
-    extensionModalNote: "La estacion permite marcar sin extension; esta version solo mejora las evidencias del navegador.",
+    downloadUpdate: "Descargar actualización",
+    extensionModalNote: "La estación permite marcar sin extensión; esta versión solo mejora las evidencias del navegador.",
     status: {
       verifyingCredentials: "Verificando credenciales...",
-      signedIn: "Sesion iniciada",
-      invalidCredentials: "Correo o contrasena invalida",
-      resetCode: (code: string) => `Codigo de prueba: ${code}`,
-      resetRequested: "Si el correo existe, se envio un codigo.",
-      resetRequestFailed: "No se pudo solicitar recuperacion.",
-      resetConfirmed: "Contrasena restablecida. Ingresa con la nueva contrasena.",
-      resetInvalid: "Codigo invalido o vencido.",
+      signedIn: "Sesión iniciada",
+      invalidCredentials: "Correo o contraseña incorrectos.",
+      resetCode: (code: string) => `Código de prueba: ${code}`,
+      resetRequested: "Si el correo existe, se envió un código.",
+      resetRequestFailed: "No se pudo solicitar la recuperación.",
+      resetConfirmed: "Contraseña restablecida. Ingresa con la nueva contraseña.",
+      resetInvalid: "Código inválido o vencido.",
       tooManyAttempts: (minutes: number | null) =>
         minutes
           ? `Demasiados intentos. Espera ${minutes} min antes de volver a intentar.`
           : "Demasiados intentos. Espera unos minutos antes de volver a intentar.",
-      serverError: "El servidor no esta disponible. Intenta de nuevo en unos minutos.",
-      networkError: "Sin conexion con el servidor. Revisa tu red e intenta de nuevo.",
+      serverError: "El servidor no está disponible. Intenta de nuevo en unos minutos.",
+      networkError: "Sin conexión con el servidor. Revisa tu red e intenta de nuevo.",
       unknownError: "No se pudo iniciar sesion. Intenta de nuevo.",
     },
   },
@@ -136,15 +165,31 @@ const stationLoginCopy = {
     ariaStation: "VYNTRA Time Clock",
     brandSubtitle: "Time clock station",
     hero: "Clock in and out simply and securely.",
+    heroLead: "Clock in,",
+    heroEmphasis: "simply and securely.",
+    heroCopy: "Record start, breaks, lunch and clock-out from your browser, in your team's time zone.",
+    features: ["Start, breaks and clock-out", "Time zone per employee", "Optional browser evidence"],
+    localTime: "Local time",
+    subtitle: "Use your work credentials to record your workday.",
+    showPassword: "Show password",
+    hidePassword: "Hide password",
+    resetTitle: "Reset password",
+    cancel: "Cancel",
+    extensionTitle: "Browser extension",
+    adminPrompt: "Are you an administrator?",
+    adminLink: "Go to the admin panel",
+    adminHint: "Review teams, incidents and reports.",
+    privacy: "Privacy",
+    secured: "Session scoped by company",
     howWorks: "How it works",
     installExtension: "Install extension",
     updateExtension: "Update extension",
     signInTitle: "Sign in",
     emailLabel: "Email address",
-    emailPlaceholder: "Email address",
+    emailPlaceholder: "name@company.com",
     passwordLabel: "Password",
     passwordPlaceholder: "Your password",
-    remember: "Remember me",
+    remember: "Remember my email",
     forgotPassword: "Forgot your password?",
     verifying: "Verifying...",
     enter: "Enter",
@@ -154,9 +199,9 @@ const stationLoginCopy = {
     resetPassword: "New password",
     resetSubmit: "Reset",
     close: "Close",
-    extensionReady: "✓ Extension connected",
+    extensionReady: "Extension connected",
     extensionOutdated: (version: string | null) => `Update available · v${version || "previous"}`,
-    extensionRequired: "Optional extension for browser evidence",
+    extensionRequired: "Optional: adds browser evidence",
     install: "Install",
     update: "Update",
     howModalEyebrow: "Time clock station",
@@ -186,7 +231,7 @@ const stationLoginCopy = {
     status: {
       verifyingCredentials: "Verifying credentials...",
       signedIn: "Signed in",
-      invalidCredentials: "Invalid email or password",
+      invalidCredentials: "Incorrect email or password.",
       resetCode: (code: string) => `Test code: ${code}`,
       resetRequested: "If the email exists, a code was sent.",
       resetRequestFailed: "Could not request password recovery.",
@@ -206,6 +251,22 @@ const stationLoginCopy = {
   ariaStation: string;
   brandSubtitle: string;
   hero: string;
+  heroLead: string;
+  heroEmphasis: string;
+  heroCopy: string;
+  features: string[];
+  localTime: string;
+  subtitle: string;
+  showPassword: string;
+  hidePassword: string;
+  resetTitle: string;
+  cancel: string;
+  extensionTitle: string;
+  adminPrompt: string;
+  adminLink: string;
+  adminHint: string;
+  privacy: string;
+  secured: string;
   howWorks: string;
   installExtension: string;
   updateExtension: string;
@@ -779,6 +840,7 @@ export default function StationPage() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [rememberEmail, setRememberEmail] = useState(false);
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loginLanguage, setLoginLanguage] = useState<LoginLanguage>("es");
   const [busy, setBusy] = useState(false);
   const [consentAccepted, setConsentAccepted] = useState(false);
@@ -1074,6 +1136,7 @@ export default function StationPage() {
   function toggleLoginLanguage() {
     const nextLanguage: LoginLanguage = loginLanguage === "es" ? "en" : "es";
     setLoginLanguage(nextLanguage);
+    setStatusText("");
     window.localStorage.setItem(loginLanguageKey, nextLanguage);
   }
 
@@ -1502,7 +1565,7 @@ export default function StationPage() {
     setAccessCode("");
     setOvertimeRequest({ exitTime: "", reason: "" });
     setBusy(false);
-    setStatusText(hadActiveShift ? "Sesion cerrada. La jornada activa quedo guardada para cuando vuelvas a iniciar sesion." : "Sesion cerrada");
+    setStatusText(hadActiveShift ? "Sesión cerrada. La jornada activa quedó guardada para cuando vuelvas a iniciar sesión." : "Sesión cerrada.");
   }
 
   if (!ready) {
@@ -1510,108 +1573,302 @@ export default function StationPage() {
   }
 
   if (!session) {
-    const extensionStatusClass = extensionConnected ? "ready" : "needs-update";
     const extensionStatusText = extensionConnected
       ? extensionUpdateAvailable
         ? `${loginText.extensionReady} · ${loginLanguage === "es" ? "nueva version" : "new version"} ${latestExtensionVersion} ${loginLanguage === "es" ? "disponible" : "available"}`
         : loginText.extensionReady
       : loginText.extensionRequired;
 
+    const loginStatus = loginText.status;
+    const tooManyPrefix = loginStatus.tooManyAttempts(null).split(".")[0];
+    const statusTone: "info" | "success" | "error" =
+      statusText === loginStatus.verifyingCredentials
+        ? "info"
+        : [loginStatus.invalidCredentials, loginStatus.resetRequestFailed, loginStatus.resetInvalid, loginStatus.serverError, loginStatus.networkError, loginStatus.unknownError].includes(statusText) ||
+            statusText.startsWith(tooManyPrefix)
+          ? "error"
+          : [loginStatus.signedIn, loginStatus.resetConfirmed].includes(statusText)
+            ? "success"
+            : "info";
+    const loginDate = new Intl.DateTimeFormat(loginLanguage === "en" ? "en-US" : "es", { weekday: "long", day: "numeric", month: "long" })
+      .format(new Date())
+      .replace(",", "");
+    const needsExtensionAction = !extensionConnected || extensionUpdateAvailable;
+
     return (
-      <main className="station-public-shell station-login-shell">
-        <button
-          type="button"
-          className="station-language-toggle"
-          aria-label={loginText.languageToggleLabel}
-          onClick={toggleLoginLanguage}
-        >
-          {loginLanguage === "es" ? "EN" : "ES"}
-        </button>
-        <div className="station-public-layout station-login-layout">
-          <section className="station-login-hero" aria-label={loginText.ariaStation}>
-            <div className="station-login-brand station-login-brand-hero">
-              <div className="station-brand-mark"><VyntraMark /></div>
-              <div>
-                <span>VYNTRA</span>
-                <strong>{loginText.brandSubtitle}</strong>
-              </div>
-            </div>
-            <h2>{loginText.hero}</h2>
-            <div className="station-login-hero-actions">
-              <button type="button" className="station-hero-button" onClick={() => setHowWorksDialogOpen(true)}>{loginText.howWorks}</button>
-              {!extensionConnected || extensionUpdateAvailable ? (
-                <button type="button" className="station-hero-link" onClick={() => setExtensionDialogOpen(true)}>
+      <main className={authStyles.shell}>
+        <aside className={authStyles.brand} aria-label={loginText.ariaStation}>
+          <div className={authStyles.glow} aria-hidden />
+          <div className={authStyles.grid} aria-hidden />
+          <div className={authStyles.brandTop}>
+            <VyntraWordmark className={authStyles.logo} title="VYNTRA" />
+            <small>{loginText.brandSubtitle}</small>
+          </div>
+
+          <div className={authStyles.brandCopy}>
+            <span className={authStyles.date}>{loginDate.charAt(0).toUpperCase() + loginDate.slice(1)}</span>
+            <h2>
+              {loginText.heroLead} <em>{loginText.heroEmphasis}</em>
+            </h2>
+            <p>{loginText.heroCopy}</p>
+            <ul className={authStyles.features}>
+              {loginText.features.map((feature) => <li key={feature}>{feature}</li>)}
+            </ul>
+            <div className={authStyles.brandActions}>
+              <button type="button" className={authStyles.brandButton} onClick={() => setHowWorksDialogOpen(true)}>
+                <ClockInIcon />
+                {loginText.howWorks}
+              </button>
+              {needsExtensionAction ? (
+                <button type="button" className={authStyles.brandButton} onClick={() => setExtensionDialogOpen(true)}>
+                  <PuzzleIcon />
                   {extensionConnected ? loginText.updateExtension : loginText.installExtension}
                 </button>
               ) : null}
             </div>
-          </section>
-          <section className="station-login-panel" aria-labelledby="station-login-title">
-            <h1 id="station-login-title">{loginText.signInTitle}</h1>
-            <form className="station-form" onSubmit={login}>
-              <label>{loginText.emailLabel}
-                <span className="station-input-wrap">
-                  <input type="email" value={loginEmail} onChange={(event) => setLoginEmail(event.target.value)} autoComplete="email" placeholder={loginText.emailPlaceholder} required />
-                  <span aria-hidden="true">@</span>
-                </span>
-              </label>
-              <label>{loginText.passwordLabel}
-                <span className="station-input-wrap">
+          </div>
+
+          <div className={authStyles.brandFoot}>
+            <LiveClock className={authStyles.clock} />
+            <span className={authStyles.clockLabel}>
+              <i className={authStyles.liveDot} />
+              {loginText.localTime}
+            </span>
+          </div>
+        </aside>
+
+        <section className={authStyles.panel} aria-labelledby="station-login-title">
+          <header className={authStyles.panelTop}>
+            <div className={authStyles.mobileBrand}>
+              <VyntraWordmark className={authStyles.mobileLogo} title="VYNTRA" />
+            </div>
+            <div className={authStyles.prefs}>
+              <button
+                type="button"
+                className={`${authStyles.prefButton} ${authStyles.prefLang}`}
+                aria-label={loginText.languageToggleLabel}
+                title={loginText.languageToggleLabel}
+                onClick={toggleLoginLanguage}
+              >
+                <GlobeIcon />
+                <span>{loginLanguage === "es" ? "EN" : "ES"}</span>
+              </button>
+            </div>
+          </header>
+
+          <div className={authStyles.formWrap}>
+            <div className={authStyles.heading}>
+              <h1 id="station-login-title">{loginText.signInTitle}</h1>
+              <p>{loginText.subtitle}</p>
+            </div>
+
+            {statusText ? (
+              <div
+                className={`${authStyles.alert} ${authStyles[statusTone]}`}
+                id="station-login-status"
+                role={statusTone === "error" ? "alert" : "status"}
+                aria-live={statusTone === "error" ? "assertive" : "polite"}
+              >
+                <AlertIcon tone={statusTone} />
+                <div>
+                  <span>{statusText}</span>
+                </div>
+              </div>
+            ) : null}
+
+            <form className={authStyles.form} onSubmit={login}>
+              <div className={authStyles.field}>
+                <label htmlFor="station-login-email">{loginText.emailLabel}</label>
+                <div className={authStyles.control}>
+                  <span className={authStyles.controlIcon}>
+                    <MailIcon />
+                  </span>
                   <input
-                    type="password"
+                    id="station-login-email"
+                    type="email"
+                    value={loginEmail}
+                    onChange={(event) => setLoginEmail(event.target.value)}
+                    autoComplete="username"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    inputMode="email"
+                    placeholder={loginText.emailPlaceholder}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className={authStyles.field}>
+                <div className={authStyles.labelRow}>
+                  <label htmlFor="station-login-password">{loginText.passwordLabel}</label>
+                  <button
+                    type="button"
+                    className={authStyles.textButton}
+                    aria-expanded={resetOpen}
+                    aria-controls="station-reset-box"
+                    onClick={() => {
+                      setResetOpen((open) => !open);
+                      setResetForm((form) => ({ ...form, email: form.email || loginEmail }));
+                    }}
+                  >
+                    {loginText.forgotPassword}
+                  </button>
+                </div>
+                <div className={authStyles.control}>
+                  <span className={authStyles.controlIcon}>
+                    <LockIcon />
+                  </span>
+                  <input
+                    id="station-login-password"
+                    name="password"
+                    type={showLoginPassword ? "text" : "password"}
                     value={loginPassword}
                     onChange={(event) => setLoginPassword(event.target.value)}
                     autoComplete="current-password"
                     placeholder={loginText.passwordPlaceholder}
                     required
                   />
-                  <span aria-hidden="true">o</span>
-                </span>
-              </label>
-              <div className="station-login-options">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={rememberEmail}
-                    onChange={(event) => {
-                      setRememberEmail(event.target.checked);
-                      if (!event.target.checked) removeKey(rememberEmailKey);
-                    }}
-                  />
-                  {loginText.remember}
-                </label>
-                <button type="button" onClick={() => { setResetOpen(true); setResetForm((form) => ({ ...form, email: loginEmail })); }}>
-                  {loginText.forgotPassword}
-                </button>
+                  <button
+                    type="button"
+                    className={authStyles.reveal}
+                    onClick={() => setShowLoginPassword((current) => !current)}
+                    aria-pressed={showLoginPassword}
+                    aria-label={showLoginPassword ? loginText.hidePassword : loginText.showPassword}
+                    title={showLoginPassword ? loginText.hidePassword : loginText.showPassword}
+                  >
+                    <EyeIcon open={!showLoginPassword} />
+                  </button>
+                </div>
               </div>
-              <button type="submit" className="station-primary" disabled={busy}>{busy ? loginText.verifying : loginText.enter}</button>
+
+              <label className={authStyles.remember}>
+                <input
+                  type="checkbox"
+                  checked={rememberEmail}
+                  onChange={(event) => {
+                    setRememberEmail(event.target.checked);
+                    if (!event.target.checked) removeKey(rememberEmailKey);
+                  }}
+                />
+                <span>{loginText.remember}</span>
+              </label>
+
+              <button type="submit" className={authStyles.submit} disabled={busy} aria-busy={busy || undefined}>
+                {busy ? (
+                  <>
+                    <span className={authStyles.spinner} aria-hidden />
+                    {loginText.verifying}
+                  </>
+                ) : (
+                  loginText.enter
+                )}
+              </button>
             </form>
-            <p className={`station-extension-status ${extensionStatusClass}`}>
-              <span>{extensionStatusText}</span>
-              {!extensionConnected || extensionUpdateAvailable ? (
-                <button type="button" onClick={() => setExtensionDialogOpen(true)}>
-                  {extensionConnected ? loginText.update : loginText.install}
-                </button>
-              ) : null}
-            </p>
+
             {resetOpen ? (
-              <form className="station-reset-box" onSubmit={confirmReset}>
-                <label>{loginText.resetEmail}
-                  <input type="email" value={resetForm.email} onChange={(event) => setResetForm({ ...resetForm, email: event.target.value })} required />
-                </label>
-                <button type="button" className="station-secondary" onClick={requestReset} disabled={busy}>{loginText.sendCode}</button>
-                <label>{loginText.resetCode}
-                  <input value={resetForm.code} onChange={(event) => setResetForm({ ...resetForm, code: event.target.value })} required />
-                </label>
-                <label>{loginText.resetPassword}
-                  <input type="password" value={resetForm.password} onChange={(event) => setResetForm({ ...resetForm, password: event.target.value })} required />
-                </label>
-                <button type="submit" className="station-primary" disabled={busy}>{loginText.resetSubmit}</button>
+              <form className={authStyles.resetBox} id="station-reset-box" onSubmit={confirmReset}>
+                <strong>{loginText.resetTitle}</strong>
+                <div className={authStyles.field}>
+                  <label htmlFor="station-reset-email">{loginText.resetEmail}</label>
+                  <div className={authStyles.control}>
+                    <input
+                      id="station-reset-email"
+                      type="email"
+                      value={resetForm.email}
+                      onChange={(event) => setResetForm({ ...resetForm, email: event.target.value })}
+                      autoComplete="username"
+                      required
+                    />
+                  </div>
+                </div>
+                <div className={authStyles.resetActions}>
+                  <button type="button" className={authStyles.secondaryButton} onClick={requestReset} disabled={busy}>
+                    {loginText.sendCode}
+                  </button>
+                </div>
+                <div className={authStyles.field}>
+                  <label htmlFor="station-reset-code">{loginText.resetCode}</label>
+                  <div className={authStyles.control}>
+                    <input
+                      id="station-reset-code"
+                      value={resetForm.code}
+                      onChange={(event) => setResetForm({ ...resetForm, code: event.target.value })}
+                      autoComplete="one-time-code"
+                      required
+                    />
+                  </div>
+                </div>
+                <div className={authStyles.field}>
+                  <label htmlFor="station-reset-password">{loginText.resetPassword}</label>
+                  <div className={authStyles.control}>
+                    <input
+                      id="station-reset-password"
+                      type="password"
+                      value={resetForm.password}
+                      onChange={(event) => setResetForm({ ...resetForm, password: event.target.value })}
+                      autoComplete="new-password"
+                      required
+                    />
+                  </div>
+                </div>
+                <div className={authStyles.resetActions}>
+                  <button type="button" className={authStyles.secondaryButton} onClick={() => setResetOpen(false)}>
+                    {loginText.cancel}
+                  </button>
+                  <button type="submit" className={authStyles.submit} disabled={busy}>
+                    {loginText.resetSubmit}
+                  </button>
+                </div>
               </form>
             ) : null}
-            {statusText ? <p className="station-status-line" role="status" aria-live="polite">{statusText}</p> : null}
-          </section>
-        </div>
+
+            <div className={authStyles.card}>
+              <span className={authStyles.stationIcon}>
+                <PuzzleIcon />
+              </span>
+              <span className={authStyles.stationCopy}>
+                <strong>{loginText.extensionTitle}</strong>
+                <small>{extensionStatusText}</small>
+              </span>
+              {needsExtensionAction ? (
+                <button type="button" className={authStyles.cardButton} onClick={() => setExtensionDialogOpen(true)}>
+                  {extensionConnected ? loginText.update : loginText.install}
+                </button>
+              ) : (
+                <span className={authStyles.chip}>{loginLanguage === "es" ? "Activa" : "Active"}</span>
+              )}
+            </div>
+
+            <button type="button" className={`${authStyles.textButton} ${authStyles.mobileOnly}`} onClick={() => setHowWorksDialogOpen(true)}>
+              {loginText.howWorks}
+            </button>
+
+            <div className={authStyles.divider}>
+              <span>{loginText.adminPrompt}</span>
+            </div>
+
+            <a className={authStyles.station} href="/login">
+              <span className={authStyles.stationIcon}>
+                <DashboardIcon />
+              </span>
+              <span className={authStyles.stationCopy}>
+                <strong>{loginText.adminLink}</strong>
+                <small>{loginText.adminHint}</small>
+              </span>
+              <span className={authStyles.stationArrow}>
+                <ArrowIcon />
+              </span>
+            </a>
+          </div>
+
+          <footer className={authStyles.footer}>
+            <span>{loginText.secured}</span>
+            <nav aria-label="VYNTRA">
+              <a href="/privacidad">{loginText.privacy}</a>
+              <span>© {new Date().getFullYear()} VYNTRA</span>
+            </nav>
+          </footer>
+        </section>
         {howWorksDialogOpen ? (
           <div className="station-extension-dialog-backdrop" role="presentation" onClick={() => setHowWorksDialogOpen(false)}>
             <section

@@ -3,10 +3,22 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
+import {
+  AlertIcon,
+  ArrowIcon,
+  ClockInIcon,
+  EyeIcon,
+  GlobeIcon,
+  LiveClock,
+  LockIcon,
+  MailIcon,
+  MoonIcon,
+  SunIcon,
+} from "@/components/auth-icons";
 import { VyntraWordmark } from "@/components/brand";
 import { usePreferences } from "@/components/preferences-provider";
 import { classifyLoginError, isApiError, retryAfterMinutes } from "@/lib/api";
-import styles from "./login-screen.module.css";
+import styles from "./auth-layout.module.css";
 
 const rememberEmailKey = "vyntra.admin.rememberEmail";
 
@@ -47,100 +59,8 @@ function formatCountdown(seconds: number) {
   return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function formatClock(date: Date) {
-  return [date.getHours(), date.getMinutes(), date.getSeconds()].map((part) => String(part).padStart(2, "0")).join(":");
-}
-
 function cx(...names: Array<string | false | null | undefined>) {
   return names.filter(Boolean).join(" ");
-}
-
-function MailIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <rect x="3.5" y="5.5" width="17" height="13" rx="2.5" />
-      <path d="m4.5 7.5 7.5 5.5 7.5-5.5" />
-    </svg>
-  );
-}
-
-function LockIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <rect x="5" y="10.5" width="14" height="9.5" rx="2.5" />
-      <path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" />
-    </svg>
-  );
-}
-
-function EyeIcon({ open }: { open: boolean }) {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
-      <circle cx="12" cy="12" r="2.75" />
-      {open ? null : <path d="M4 4l16 16" />}
-    </svg>
-  );
-}
-
-function SunIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2.5v2M12 19.5v2M4.6 4.6 6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4" />
-    </svg>
-  );
-}
-
-function MoonIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" />
-    </svg>
-  );
-}
-
-function GlobeIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <circle cx="12" cy="12" r="8.5" />
-      <path d="M3.5 12h17M12 3.5c2.4 2.4 3.5 5.2 3.5 8.5s-1.1 6.1-3.5 8.5c-2.4-2.4-3.5-5.2-3.5-8.5s1.1-6.1 3.5-8.5Z" />
-    </svg>
-  );
-}
-
-function ClockInIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <circle cx="12" cy="13" r="7.5" />
-      <path d="M12 9.5V13l2.5 1.5M9.5 2.5h5" />
-    </svg>
-  );
-}
-
-function ArrowIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <path d="M5 12h14M13 6l6 6-6 6" />
-    </svg>
-  );
-}
-
-function AlertIcon({ tone }: { tone: LoginAlert["tone"] }) {
-  if (tone === "success") {
-    return (
-      <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-        <circle cx="12" cy="12" r="8.5" />
-        <path d="m8.5 12.5 2.5 2.5 4.5-5" />
-      </svg>
-    );
-  }
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
-      <circle cx="12" cy="12" r="8.5" />
-      <path d={tone === "info" ? "M12 11v5M12 8h.01" : "M12 7.5v5M12 16h.01"} />
-    </svg>
-  );
 }
 
 export function LoginScreen() {
@@ -157,7 +77,6 @@ export function LoginScreen() {
   const [greeting, setGreeting] = useState(() => defaultLoginGreeting(t));
   const [lockedUntil, setLockedUntil] = useState<number | null>(null);
   const [clockNow, setClockNow] = useState(() => Date.now());
-  const [liveClock, setLiveClock] = useState("");
   const [loading, setLoading] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -181,17 +100,11 @@ export function LoginScreen() {
     return () => window.clearTimeout(timer);
   }, [language, t]);
 
-  // Reloj en vivo del panel de marca; también alimenta la cuenta regresiva del bloqueo.
   useEffect(() => {
-    const tick = () => {
-      const now = new Date();
-      setClockNow(now.getTime());
-      setLiveClock(formatClock(now));
-    };
-    tick();
-    const interval = window.setInterval(tick, 1000);
+    if (!lockedUntil) return undefined;
+    const interval = window.setInterval(() => setClockNow(Date.now()), 1000);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [lockedUntil]);
 
   const lockSeconds = lockedUntil ? Math.max(0, Math.ceil((lockedUntil - clockNow) / 1000)) : 0;
   const locked = lockSeconds > 0;
@@ -347,7 +260,7 @@ export function LoginScreen() {
         </div>
 
         <div className={styles.brandFoot}>
-          <span className={styles.clock}>{liveClock || "--:--:--"}</span>
+          <LiveClock className={styles.clock} />
           <span className={styles.clockLabel}>
             <i className={styles.liveDot} />
             {t("Hora local")}

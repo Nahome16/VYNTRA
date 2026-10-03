@@ -23,9 +23,7 @@ const QUEUE_LIMIT = 100;
 const REJECTED_LIMIT = 20;
 const MAX_TRANSITION_ATTEMPTS = 3;
 const TRANSITION_EVENT_PREFIXES = ["shift_", "break_", "lunch_", "overtime_"];
-// 0.3.0 aplica la politica de captura minima (sin URL ni titulos; evidencia solo en sitios productivos).
-// Se ofrece como actualizacion opcional; subir requiredExtensionVersion cuando se decida exigirla.
-const requiredExtensionVersion = "0.2.3";
+// 0.3.1 es la version recomendada de VYNTRA Browser, pero no bloquea login ni marcaje.
 const latestExtensionVersion = "0.3.1";
 const extensionDownloadHref = `/extensions/vyntra-browser-extension.zip?v=${latestExtensionVersion}`;
 
@@ -86,7 +84,7 @@ const stationLoginCopy = {
     resetSubmit: "Restablecer",
     close: "Cerrar",
     extensionReady: "✓ Extension conectada",
-    extensionOutdated: (version: string | null) => `Extension incompatible · v${version || "anterior"}`,
+    extensionOutdated: (version: string | null) => `Actualizacion disponible · v${version || "anterior"}`,
     extensionRequired: "Extension opcional para evidencias del navegador",
     install: "Instalar",
     update: "Actualizar",
@@ -156,7 +154,7 @@ const stationLoginCopy = {
     resetSubmit: "Reset",
     close: "Close",
     extensionReady: "✓ Extension connected",
-    extensionOutdated: (version: string | null) => `Incompatible extension · v${version || "previous"}`,
+    extensionOutdated: (version: string | null) => `Update available · v${version || "previous"}`,
     extensionRequired: "Optional extension for browser evidence",
     install: "Install",
     update: "Update",
@@ -828,11 +826,9 @@ export default function StationPage() {
   const effectiveTimeZone = timeZoneLocked ? shiftTimeZone : stationTimeZone;
   const currentWorkDate = zonedDateIso(effectiveTimeZone);
   const extensionReachable = Boolean(extensionStatus.available && extensionStatus.lastSeenAt && Date.now() - extensionStatus.lastSeenAt < 15000);
-  const extensionMeetsMinimum = versionAtLeast(extensionStatus.extensionVersion, requiredExtensionVersion);
   const extensionUpToDate = versionAtLeast(extensionStatus.extensionVersion, latestExtensionVersion);
-  const extensionNeedsUpdate = extensionReachable && !extensionMeetsMinimum;
-  const extensionUpdateAvailable = extensionReachable && extensionMeetsMinimum && !extensionUpToDate;
-  const extensionConnected = extensionReachable && extensionMeetsMinimum;
+  const extensionUpdateAvailable = extensionReachable && !extensionUpToDate;
+  const extensionConnected = extensionReachable;
   const extensionMissing = !extensionReachable;
   const canAccrueTime = true;
   const currentTotals = totals(stationState, canAccrueTime);
@@ -1518,8 +1514,6 @@ export default function StationPage() {
       ? extensionUpdateAvailable
         ? `${loginText.extensionReady} · ${loginLanguage === "es" ? "nueva version" : "new version"} ${latestExtensionVersion} ${loginLanguage === "es" ? "disponible" : "available"}`
         : loginText.extensionReady
-      : extensionNeedsUpdate
-      ? loginText.extensionOutdated(extensionStatus.extensionVersion)
       : loginText.extensionRequired;
 
     return (
@@ -1546,7 +1540,7 @@ export default function StationPage() {
               <button type="button" className="station-hero-button" onClick={() => setHowWorksDialogOpen(true)}>{loginText.howWorks}</button>
               {!extensionConnected || extensionUpdateAvailable ? (
                 <button type="button" className="station-hero-link" onClick={() => setExtensionDialogOpen(true)}>
-                  {extensionConnected || extensionNeedsUpdate ? loginText.updateExtension : loginText.installExtension}
+                  {extensionConnected ? loginText.updateExtension : loginText.installExtension}
                 </button>
               ) : null}
             </div>
@@ -1595,7 +1589,7 @@ export default function StationPage() {
               <span>{extensionStatusText}</span>
               {!extensionConnected || extensionUpdateAvailable ? (
                 <button type="button" onClick={() => setExtensionDialogOpen(true)}>
-                  {extensionConnected || extensionNeedsUpdate ? loginText.update : loginText.install}
+                  {extensionConnected ? loginText.update : loginText.install}
                 </button>
               ) : null}
             </p>
@@ -1758,11 +1752,9 @@ export default function StationPage() {
 
   const canMark = !busy;
   const canStartNewShift = stationState.status === "FUERA" || (stationState.status === "TERMINADO" && !closedToday);
-  const extensionHintText = extensionNeedsUpdate
-    ? `La extension instalada no es compatible para evidencias. Instala VYNTRA Browser ${requiredExtensionVersion} o superior.`
-    : "Extension no conectada: puedes marcar jornada, pero no se capturaran evidencias del navegador.";
-  const extensionStatusText = extensionNeedsUpdate
-    ? `Actualiza a version ${requiredExtensionVersion} o superior`
+  const extensionHintText = "Extension no conectada: puedes marcar jornada, pero no se capturaran evidencias del navegador.";
+  const extensionStatusText = extensionUpdateAvailable
+    ? `Actualizacion ${latestExtensionVersion} disponible`
     : "Instala VYNTRA Browser";
   const statusCopy: Record<StationStatus, { label: string; capture: string; detail: string }> = {
     FUERA: {

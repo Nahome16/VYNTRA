@@ -615,6 +615,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  const invoicePdfMatch = path.match(/^\/api\/system\/(?:invoices\/([^/]+)\/pdf|companies\/([^/]+)\/invoices\/pdf)$/);
+  if (invoicePdfMatch) {
+    // PDF de una pagina en blanco: en local solo se prueba que la descarga funcione.
+    const pdf = "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF";
+    res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": 'attachment; filename="Factura-prueba.pdf"' });
+    res.end(pdf);
+    return;
+  }
+
   const invoiceHtmlMatch = path.match(/^\/api\/system\/invoices\/([^/]+)\/html$/);
   if (invoiceHtmlMatch && req.method === "GET") {
     const invoice = invoices.find((row) => row.id === invoiceHtmlMatch[1]);

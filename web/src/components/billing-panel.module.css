@@ -248,7 +248,14 @@
 
 .rowAction {
   text-align: right;
+  white-space: nowrap;
   vertical-align: middle !important;
+}
+
+.rowAction :global(.btn) svg,
+.actions :global(.btn) svg {
+  width: 16px;
+  height: 16px;
 }
 
 .muted {

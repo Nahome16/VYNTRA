@@ -86,7 +86,7 @@ from app.models import (
     new_id,
     now_utc,
 )
-from app.reports import build_operations_pdf
+from app.reports import build_invoice_pdf, build_operations_pdf
 from app.storage import (
     IMAGE_CONTENT_TYPES,
     build_storage_path,
@@ -4328,6 +4328,67 @@ def render_invoice_draft(company: Company, draft: dict) -> tuple[str, str, str]:
     )
 
 
+
+def invoice_document_data(
+    *,
+    number: str,
+    company_name: str,
+    period_start: date,
+    period_end: date,
+    issued_on: date,
+    due_on: date,
+    active_users: int,
+    unit_price_cents: int,
+    subtotal_cents: int,
+    tax_cents: int,
+    total_cents: int,
+    currency: str,
+    recipients: list[dict],
+) -> dict:
+    """Textos ya formateados de la factura para el PDF (mismos datos que el correo)."""
+    next_start, next_end = billing_period_for(period_end + timedelta(days=1))
+    return {
+        "number": number,
+        "company_name": company_name or "-",
+        "recipients": [
+            {"full_name": str(row.get("full_name") or ""), "email": str(row.get("email") or "")} for row in recipients
+        ],
+        "period_label": format_period_label(period_start, period_end),
+        "period_long": format_period_long(period_start, period_end),
+        "next_period_long": format_period_long(next_start, next_end),
+        "issued_short": format_date_short(issued_on),
+        "due_short": format_date_short(due_on),
+        "due_weekday_short": format_date_weekday_short(due_on),
+        "due_days_text": business_days_text(settings.billing_due_business_days),
+        "currency": currency,
+        "currency_label": CURRENCY_LABELS.get(currency.upper(), currency),
+        "active_users": int(active_users),
+        "line_detail": (
+            f"{active_users_text(active_users)} {MIDDOT} "
+            f"{format_date_numeric(period_start)} al {format_date_numeric(period_end)}"
+        ),
+        "unit_money": format_money(unit_price_cents, currency),
+        "subtotal_money": format_money(subtotal_cents, currency),
+        "tax_money": format_money(tax_cents, currency),
+        "total_money": format_money(total_cents, currency),
+        "total_amount": format_amount(total_cents),
+        "payment_rows": billing_payment_rows(),
+        "contact_email": (settings.billing_contact_email or "").strip(),
+    }
+
+
+def invoice_pdf_response(pdf_bytes: bytes, number: str) -> Response:
+    safe_number = re.sub(r"[^A-Za-z0-9-]", "", number) or "factura"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": f'attachment; filename="Factura-{safe_number}.pdf"',
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
 def invoice_recipients(invoice: Invoice) -> list[dict]:
     value = parse_json_payload(invoice.recipients_json or "[]")
     if not isinstance(value, list):
@@ -5426,6 +5487,65 @@ def system_invoice_html(
         raise HTTPException(status_code=404, detail="Invoice not found")
     subject, html_body, _plain = render_stored_invoice(db.get(Company, invoice.company_id), invoice)
     return {"subject": subject, "html": html_body}
+
+
+@app.post("/api/system/companies/{company_id}/invoices/pdf")
+def download_company_invoice_draft_pdf(
+    company_id: str,
+    payload: InvoiceRequestPayload,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """PDF de la factura en revision (no guarda nada)."""
+    require_system_admin(admin)
+    company = get_billing_company(db, company_id)
+    draft = prepare_invoice_draft(db, company, payload)
+    doc = invoice_document_data(
+        number=draft["number"],
+        company_name=company.legal_name or company.name,
+        period_start=draft["period_start"],
+        period_end=draft["period_end"],
+        issued_on=draft["issued_on"],
+        due_on=draft["due_on"],
+        active_users=draft["active_users"],
+        unit_price_cents=draft["unit_price_cents"],
+        subtotal_cents=draft["subtotal_cents"],
+        tax_cents=draft["tax_cents"],
+        total_cents=draft["total_cents"],
+        currency=draft["currency"],
+        recipients=draft["recipients"],
+    )
+    return invoice_pdf_response(build_invoice_pdf(doc), draft["number"])
+
+
+@app.get("/api/system/invoices/{invoice_id}/pdf")
+def download_invoice_pdf(
+    invoice_id: str,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """PDF de una factura del historial, con los valores guardados al enviarla."""
+    require_system_admin(admin)
+    invoice = db.get(Invoice, invoice_id)
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    company = db.get(Company, invoice.company_id)
+    doc = invoice_document_data(
+        number=invoice.number,
+        company_name=(company.legal_name or company.name) if company else "",
+        period_start=date.fromisoformat(invoice.period_start),
+        period_end=date.fromisoformat(invoice.period_end),
+        issued_on=date.fromisoformat(invoice.issued_on),
+        due_on=date.fromisoformat(invoice.due_on),
+        active_users=invoice.active_users,
+        unit_price_cents=invoice.unit_price_cents,
+        subtotal_cents=invoice.subtotal_cents,
+        tax_cents=invoice.tax_cents,
+        total_cents=invoice.total_cents,
+        currency=invoice.currency,
+        recipients=invoice_recipients(invoice),
+    )
+    return invoice_pdf_response(build_invoice_pdf(doc), invoice.number)
 
 
 @app.post("/api/system/users")

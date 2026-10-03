@@ -1170,6 +1170,8 @@ const en: Record<string, string> = {
   "{name}: factura del {period} pendiente de envío": "{name}: invoice for {period} not sent yet",
   "¿Enviar la factura?": "Send the invoice?",
   "¿Reenviar la factura?": "Resend the invoice?",
+  "Descargar PDF": "Download PDF",
+  "No se pudo descargar el PDF de la factura.": "Could not download the invoice PDF.",
 };
 
 const dictionaries: Record<Language, Record<string, string>> = {

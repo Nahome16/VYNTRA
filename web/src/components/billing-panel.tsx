@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { AttentionList, Chip, ConfirmDialog, Drawer, EmptyBlock } from "@/components/ui";
+import { downloadAuthenticatedFile } from "@/lib/download-file";
 import { BillingResponse, InvoicePreviewResponse, InvoiceRecord, InvoiceSendResponse, InvoiceStatus } from "@/lib/types";
 import styles from "./billing-panel.module.css";
 
@@ -48,8 +49,16 @@ const statusLabel: Record<InvoiceStatus, string> = {
 
 type Preview = InvoicePreviewResponse & { source: "draft" | "history" };
 
+function DownloadIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 4v11M7 10l5 5 5-5M5 20h14" />
+    </svg>
+  );
+}
+
 export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?: () => void }) {
-  const { apiGet, apiPost } = useAuth();
+  const { apiGet, apiPost, token } = useAuth();
   const { t, language } = usePreferences();
   const locale = language === "en" ? "en-US" : "es";
   const [billing, setBilling] = useState<BillingResponse | null>(null);
@@ -61,6 +70,7 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
   const [previewLoading, setPreviewLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [sending, setSending] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [notice, setNotice] = useState<{ tone: "good" | "warn" | "bad"; text: string } | null>(null);
 
   const loadBilling = useCallback(async () => {
@@ -160,6 +170,24 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
       setConfirmOpen(false);
     } finally {
       setSending(false);
+    }
+  }
+
+  async function downloadPdf(invoice?: { id?: string; number: string }) {
+    setDownloading(true);
+    try {
+      if (invoice?.id) {
+        await downloadAuthenticatedFile(`/api/system/invoices/${invoice.id}/pdf`, token, `Factura-${invoice.number}.pdf`);
+      } else {
+        await downloadAuthenticatedFile(`/api/system/companies/${companyId}/invoices/pdf`, token, "Factura.pdf", {
+          method: "POST",
+          body: requestBody(),
+        });
+      }
+    } catch {
+      setNotice({ tone: "bad", text: t("No se pudo descargar el PDF de la factura.") });
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -298,6 +326,10 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
       </fieldset>
 
       <div className={styles.actions}>
+        <button type="button" className="btn btn-ghost" onClick={() => void downloadPdf()} disabled={!canSend || downloading}>
+          <DownloadIcon />
+          {downloading ? t("Descargando...") : t("Descargar PDF")}
+        </button>
         <button type="button" className="btn btn-outline" onClick={() => void openPreview()} disabled={!canSend || previewLoading}>
           {previewLoading ? t("Generando...") : t("Revisar factura")}
         </button>
@@ -348,6 +380,17 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => void openHistory(invoice)}>
                         {t("Ver")}
                       </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => void downloadPdf(invoice)}
+                        disabled={downloading}
+                        aria-label={`${t("Descargar PDF")} ${invoice.number}`}
+                        title={t("Descargar PDF")}
+                      >
+                        <DownloadIcon />
+                        PDF
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -368,6 +411,10 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
         footer={
           preview?.source === "draft" ? (
             <>
+              <button type="button" className="btn btn-ghost" onClick={() => void downloadPdf()} disabled={downloading}>
+                <DownloadIcon />
+                {t("Descargar PDF")}
+              </button>
               <button type="button" className="btn btn-outline" onClick={() => setPreview(null)}>
                 {t("Volver")}
               </button>
@@ -376,9 +423,20 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
               </button>
             </>
           ) : (
-            <button type="button" className="btn btn-outline" onClick={() => setPreview(null)}>
-              {t("Cerrar")}
-            </button>
+            <>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => preview && "id" in preview.invoice && void downloadPdf(preview.invoice as InvoiceRecord)}
+                disabled={downloading}
+              >
+                <DownloadIcon />
+                {t("Descargar PDF")}
+              </button>
+              <button type="button" className="btn" onClick={() => setPreview(null)}>
+                {t("Cerrar")}
+              </button>
+            </>
           )
         }
       >

@@ -19,8 +19,19 @@ export function saveBlob(blob: Blob, filename: string) {
   window.setTimeout(() => window.URL.revokeObjectURL(url), REVOKE_DELAY_MS);
 }
 
-export async function downloadAuthenticatedFile(path: string, token: string, fallbackName: string) {
-  const response = await apiFetch(path, { token, timeoutMs: DOWNLOAD_TIMEOUT_MS });
+export async function downloadAuthenticatedFile(
+  path: string,
+  token: string,
+  fallbackName: string,
+  /** Para descargas generadas con POST (p. ej. el PDF de una factura en revisión). */
+  init: { method?: string; body?: unknown } = {},
+) {
+  const response = await apiFetch(path, {
+    token,
+    timeoutMs: DOWNLOAD_TIMEOUT_MS,
+    method: init.method,
+    ...(init.body !== undefined ? { body: JSON.stringify(init.body), headers: { "Content-Type": "application/json" } } : {}),
+  });
   const disposition = response.headers.get("Content-Disposition") || "";
   const match = disposition.match(/filename="?([^"]+)"?/i);
   const filename = match?.[1] || fallbackName;

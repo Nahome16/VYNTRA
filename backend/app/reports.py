@@ -6,10 +6,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from io import BytesIO
+from pathlib import Path
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import mm
+from reportlab.lib.utils import simpleSplit
 from reportlab.pdfgen import canvas
 
 
@@ -369,5 +371,252 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
         detail_rows or [["Sin datos", "-", "-", "-", "-", "-"]],
     )
     draw_footer(pdf)
+    pdf.save()
+    return buffer.getvalue()
+
+
+# --- Factura (PDF descargable) ------------------------------------------------
+# Mismo diseno que el correo (docs/factura/factura-correo.html), en A4 vertical.
+
+INVOICE_PAGE_W, INVOICE_PAGE_H = A4
+INVOICE_MARGIN = 18 * mm
+INV_INK = colors.HexColor("#0b0d12")
+INV_INK_SOFT = colors.HexColor("#344054")
+INV_MUTED = colors.HexColor("#5f6878")
+INV_FAINT = colors.HexColor("#98a2b3")
+INV_LINE = colors.HexColor("#e4e7ec")
+INV_LINE_STRONG = colors.HexColor("#d0d5dd")
+INV_SOFT_BG = colors.HexColor("#f9fafb")
+INV_BLACK = colors.HexColor("#0a0a0a")
+INV_BLUE = colors.HexColor("#2563eb")
+INV_WARN_BG = colors.HexColor("#fffaeb")
+INV_WARN = colors.HexColor("#b54708")
+INVOICE_LOGO = Path(__file__).resolve().parent / "assets" / "vyntra-wordmark-white.png"
+
+
+def _label(pdf: canvas.Canvas, x: float, y: float, text: str) -> None:
+    pdf.setFont("Helvetica-Bold", 7.5)
+    pdf.setFillColor(INV_FAINT)
+    pdf.drawString(x, y, text.upper())
+
+
+def _fit(pdf: canvas.Canvas, text: str, font: str, size: float, max_width: float) -> str:
+    """Recorta con puntos suspensivos si el texto no cabe en el ancho dado."""
+    if pdf.stringWidth(text, font, size) <= max_width:
+        return text
+    while text and pdf.stringWidth(text + "...", font, size) > max_width:
+        text = text[:-1]
+    return text + "..."
+
+
+def build_invoice_pdf(doc: dict) -> bytes:
+    """Genera el PDF de una factura a partir de los textos ya formateados por el backend."""
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4)
+    pdf.setTitle(f"Factura {doc['number']} - VYNTRA")
+    pdf.setAuthor("VYNTRA")
+    pdf.setSubject(f"Factura {doc['number']} {doc['period_label']}")
+    width, height = INVOICE_PAGE_W, INVOICE_PAGE_H
+    left = INVOICE_MARGIN
+    right = width - INVOICE_MARGIN
+    content_w = right - left
+
+    # Encabezado negro con logotipo y numero.
+    header_h = 30 * mm
+    pdf.setFillColor(INV_BLACK)
+    pdf.rect(0, height - header_h, width, header_h, fill=1, stroke=0)
+    logo_w = 44 * mm
+    logo_h = logo_w * 96 / 600
+    if INVOICE_LOGO.exists():
+        pdf.drawImage(str(INVOICE_LOGO), left, height - header_h / 2 - logo_h / 2, logo_w, logo_h, mask="auto")
+    else:
+        pdf.setFont("Helvetica-Bold", 18)
+        pdf.setFillColor(colors.white)
+        pdf.drawString(left, height - header_h / 2 - 6, "VYNTRA")
+    pdf.setFont("Helvetica", 8)
+    pdf.setFillColor(colors.HexColor("#a3a9b6"))
+    pdf.drawRightString(right, height - header_h / 2 + 4, "FACTURA")
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.setFillColor(colors.white)
+    pdf.drawRightString(right, height - header_h / 2 - 9, doc["number"])
+
+    y = height - header_h - 14 * mm
+    pdf.setFont("Helvetica", 10)
+    pdf.setFillColor(INV_INK_SOFT)
+    intro = f"Factura de {doc['company_name']} por el servicio VYNTRA del periodo {doc['period_long']}."
+    for index, text_line in enumerate(simpleSplit(intro, "Helvetica", 10, content_w)[:2]):
+        if index:
+            y -= 5 * mm
+        pdf.drawString(left, y, text_line)
+
+    # Bloque principal: monto y fecha limite.
+    box_h = 30 * mm
+    y -= 8 * mm
+    box_y = y - box_h
+    pdf.setStrokeColor(INV_LINE)
+    pdf.setLineWidth(0.8)
+    pdf.roundRect(left, box_y, content_w, box_h, 4 * mm, fill=0, stroke=1)
+    pdf.setFont("Helvetica-Bold", 8.5)
+    pdf.setFillColor(INV_MUTED)
+    pdf.drawString(left + 7 * mm, box_y + box_h - 9 * mm, "Monto a pagar")
+    pdf.drawRightString(right - 7 * mm, box_y + box_h - 9 * mm, "Fecha l\u00edmite de pago")
+    pdf.setFont("Helvetica-Bold", 12)
+    pdf.drawString(left + 7 * mm, box_y + 8 * mm, doc["currency"])
+    currency_w = pdf.stringWidth(doc["currency"] + " ", "Helvetica-Bold", 12)
+    pdf.setFont("Helvetica-Bold", 26)
+    pdf.setFillColor(INV_INK)
+    pdf.drawString(left + 7 * mm + currency_w, box_y + 8 * mm, doc["total_amount"])
+    pdf.setFont("Helvetica-Bold", 13)
+    pdf.drawRightString(right - 7 * mm, box_y + box_h - 16 * mm, doc["due_weekday_short"])
+    pill = doc["due_days_text"] + " para pagar"
+    pdf.setFont("Helvetica-Bold", 8)
+    pill_w = pdf.stringWidth(pill, "Helvetica-Bold", 8) + 7 * mm
+    pdf.setFillColor(INV_WARN_BG)
+    pdf.roundRect(right - 7 * mm - pill_w, box_y + 5.5 * mm, pill_w, 6 * mm, 3 * mm, fill=1, stroke=0)
+    pdf.setFillColor(INV_WARN)
+    pdf.drawRightString(right - 7 * mm - 3.5 * mm, box_y + 7.6 * mm, pill)
+
+    # Facturado a / Detalles.
+    y = box_y - 12 * mm
+    col_w = content_w / 2 - 6 * mm
+    details_x = left + content_w / 2 + 6 * mm
+    _label(pdf, left, y, "Facturado a")
+    _label(pdf, details_x, y, "Detalles")
+    line_y = y - 6 * mm
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.setFillColor(INV_INK)
+    pdf.drawString(left, line_y, _fit(pdf, doc["company_name"], "Helvetica-Bold", 10, col_w))
+    pdf.setFont("Helvetica", 9.5)
+    pdf.setFillColor(INV_INK_SOFT)
+    for recipient in doc["recipients"][:4]:
+        for text_value in (recipient.get("full_name"), recipient.get("email")):
+            if text_value:
+                line_y -= 5 * mm
+                pdf.drawString(left, line_y, _fit(pdf, text_value, "Helvetica", 9.5, col_w))
+    detail_y = y - 6 * mm
+    for label, value in (
+        ("Emisi\u00f3n", doc["issued_short"]),
+        ("Periodo", doc["period_label"]),
+        ("Vencimiento", doc["due_short"]),
+        ("Moneda", doc["currency_label"]),
+    ):
+        pdf.setFont("Helvetica", 9.5)
+        pdf.setFillColor(INV_INK_SOFT)
+        pdf.drawString(details_x, detail_y, label)
+        pdf.setFont("Helvetica-Bold", 9.5)
+        pdf.setFillColor(INV_INK)
+        pdf.drawRightString(right, detail_y, value)
+        detail_y -= 5 * mm
+
+    # Detalle del cobro.
+    y = min(line_y, detail_y) - 10 * mm
+    cols = [right - 62 * mm, right - 30 * mm, right]
+    _label(pdf, left, y, "Descripci\u00f3n")
+    pdf.setFont("Helvetica-Bold", 7.5)
+    pdf.setFillColor(INV_FAINT)
+    pdf.drawRightString(cols[0], y, "CANT.")
+    pdf.drawRightString(cols[1], y, "PRECIO UNIT.")
+    pdf.drawRightString(cols[2], y, "IMPORTE")
+    y -= 3 * mm
+    pdf.setStrokeColor(INV_LINE_STRONG)
+    pdf.line(left, y, right, y)
+    y -= 7 * mm
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.setFillColor(INV_INK)
+    pdf.drawString(left, y, "Licencia VYNTRA por usuario monitoreado")
+    pdf.setFont("Helvetica", 10)
+    pdf.drawRightString(cols[0], y, str(doc["active_users"]))
+    pdf.drawRightString(cols[1], y, doc["unit_money"])
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.drawRightString(cols[2], y, doc["subtotal_money"])
+    pdf.setFont("Helvetica", 8.5)
+    pdf.setFillColor(INV_MUTED)
+    pdf.drawString(left, y - 4.5 * mm, doc["line_detail"])
+    y -= 10 * mm
+    pdf.setStrokeColor(INV_LINE)
+    pdf.line(left, y, right, y)
+
+    # Totales.
+    totals_x = left + content_w * 0.5
+    y -= 7 * mm
+    for label, value, strong in (
+        ("Subtotal", doc["subtotal_money"], False),
+        ("IVA (no aplica)", doc["tax_money"], False),
+    ):
+        pdf.setFont("Helvetica", 9.5)
+        pdf.setFillColor(INV_INK_SOFT)
+        pdf.drawString(totals_x, y, label)
+        pdf.setFillColor(INV_INK)
+        pdf.drawRightString(right, y, value)
+        y -= 6 * mm
+    pdf.setStrokeColor(INV_LINE)
+    pdf.line(totals_x, y + 3 * mm, right, y + 3 * mm)
+    y -= 3 * mm
+    pdf.setFont("Helvetica-Bold", 11)
+    pdf.setFillColor(INV_INK)
+    pdf.drawString(totals_x, y, "Total a pagar")
+    pdf.setFont("Helvetica-Bold", 13)
+    pdf.drawRightString(right, y, doc["total_money"])
+
+    # Como pagar.
+    rows = doc["payment_rows"]
+    pay_rows = len(rows) + 2 if rows else 1
+    pay_h = (12 + pay_rows * 5.2 + 10) * mm
+    y -= 12 * mm
+    pay_y = y - pay_h
+    pdf.setFillColor(INV_SOFT_BG)
+    pdf.setStrokeColor(INV_LINE)
+    pdf.roundRect(left, pay_y, content_w, pay_h, 4 * mm, fill=1, stroke=1)
+    row_y = pay_y + pay_h - 9 * mm
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.setFillColor(INV_INK)
+    pdf.drawString(left + 6 * mm, row_y, "C\u00f3mo pagar")
+    row_y -= 7 * mm
+    payment_lines = ([("M\u00e9todo", "Transferencia bancaria")] + rows + [("Referencia", doc["number"])]) if rows else []
+    for label, value in payment_lines:
+        pdf.setFont("Helvetica", 9.5)
+        pdf.setFillColor(INV_MUTED)
+        pdf.drawString(left + 6 * mm, row_y, label)
+        pdf.setFont("Helvetica-Bold", 9.5)
+        pdf.setFillColor(INV_BLUE if label == "Referencia" else INV_INK)
+        pdf.drawRightString(right - 6 * mm, row_y, value)
+        row_y -= 5.2 * mm
+    pdf.setFont("Helvetica", 8.5)
+    pdf.setFillColor(INV_MUTED)
+    if rows:
+        pdf.drawString(
+            left + 6 * mm,
+            row_y - 1 * mm,
+            f"Escribe el n\u00famero de factura como referencia y env\u00eda el comprobante a {doc['contact_email']}.",
+        )
+    else:
+        pdf.drawString(left + 6 * mm, row_y, "Te enviaremos los datos de pago por separado.")
+
+    # Condiciones.
+    y = pay_y - 10 * mm
+    _label(pdf, left, y, "Condiciones")
+    pdf.setFont("Helvetica", 9)
+    pdf.setFillColor(INV_MUTED)
+    for item in (
+        f"Se cobran {doc['unit_money']} por cada usuario monitoreado activo durante el periodo.",
+        "Esta factura no incluye IVA.",
+        f"El pago vence {doc['due_days_text']} despu\u00e9s de la fecha de emisi\u00f3n.",
+        f"Pr\u00f3ximo periodo de facturaci\u00f3n: {doc['next_period_long']}.",
+    ):
+        y -= 5.5 * mm
+        pdf.drawString(left + 3 * mm, y, "\u2022")
+        pdf.drawString(left + 7 * mm, y, item)
+
+    # Pie.
+    pdf.setStrokeColor(INV_LINE)
+    pdf.line(left, 22 * mm, right, 22 * mm)
+    pdf.setFont("Helvetica", 9)
+    pdf.setFillColor(INV_INK_SOFT)
+    pdf.drawString(left, 16 * mm, f"\u00bfDudas sobre esta factura? Escr\u00edbenos a {doc['contact_email']}.")
+    pdf.setFont("Helvetica", 8)
+    pdf.setFillColor(INV_FAINT)
+    pdf.drawString(left, 11 * mm, "VYNTRA \u00b7 Managua, Nicaragua")
+
+    pdf.showPage()
     pdf.save()
     return buffer.getvalue()

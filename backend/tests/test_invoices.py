@@ -472,3 +472,33 @@ def test_system_overview_billing_reminder(billing, monkeypatch):
     assert summary["last_invoice"]["number"] == "VYN-202610-0001"
     assert summary["last_invoice"]["status"] == "sent"
     assert summary["last_invoice"]["period_start"] == "2026-09-15"
+
+
+def test_invoice_pdf_draft_and_history(billing, db):
+    client, headers, company_id = billing["client"], billing["headers"], billing["company_id"]
+    draft = client.post(
+        f"/api/system/companies/{company_id}/invoices/pdf",
+        headers=headers,
+        json={"period_start": "2026-09-15", "active_users": 3},
+    )
+    assert draft.status_code == 200
+    assert draft.headers["content-type"] == "application/pdf"
+    assert 'filename="Factura-VYN-202610-0001.pdf"' in draft.headers["content-disposition"]
+    assert draft.content.startswith(b"%PDF")
+    # Descargar el borrador no crea la factura.
+    assert db.query(Invoice).count() == 0
+
+    invoice = client.post(
+        f"/api/system/companies/{company_id}/invoices/send", headers=headers, json={"period_start": "2026-09-15"}
+    ).json()["invoice"]
+    stored = client.get(f"/api/system/invoices/{invoice['id']}/pdf", headers=headers)
+    assert stored.status_code == 200
+    assert stored.content.startswith(b"%PDF")
+    assert client.get("/api/system/invoices/no-existe/pdf", headers=headers).status_code == 404
+
+
+def test_invoice_pdf_requires_system_admin(billing):
+    client, headers, company_id = billing["client"], billing["company_headers"], billing["company_id"]
+    body = {"period_start": "2026-09-15"}
+    assert client.post(f"/api/system/companies/{company_id}/invoices/pdf", headers=headers, json=body).status_code == 403
+    assert client.get("/api/system/invoices/cualquiera/pdf", headers=headers).status_code == 403

@@ -221,17 +221,17 @@ def test_samples_are_capped_per_event(db, setup, client):
     assert body["accepted"][0]["activity_samples_inserted"] == MAX_SAMPLES_PER_EVENT
 
 
-def test_controlled_rejection_keeps_spanish_message(db, setup, client):
+def test_web_station_shift_start_does_not_require_extension(db, setup, client):
     start = datetime.now(timezone.utc) - timedelta(minutes=5)
     event = snapshot_event(start, [], web_station=True, extension_connected=False)
     event["tipo"] = "shift_started"
     body = post_events(client, [event])
-    assert body["ok"] is False
-    rejection = body["rejected"][0]
-    assert rejection["code"] == "extension_required"
-    assert "extension" in rejection["error"].lower()
+    assert body["ok"] is True
+    assert body["accepted"][0]["id"] == event["id"]
+    assert body["rejected"] == []
     db.expire_all()
-    assert db.query(AgentEventReceipt).count() == 0
+    assert db.query(AgentEventReceipt).count() == 1
+    assert db.query(Shift).count() == 1
 
 
 def test_unexpected_errors_do_not_leak_details(db, setup, client, monkeypatch):

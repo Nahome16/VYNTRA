@@ -838,7 +838,7 @@ def public_station_line() -> str:
         return ""
     return (
         f"\nEstacion de marcaje web: {station_url}\n"
-        "Extension requerida: descarga VYNTRA Browser desde la estacion de marcaje.\n"
+        "Extension opcional: descarga VYNTRA Browser desde la estacion si necesitas evidencias del navegador.\n"
     )
 
 
@@ -3116,40 +3116,10 @@ def ensure_web_station_shift_can_start(db: Session, device: Device, payload: dic
         )
 
 
-WEB_STATION_EXTENSION_REQUIRED_EVENTS = {
-    "shift_started",
-    "shift_finished",
-    "shift_restored_by_admin",
-    "break_started",
-    "break_finished",
-    "lunch_started",
-    "lunch_finished",
-    "overtime_requested",
-    "overtime_started",
-    "overtime_finished",
-}
-
-
 def ensure_web_station_extension_connected(event_type: str, payload: dict):
-    if not payload.get("web_station") or event_type not in WEB_STATION_EXTENSION_REQUIRED_EVENTS:
-        return
-    if not payload.get("extension_connected"):
-        raise AgentEventRejected(
-            "La extension VYNTRA Browser debe estar conectada para marcar jornada.",
-            "extension_required",
-        )
-    last_seen_ms = payload.get("extension_last_seen_ms_ago")
-    if last_seen_ms is None:
-        return
-    try:
-        last_seen = int(last_seen_ms)
-    except (TypeError, ValueError) as exc:
-        raise AgentEventRejected("Estado de extension invalido.", "extension_state_invalid") from exc
-    if last_seen > 20000:
-        raise AgentEventRejected(
-            "La extension VYNTRA Browser no respondio recientemente.",
-            "extension_stale",
-        )
+    # La extension del navegador es opcional para la estacion web. Cuando esta
+    # conectada aporta evidencias adicionales, pero nunca debe bloquear marcajes.
+    return
 
 
 def ensure_web_station_password_changed(db: Session, device: Device, event_type: str, payload: dict):

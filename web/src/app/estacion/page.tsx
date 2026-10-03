@@ -87,7 +87,7 @@ const stationLoginCopy = {
     close: "Cerrar",
     extensionReady: "✓ Extension conectada",
     extensionOutdated: (version: string | null) => `Extension incompatible · v${version || "anterior"}`,
-    extensionRequired: "Extension requerida para marcar jornada",
+    extensionRequired: "Extension opcional para evidencias del navegador",
     install: "Instalar",
     update: "Actualizar",
     howModalEyebrow: "Estacion de marcaje",
@@ -95,13 +95,13 @@ const stationLoginCopy = {
     howModalIntro: "La estacion registra tu jornada laboral y mantiene evidencia de actividad mientras estas marcado como trabajando.",
     howModalItems: [
       "Inicias sesion con tus credenciales laborales y marcas entrada, descansos, almuerzo y salida.",
-      "La extension valida que esta instalada y en una version compatible antes de permitir el marcaje.",
+      "La extension es opcional y agrega capturas autorizadas y actividad de navegador cuando esta conectada.",
       "Durante la jornada activa toma capturas autorizadas cada 5 minutos como respaldo de trabajo.",
       "La extension puede seguir registrando actividad del navegador si cierras la pestana, pero debes volver a la estacion para break, lunch o finalizar jornada.",
       "La zona horaria se selecciona dentro de la estacion despues de iniciar sesion.",
     ],
-    howModalNote: "Sin una extension compatible, la estacion bloquea el marcaje hasta completar la instalacion.",
-    extensionRequiredEyebrow: "Extension requerida",
+    howModalNote: "Puedes marcar jornada sin extension; instalala cuando necesites evidencias del navegador.",
+    extensionRequiredEyebrow: "Extension opcional",
     extensionNewVersion: `Nueva version ${latestExtensionVersion}`,
     extensionModalTitle: `Nueva version ${latestExtensionVersion}`,
     extensionModalIntro: "Instala o actualiza VYNTRA Browser para usar la estacion de marcaje con actividad en otras pestanas y capturas autorizadas cada 5 minutos durante la jornada activa.",
@@ -113,7 +113,7 @@ const stationLoginCopy = {
       "Vuelve a esta estacion y espera a que el estado cambie a actualizado.",
     ],
     downloadUpdate: "Descargar actualizacion",
-    extensionModalNote: "Sin esta version de la extension no se puede abrir ni marcar la jornada.",
+    extensionModalNote: "La estacion permite marcar sin extension; esta version solo mejora las evidencias del navegador.",
     status: {
       verifyingCredentials: "Verificando credenciales...",
       signedIn: "Sesion iniciada",
@@ -157,7 +157,7 @@ const stationLoginCopy = {
     close: "Close",
     extensionReady: "✓ Extension connected",
     extensionOutdated: (version: string | null) => `Incompatible extension · v${version || "previous"}`,
-    extensionRequired: "Extension required to clock in",
+    extensionRequired: "Optional extension for browser evidence",
     install: "Install",
     update: "Update",
     howModalEyebrow: "Time clock station",
@@ -165,13 +165,13 @@ const stationLoginCopy = {
     howModalIntro: "The station records your workday and keeps activity evidence while you are clocked in as working.",
     howModalItems: [
       "Sign in with your employee credentials and record start, breaks, lunch, and end of day.",
-      "The extension confirms it is installed and compatible before clocking is allowed.",
+      "The extension is optional and adds authorized screenshots and browser activity when connected.",
       "During an active workday it takes authorized screenshots every 5 minutes as work evidence.",
       "The extension can keep recording browser activity if you close the tab, but you must return to the station for breaks, lunch or clock-out.",
       "The time zone is selected inside the station after signing in.",
     ],
-    howModalNote: "Without a compatible extension, the station blocks clocking until setup is complete.",
-    extensionRequiredEyebrow: "Extension required",
+    howModalNote: "You can clock in without the extension; install it when browser evidence is needed.",
+    extensionRequiredEyebrow: "Optional extension",
     extensionNewVersion: `New version ${latestExtensionVersion}`,
     extensionModalTitle: `New version ${latestExtensionVersion}`,
     extensionModalIntro: "Install or update VYNTRA Browser to use the time clock with activity in other tabs and authorized screenshots every 5 minutes during an active workday.",
@@ -183,7 +183,7 @@ const stationLoginCopy = {
       "Return to this station and wait for the status to change to updated.",
     ],
     downloadUpdate: "Download update",
-    extensionModalNote: "Without this extension version, the station cannot be opened or used to clock in.",
+    extensionModalNote: "The station can be used without the extension; this version only improves browser evidence.",
     status: {
       verifyingCredentials: "Verifying credentials...",
       signedIn: "Signed in",
@@ -565,19 +565,6 @@ function closeCurrentPhase(state: StationState): StationState {
   };
 }
 
-function freezeAccruingState(state: StationState): StationState {
-  const current = totals(state, true);
-  return {
-    ...state,
-    workBase: current.work,
-    breakBase: current.breakSeconds,
-    lunchBase: current.lunch,
-    overtimeBase: current.overtime,
-    phaseStartedAt: null,
-    overtimeStartedAt: state.overtimeStatus === "ACTIVA" ? null : state.overtimeStartedAt,
-  };
-}
-
 async function postStation<T>(token: string, path: string, body: unknown): Promise<T> {
   return requestJson<T>(path, {
     method: "POST",
@@ -678,7 +665,7 @@ function ExtensionDownloadCard({ compact = false }: { compact?: boolean }) {
         <h2>Extension VYNTRA Browser</h2>
         <span>Version {latestExtensionVersion}</span>
       </div>
-      <p>Es requerida para marcar jornada. Esta version agrega capturas automaticas autorizadas cada 5 minutos mientras la jornada esta activa.</p>
+      <p>Es opcional para marcar jornada. Esta version agrega capturas automaticas autorizadas cada 5 minutos mientras la jornada esta activa.</p>
       <a className="station-download-button" href={extensionDownloadHref} download>
         Descargar actualizacion
       </a>
@@ -689,7 +676,7 @@ function ExtensionDownloadCard({ compact = false }: { compact?: boolean }) {
         <li>Elige cargar extension sin empaquetar y selecciona la carpeta descargada.</li>
         <li>Vuelve a esta estacion e inicia sesion.</li>
       </ol>
-      <small>La estacion no permite iniciar, pausar, reabrir ni finalizar jornada si la extension no esta conectada o no es compatible.</small>
+      <small>La estacion permite marcar sin extension; al conectarla se habilitan evidencias adicionales del navegador.</small>
     </section>
   );
 }
@@ -822,8 +809,6 @@ export default function StationPage() {
   // El reloj y los contadores por segundo viven en StationClockFace/StationLiveMetrics.
   const [, setRenderTick] = useState(0);
   const activityRef = useRef({ clicks: 0, focusChanges: 0, lastInteraction: Date.now() });
-  const extensionProbeStartedAtRef = useRef(Date.now());
-  const extensionWasBlockedRef = useRef(false);
   const howWorksDialogRef = useDialog<HTMLElement>(howWorksDialogOpen, () => setHowWorksDialogOpen(false));
   const extensionDialogRef = useDialog<HTMLElement>(extensionDialogOpen, () => setExtensionDialogOpen(false));
   const legalDialogRef = useDialog<HTMLElement>(legalDialogOpen, () => setLegalDialogOpen(false));
@@ -849,8 +834,7 @@ export default function StationPage() {
   const extensionUpdateAvailable = extensionReachable && extensionMeetsMinimum && !extensionUpToDate;
   const extensionConnected = extensionReachable && extensionMeetsMinimum;
   const extensionMissing = !extensionReachable;
-  const extensionGraceActive = !extensionStatus.lastSeenAt && Date.now() - extensionProbeStartedAtRef.current < 3000;
-  const canAccrueTime = extensionConnected || extensionGraceActive;
+  const canAccrueTime = true;
   const currentTotals = totals(stationState, canAccrueTime);
   const canAcceptConsent = consentChecks.every(Boolean);
   const needsPasswordChange = Boolean(session?.credential.password_change_required);
@@ -897,20 +881,13 @@ export default function StationPage() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // Re-render exacto cuando la ultima senal de la extension caduca (15 s) y
-  // cuando termina el periodo de gracia inicial (3 s).
+  // Re-render exacto cuando la ultima senal de la extension caduca (15 s).
   useEffect(() => {
     if (!extensionStatus.lastSeenAt) return undefined;
     const delay = Math.max(0, extensionStatus.lastSeenAt + 15000 - Date.now() + 50);
     const timer = window.setTimeout(() => setRenderTick((value) => value + 1), delay);
     return () => window.clearTimeout(timer);
   }, [extensionStatus.lastSeenAt]);
-
-  useEffect(() => {
-    const delay = Math.max(0, extensionProbeStartedAtRef.current + 3000 - Date.now() + 50);
-    const timer = window.setTimeout(() => setRenderTick((value) => value + 1), delay);
-    return () => window.clearTimeout(timer);
-  }, []);
 
   useEffect(() => {
     const onClick = () => {
@@ -965,36 +942,6 @@ export default function StationPage() {
     }, 5000);
     return () => window.clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (!ready || !shiftActive) {
-      extensionWasBlockedRef.current = false;
-      return;
-    }
-
-    if (!extensionConnected && !extensionGraceActive) {
-      extensionWasBlockedRef.current = true;
-      const freezeTimer = window.setTimeout(() => setStationState((current) => {
-        if (!["TRABAJANDO", "BREAK", "LUNCH"].includes(current.status)) return current;
-        if (current.phaseStartedAt === null && (current.overtimeStatus !== "ACTIVA" || current.overtimeStartedAt === null)) return current;
-        return freezeAccruingState(current);
-      }), 0);
-      return () => window.clearTimeout(freezeTimer);
-    }
-
-    if (extensionConnected && extensionWasBlockedRef.current) {
-      extensionWasBlockedRef.current = false;
-      const resumeTimer = window.setTimeout(() => setStationState((current) => {
-        if (!["TRABAJANDO", "BREAK", "LUNCH"].includes(current.status)) return current;
-        return {
-          ...current,
-          phaseStartedAt: current.phaseStartedAt ?? Date.now(),
-          overtimeStartedAt: current.overtimeStatus === "ACTIVA" ? Date.now() : current.overtimeStartedAt,
-        };
-      }), 0);
-      return () => window.clearTimeout(resumeTimer);
-    }
-  }, [ready, shiftActive, extensionConnected, extensionGraceActive]);
 
   useEffect(() => {
     if (!session?.token) return;
@@ -1133,16 +1080,6 @@ export default function StationPage() {
     window.localStorage.setItem(loginLanguageKey, nextLanguage);
   }
 
-  function requireExtension() {
-    if (extensionConnected) return true;
-    if (extensionNeedsUpdate) {
-      setStatusText(`La extension instalada no es compatible. Instala VYNTRA Browser ${requiredExtensionVersion} o superior para marcar jornada.`);
-      return false;
-    }
-    setStatusText("Instala y conecta la extension VYNTRA Browser para marcar jornada.");
-    return false;
-  }
-
   /** Envia la cola del empleado de `activeSession` con su propio token. */
   async function runFlush(activeSession: StationSession | null) {
     if (!activeSession?.token || !activeSession.employee?.id) return;
@@ -1249,11 +1186,6 @@ export default function StationPage() {
 
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!extensionConnected) {
-      setExtensionDialogOpen(true);
-      requireExtension();
-      return;
-    }
     setBusy(true);
     setStatusText(loginText.status.verifyingCredentials);
     try {
@@ -1382,14 +1314,12 @@ export default function StationPage() {
   }
 
   async function transition(type: string, makeState: (state: StationState) => StationState) {
-    if (!requireExtension()) return;
     const next = makeState(stationState);
     setStationState(next);
     await sendEvent(type, next);
   }
 
   async function startShift() {
-    if (!requireExtension()) return;
     if (closedToday) {
       setStatusText("Ya activaste y cerraste la jornada de hoy. Ingresa codigo de reactivacion para reabrirla.");
       return;
@@ -1438,7 +1368,6 @@ export default function StationPage() {
 
   async function activateOvertime() {
     if (!session || !accessCode.trim()) return;
-    if (!requireExtension()) return;
     setBusy(true);
     try {
       const response = await postStation<{
@@ -1465,7 +1394,6 @@ export default function StationPage() {
 
   async function restoreShift() {
     if (!session || !accessCode.trim() || stationState.status !== "TERMINADO") return;
-    if (!requireExtension()) return;
     setBusy(true);
     try {
       await postStation(session.token, "/api/station/access-codes/consume", {
@@ -1661,7 +1589,7 @@ export default function StationPage() {
                   {loginText.forgotPassword}
                 </button>
               </div>
-              <button type="submit" className="station-primary" disabled={busy || !extensionConnected}>{busy ? loginText.verifying : loginText.enter}</button>
+              <button type="submit" className="station-primary" disabled={busy}>{busy ? loginText.verifying : loginText.enter}</button>
             </form>
             <p className={`station-extension-status ${extensionStatusClass}`}>
               <span>{extensionStatusText}</span>
@@ -1799,14 +1727,14 @@ export default function StationPage() {
           </div>
           <div className="station-consent-copy">
             <p>Esta estacion registra tu jornada laboral, pausas, almuerzo, horas extra, incidencias y actividad dentro de esta pagina mientras tu jornada este activa.</p>
-            <p>La extension VYNTRA Browser es requerida para marcar. Registra actividad autorizada del navegador, no aplicaciones externas, teclas globales, camara, microfono ni archivos personales.</p>
+            <p>La extension VYNTRA Browser es opcional para marcar. Si esta conectada, registra actividad autorizada del navegador, no aplicaciones externas, teclas globales, camara, microfono ni archivos personales.</p>
           </div>
           <div className="station-check-list">
             {[
               "Lei y comprendi el aviso de monitoreo web.",
               "Entiendo que esta estacion registra marcajes y eventos de asistencia.",
-              "Entiendo que debo mantener conectada la extension VYNTRA Browser para marcar.",
-              "Autorizo el uso de la estacion web y la extension durante mi jornada laboral.",
+              "Entiendo que la extension VYNTRA Browser es opcional y aporta evidencias adicionales del navegador cuando esta conectada.",
+              "Autorizo el uso de la estacion web y, cuando corresponda, la extension durante mi jornada laboral.",
             ].map((label, index) => (
               <label key={label}>
                 <input
@@ -1828,23 +1756,21 @@ export default function StationPage() {
     );
   }
 
-  const canMark = extensionConnected && !busy;
+  const canMark = !busy;
   const canStartNewShift = stationState.status === "FUERA" || (stationState.status === "TERMINADO" && !closedToday);
-  const extensionBlockText = extensionNeedsUpdate
-    ? `La extension instalada no es compatible. Instala VYNTRA Browser ${requiredExtensionVersion} o superior.`
-    : "Marcaje bloqueado hasta conectar la extension.";
+  const extensionHintText = extensionNeedsUpdate
+    ? `La extension instalada no es compatible para evidencias. Instala VYNTRA Browser ${requiredExtensionVersion} o superior.`
+    : "Extension no conectada: puedes marcar jornada, pero no se capturaran evidencias del navegador.";
   const extensionStatusText = extensionNeedsUpdate
-    ? `Instala version ${requiredExtensionVersion} o superior`
+    ? `Actualiza a version ${requiredExtensionVersion} o superior`
     : "Instala VYNTRA Browser";
   const statusCopy: Record<StationStatus, { label: string; capture: string; detail: string }> = {
     FUERA: {
       label: "Fuera de jornada",
-      capture: extensionConnected ? "Registro detenido" : extensionNeedsUpdate ? "Actualizacion requerida" : "Extension requerida",
+      capture: "Registro detenido",
       detail: extensionConnected
-        ? "Selecciona iniciar jornada para comenzar el registro web."
-        : extensionNeedsUpdate
-        ? `Instala VYNTRA Browser ${requiredExtensionVersion} o superior para habilitar el marcaje.`
-        : "Instala y conecta VYNTRA Browser para habilitar el marcaje.",
+        ? "Selecciona iniciar jornada para comenzar el registro web con evidencias del navegador."
+        : "Selecciona iniciar jornada para comenzar. La extension es opcional para evidencias del navegador.",
     },
     TRABAJANDO: {
       label: "Jornada activa",
@@ -1961,7 +1887,7 @@ export default function StationPage() {
 
           <div className="station-action-row">
             {visibleActions}
-            {!extensionConnected ? <p className="station-ended-copy">{extensionBlockText}</p> : null}
+            {!extensionConnected ? <p className="station-ended-copy">{extensionHintText}</p> : null}
             {closedToday ? <p className="station-ended-copy">Jornada finalizada. Ingresa codigo de reactivacion en ajustes.</p> : null}
           </div>
 
@@ -2019,8 +1945,8 @@ export default function StationPage() {
               <article>
                 <span>B</span>
                 <div>
-                  <strong>{extensionConnected ? "Extension conectada" : "Marcaje bloqueado"}</strong>
-                  <small>{extensionConnected ? (extensionStatus.tracking ? "Navegador activo" : "Lista para marcar") : extensionStatusText}</small>
+                  <strong>{extensionConnected ? "Extension conectada" : "Extension opcional"}</strong>
+                  <small>{extensionConnected ? (extensionStatus.tracking ? "Navegador activo" : "Evidencias listas") : extensionStatusText}</small>
                 </div>
               </article>
             </div>
@@ -2103,8 +2029,8 @@ export default function StationPage() {
               <p>Esta estacion registra tu jornada laboral, pausas, almuerzo, horas extra, incidencias y actividad dentro de esta pagina mientras tu jornada este activa.</p>
             </header>
             <ul className="station-info-list">
-              <li>La extension VYNTRA Browser es requerida para marcar. Registra actividad autorizada del navegador, no aplicaciones externas, teclas globales, camara, microfono ni archivos personales.</li>
-              <li>Durante la jornada activa toma capturas autorizadas cada 5 minutos como respaldo de trabajo.</li>
+              <li>La extension VYNTRA Browser es opcional para marcar. Si esta conectada, registra actividad autorizada del navegador, no aplicaciones externas, teclas globales, camara, microfono ni archivos personales.</li>
+              <li>Cuando la extension esta conectada durante la jornada activa, toma capturas autorizadas cada 5 minutos como respaldo de trabajo.</li>
             </ul>
             <a className="station-download-button" href="/privacy" target="_blank" rel="noopener noreferrer">
               Ver aviso de privacidad completo

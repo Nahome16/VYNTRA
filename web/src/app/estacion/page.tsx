@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState, type CSSProperties } from "react";
+import { VyntraMark } from "@/components/brand";
 import { classifyLoginError, isApiError, requestJson, retryAfterMinutes } from "@/lib/api";
 import { zonedDateISO } from "@/lib/dates";
 import { useDialog } from "@/lib/use-dialog";
@@ -1505,7 +1506,7 @@ export default function StationPage() {
   }
 
   if (!ready) {
-    return <main className="station-public-shell"><div className="station-brand-mark">V</div></main>;
+    return <main className="station-public-shell"><div className="station-brand-mark"><VyntraMark /></div></main>;
   }
 
   if (!session) {
@@ -1529,7 +1530,7 @@ export default function StationPage() {
         <div className="station-public-layout station-login-layout">
           <section className="station-login-hero" aria-label={loginText.ariaStation}>
             <div className="station-login-brand station-login-brand-hero">
-              <div className="station-brand-mark">V</div>
+              <div className="station-brand-mark"><VyntraMark /></div>
               <div>
                 <span>VYNTRA</span>
                 <strong>{loginText.brandSubtitle}</strong>
@@ -1683,7 +1684,7 @@ export default function StationPage() {
       <main className="station-public-shell">
         <section className="station-login-panel">
           <div className="station-login-brand">
-            <div className="station-brand-mark">V</div>
+            <div className="station-brand-mark"><VyntraMark /></div>
             <div>
               <span>{session.employee.full_name}</span>
               <h1>Cambia tu contrasena</h1>
@@ -1713,7 +1714,7 @@ export default function StationPage() {
       <main className="station-public-shell">
         <section className="station-consent-panel">
           <div className="station-login-brand">
-            <div className="station-brand-mark">V</div>
+            <div className="station-brand-mark"><VyntraMark /></div>
             <div>
               <span>{session.employee.full_name}</span>
               <h1>Aviso de estacion web</h1>
@@ -1842,7 +1843,7 @@ export default function StationPage() {
     <main className="station-workspace">
       <header className="station-topbar">
         <div className="station-title-lockup">
-          <div className="station-brand-mark">V</div>
+          <div className="station-brand-mark"><VyntraMark /></div>
           <div>
             <strong>VYNTRA</strong>
             <span>Estacion de marcaje</span>
@@ -1888,7 +1889,7 @@ export default function StationPage() {
 
         <aside className="station-side-panel">
           <section className="station-logo-card">
-            <div className="station-logo-tile">V</div>
+            <div className="station-logo-tile"><VyntraMark /></div>
             <div>
               <h2>VYNTRA</h2>
               <strong>Agente empresarial</strong>

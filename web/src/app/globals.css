@@ -417,20 +417,10 @@ textarea:focus-visible {
   text-decoration: none;
 }
 
-.legal-brand span {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--primary);
-  color: #fff;
-  font-weight: 850;
-}
-
-.legal-brand strong {
-  font-size: 15px;
-  font-weight: 800;
+.legal-wordmark {
+  display: block;
+  width: auto;
+  height: 15px;
 }
 
 .legal-login {
@@ -6332,4 +6322,23 @@ tbody tr:hover {
 }
 
 .system-notice-dismiss {margin-left: 8px;border: 0;background: transparent;color: inherit;font: inherit;font-size: 16px;line-height: 1;cursor: pointer;padding: 0 4px;
+}
+
+/* ==========================================================================
+   Marca VYNTRA: monograma en blanco y negro dentro de los mosaicos
+   ========================================================================== */
+
+.brand-mark svg,
+.station-brand-mark svg,
+.station-logo-tile svg {
+  display: block;
+  width: 64%;
+  height: auto;
+}
+
+.station-brand-mark,
+.station-login-brand-hero .station-brand-mark,
+.station-logo-tile {
+  background: #ffffff;
+  color: #0a0a0a;
 }

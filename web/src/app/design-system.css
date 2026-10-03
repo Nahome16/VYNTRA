@@ -61,23 +61,17 @@ body {
   gap: 10px;
 }
 
-.app-shell .brand-mark {
+.app-shell .brand-lockup {
   display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
-  border-radius: 8px;
-  background: var(--primary);
-  color: #fff;
-  font-size: 15px;
-  font-weight: 700;
-  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.12);
+  gap: 7px;
+  padding: 4px 0 2px;
 }
 
-.app-shell .brand-row strong {
-  font-size: 14px;
-  font-weight: 650;
-  letter-spacing: 0.14em;
+.app-shell .brand-wordmark {
+  display: block;
+  width: auto;
+  height: 14px;
+  color: var(--ink);
 }
 
 .app-shell .brand-row span {
@@ -1132,9 +1126,13 @@ body {
   width: 44px;
   height: 44px;
   border-radius: 11px;
-  background: var(--primary);
+  background: #0a0a0a;
   color: #fff;
-  font-size: 22px;
+}
+
+[data-theme="dark"] .loading-shell .brand-mark {
+  background: #fff;
+  color: #0a0a0a;
 }
 
 /* --- Pantallas pequenas ---------------------------------------------------- */

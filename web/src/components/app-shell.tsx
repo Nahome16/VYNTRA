@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
+import { VyntraMark, VyntraWordmark } from "@/components/brand";
 import { usePreferences } from "@/components/preferences-provider";
 import { requiredPermissionFor } from "@/lib/permissions";
 import { SystemCompany, SystemOverviewResponse } from "@/lib/types";
@@ -210,7 +211,9 @@ export function AppShell({
   if (!ready || !user) {
     return (
       <main className="loading-shell">
-        <div className="brand-mark">V</div>
+        <div className="brand-mark">
+          <VyntraMark />
+        </div>
       </main>
     );
   }
@@ -243,9 +246,8 @@ export function AppShell({
       <aside className="sidebar" aria-label={t("Navegacion principal")}>
         <div className="sidebar-head">
           <div className="brand-row">
-            <div className="brand-mark">V</div>
-            <div>
-              <strong>VYNTRA</strong>
+            <div className="brand-lockup">
+              <VyntraWordmark className="brand-wordmark" title="VYNTRA" />
               <span>Control</span>
             </div>
           </div>

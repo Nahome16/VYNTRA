@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { VyntraWordmark } from "@/components/brand";
 
 export const metadata: Metadata = {
   title: "Politica de privacidad | VYNTRA",
@@ -78,8 +79,7 @@ export default function PrivacyPage() {
     <main className="legal-page">
       <nav className="legal-nav" aria-label="VYNTRA">
         <Link href="/" className="legal-brand">
-          <span>V</span>
-          <strong>VYNTRA</strong>
+          <VyntraWordmark className="legal-wordmark" title="VYNTRA" />
         </Link>
         <Link href="/login" className="legal-login">Ingresar</Link>
       </nav>

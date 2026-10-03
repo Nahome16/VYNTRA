@@ -3,6 +3,7 @@
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
+import { VyntraWordmark } from "@/components/brand";
 import { usePreferences } from "@/components/preferences-provider";
 import { classifyLoginError, isApiError, retryAfterMinutes } from "@/lib/api";
 import styles from "./login-screen.module.css";
@@ -139,16 +140,6 @@ function AlertIcon({ tone }: { tone: LoginAlert["tone"] }) {
       <circle cx="12" cy="12" r="8.5" />
       <path d={tone === "info" ? "M12 11v5M12 8h.01" : "M12 7.5v5M12 16h.01"} />
     </svg>
-  );
-}
-
-function BrandMark({ className }: { className?: string }) {
-  return (
-    <span className={cx(styles.mark, className)} aria-hidden>
-      <svg viewBox="0 0 24 24" focusable="false">
-        <path d="M5 6.5 12 18l7-11.5" />
-      </svg>
-    </span>
   );
 }
 
@@ -338,11 +329,8 @@ export function LoginScreen() {
         <div className={styles.glow} />
         <div className={styles.grid} />
         <div className={styles.brandTop}>
-          <BrandMark />
-          <div className={styles.wordmark}>
-            <strong>VYNTRA</strong>
-            <small>{t("Control administrativo")}</small>
-          </div>
+          <VyntraWordmark className={styles.logo} />
+          <small>{t("Control administrativo")}</small>
         </div>
 
         <div className={styles.brandCopy}>
@@ -370,8 +358,7 @@ export function LoginScreen() {
       <section className={styles.panel} aria-label={t("Acceso administrativo")}>
         <header className={styles.panelTop}>
           <div className={styles.mobileBrand}>
-            <BrandMark className={styles.markSmall} />
-            <strong>VYNTRA</strong>
+            <VyntraWordmark className={styles.mobileLogo} title="VYNTRA" />
           </div>
           <div className={styles.prefs} aria-label={t("Preferencias")}>
             <button type="button" className={styles.prefButton} onClick={toggleTheme} title={themeLabel} aria-label={themeLabel}>

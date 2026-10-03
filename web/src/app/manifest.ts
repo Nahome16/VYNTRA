@@ -15,6 +15,16 @@ export default function manifest(): MetadataRoute.Manifest {
         sizes: "48x48",
         type: "image/x-icon",
       },
+      {
+        src: "/brand/vyntra-icon-192.png",
+        sizes: "192x192",
+        type: "image/png",
+      },
+      {
+        src: "/brand/vyntra-icon-512.png",
+        sizes: "512x512",
+        type: "image/png",
+      },
     ],
   };
 }

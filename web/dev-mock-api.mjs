@@ -327,48 +327,88 @@ function csvLogs(logs) {
   return rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\n");
 }
 
-function dashboardPayload(company) {
-  const scopedEmployees = employeesForCompany(company.id);
-  const totals = {
-    total_seconds: 201600,
-    active_seconds: 176400,
-    productive_seconds: 118800,
-    neutral_seconds: 32400,
-    non_productive_seconds: 14400,
-    uncategorized_seconds: 10800,
-    idle_seconds: 25200,
-    break_seconds: 7200,
-    lunch_seconds: 14400,
-    justified_seconds: 3600,
-    productivity_pct: 67,
-    acceptable_pct: 85,
-    non_productive_pct: 8,
-    neutral_pct: 18,
-    uncategorized_pct: 6,
-    idle_pct: 14,
+function mockTotals(active, productive, neutral, nonProductive, uncategorized, idle) {
+  const total = active + idle;
+  const pct = (part, whole) => (whole ? Math.round((part / whole) * 1000) / 10 : 0);
+  return {
+    total_seconds: total,
+    active_seconds: active,
+    productive_seconds: productive,
+    neutral_seconds: neutral,
+    non_productive_seconds: nonProductive,
+    uncategorized_seconds: uncategorized,
+    idle_seconds: idle,
+    break_seconds: 1800,
+    lunch_seconds: 3600,
+    justified_seconds: 0,
+    productivity_pct: pct(productive + neutral, active),
+    acceptable_pct: pct(productive + neutral, active),
+    non_productive_pct: pct(nonProductive, active),
+    neutral_pct: pct(neutral, active),
+    uncategorized_pct: pct(uncategorized, active),
+    idle_pct: pct(idle, total),
+    break_pct: 0,
+    lunch_pct: 0,
   };
+}
+
+function dashboardPayload(company, url) {
+  const scopedEmployees = employeesForCompany(company.id);
+  const today = new Date().toISOString().slice(0, 10);
+  // El periodo anterior (termina antes de hoy) rinde un poco menos, para ver las comparaciones.
+  const previous = (url?.searchParams.get("date_to") || today) < today;
+  const profiles = [
+    [27000, 19800, 3600, 1800, 1800, 3600],
+    [25200, 12600, 3600, 6300, 2700, 6300],
+    [28800, 21600, 4500, 1500, 1200, 2400],
+  ];
+  const blocks = [];
+  const days = [];
+  for (let offset = 6; offset >= 0; offset -= 1) {
+    const date = new Date(Date.now() - offset * 86400000).toISOString().slice(0, 10);
+    const dayParts = [0, 0, 0, 0, 0, 0];
+    scopedEmployees.forEach((employee, index) => {
+      const base = profiles[index % profiles.length];
+      const wobble = ((offset * 7 + index * 3) % 5) - 2;
+      const factor = previous ? 0.93 : 1;
+      const parts = [
+        base[0],
+        Math.round(base[1] * factor * (1 + wobble * 0.03)),
+        base[2],
+        Math.round(base[3] * (previous ? 1.25 : 1)),
+        base[4],
+        Math.round(base[5] * (previous ? 1.2 : 1)),
+      ];
+      parts[1] = Math.min(parts[1], parts[0] - parts[2] - parts[3] - parts[4]);
+      parts.forEach((value, i) => (dayParts[i] += value));
+      blocks.push({
+        id: `blk-${employee.id}-${date}`,
+        employee_id: employee.id,
+        department_id: employee.department_id,
+        block_date: date,
+        block_start: `${date}T08:00:00`,
+        break_lunch_seconds: 5400,
+        ...mockTotals(...parts),
+      });
+    });
+    days.push({ block_date: date, break_lunch_seconds: 0, ...mockTotals(...dayParts) });
+  }
+  const sum = (key) => blocks.reduce((acc, block) => acc + block[key], 0);
+  const totals = mockTotals(
+    sum("active_seconds"),
+    sum("productive_seconds"),
+    sum("neutral_seconds"),
+    sum("non_productive_seconds"),
+    sum("uncategorized_seconds"),
+    sum("idle_seconds"),
+  );
   return {
     company: { id: company.id, name: company.name },
     filters: { date_from: null, date_to: null, employee_id: null, department_id: null },
     totals,
-    days: [
-      { block_date: "2026-08-18", ...totals },
-      { block_date: "2026-08-19", ...totals, productivity_pct: 64 },
-      { block_date: "2026-08-20", ...totals, productivity_pct: 71 },
-    ],
+    days,
     adjustments: [],
-    blocks: scopedEmployees.map((employee, index) => ({
-      id: `blk-${employee.id}`,
-      employee_id: employee.id,
-      employee: employee.full_name,
-      department: departments.find((item) => item.id === employee.department_id)?.name || "",
-      block_date: "2026-08-20",
-      executable_name: index === 1 ? "chrome.exe" : "excel.exe",
-      title_text: index === 1 ? "CRM" : "Reporte diario",
-      classification: index === 1 ? "neutral" : "productive",
-      seconds: 14400 - index * 900,
-      samples: 48 - index * 5,
-    })),
+    blocks,
   };
 }
 
@@ -616,7 +656,58 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (path === "/api/productivity/dashboard") {
-    send(res, 200, dashboardPayload(companyFromRequest(url)));
+    send(res, 200, dashboardPayload(companyFromRequest(url), url));
+    return;
+  }
+
+  const employeeDetailMatch = path.match(/^\/api\/employees\/([^/]+)\/detail$/);
+  if (employeeDetailMatch && req.method === "GET") {
+    const company = companyFromRequest(url);
+    const employee = employeesForCompany(company.id).find((item) => item.id === employeeDetailMatch[1]);
+    if (!employee) {
+      send(res, 404, { detail: "Empleado no encontrado" });
+      return;
+    }
+    const payload = dashboardPayload(company, url);
+    const blocks = payload.blocks.filter((block) => block.employee_id === employee.id);
+    const sum = (key) => blocks.reduce((acc, block) => acc + (block[key] || 0), 0);
+    send(res, 200, {
+      company: { id: company.id, name: company.name },
+      filters: { date_from: url.searchParams.get("date_from"), date_to: url.searchParams.get("date_to") },
+      employee: {
+        ...employee,
+        department: departments.find((item) => item.id === employee.department_id)?.name || null,
+        position: positions.find((item) => item.id === employee.position_id)?.name || null,
+      },
+      totals: mockTotals(
+        sum("active_seconds"),
+        sum("productive_seconds"),
+        sum("neutral_seconds"),
+        sum("non_productive_seconds"),
+        sum("uncategorized_seconds"),
+        sum("idle_seconds"),
+      ),
+      days: blocks.map((block) => ({
+        date: block.block_date,
+        active_seconds: block.active_seconds,
+        productive_seconds: block.productive_seconds,
+        neutral_seconds: block.neutral_seconds,
+        non_productive_seconds: block.non_productive_seconds,
+        idle_seconds: block.idle_seconds,
+        break_seconds: block.break_seconds,
+        lunch_seconds: block.lunch_seconds,
+        justified_seconds: 0,
+      })),
+      apps: [
+        { app: "excel.exe", classification: "productive", seconds: 54000, samples: 180 },
+        { app: "chrome.exe · CRM", classification: "neutral", seconds: 21600, samples: 72 },
+        { app: "whatsapp.exe", classification: "non_productive", seconds: 7200, samples: 24 },
+      ],
+      adjustments: [],
+      blocks,
+      evidence_total: 0,
+      evidence: [],
+    });
     return;
   }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, ReactNode, useEffect, useId, useRef, useState } from "react";
+import { CSSProperties, Fragment, ReactNode, useEffect, useId, useRef, useState } from "react";
 import { useDialog } from "@/lib/use-dialog";
 import { useT } from "@/components/preferences-provider";
 
@@ -25,6 +25,157 @@ export function StatCard({
       <strong>{value}</strong>
       {delta ? <b className={`stat-delta delta-${deltaTone}`}>{delta}</b> : null}
       <small>{detail}</small>
+    </section>
+  );
+}
+
+export type MetricTone = "plain" | "good" | "warn" | "bad";
+
+export type MetricItem = {
+  key: string;
+  label: ReactNode;
+  value: ReactNode;
+  detail?: ReactNode;
+  /** Indicador principal de la franja: más grande y con estado visible. */
+  lead?: boolean;
+  /** Estado que comunica el indicador (solo color del borde y la etiqueta, nunca del número). */
+  tone?: MetricTone;
+  /** Texto corto del estado, p. ej. "Requiere revisión". */
+  status?: string;
+  /** Avance 0-100 para mostrar una barra (uso de licencias, presencia...). */
+  meter?: number;
+};
+
+/**
+ * Franja de indicadores con jerarquía: los `lead` pesan más y llevan estado;
+ * el resto son de apoyo. Sustituye a las filas de tarjetas iguales.
+ */
+export function MetricBand({ items, label }: { items: MetricItem[]; label: string }) {
+  const columns = items.map((item) => (item.lead ? "minmax(0, 1.45fr)" : "minmax(0, 1fr)")).join(" ");
+  return (
+    <section className="metric-band" aria-label={label} style={{ "--metric-cols": columns } as CSSProperties}>
+      {items.map((item) => (
+        <div key={item.key} className={`metric${item.lead ? " metric-lead" : ""} metric-${item.tone || "plain"}`}>
+          <span className="metric-label">{item.label}</span>
+          <strong className="metric-value">{item.value}</strong>
+          {item.meter !== undefined ? (
+            <span className="metric-meter" aria-hidden>
+              <i style={{ width: `${Math.min(100, Math.max(0, item.meter))}%` }} />
+            </span>
+          ) : null}
+          {item.status || item.detail ? (
+            <small className="metric-detail">
+              {item.status ? <b className="metric-status">{item.status}</b> : null}
+              {item.detail}
+            </small>
+          ) : null}
+        </div>
+      ))}
+    </section>
+  );
+}
+
+export type AttentionTone = "bad" | "warn" | "info" | "good";
+
+export type AttentionItem = {
+  key: string;
+  tone: AttentionTone;
+  title: ReactNode;
+  detail?: ReactNode;
+  href?: string;
+  /** La fila es un botón que llama a `onSelect` de la lista con su `key`. */
+  selectable?: boolean;
+  action?: string;
+};
+
+function AttentionGlyph({ tone }: { tone: AttentionTone }) {
+  if (tone === "good") {
+    return (
+      <svg viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="m8.5 12.5 2.5 2.5 4.5-5" />
+      </svg>
+    );
+  }
+  if (tone === "info") {
+    return (
+      <svg viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M12 11v5M12 8h.01" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24">
+      <path d="M10.3 4.3 2.8 17.2A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.8L13.7 4.3a2 2 0 0 0-3.4 0Z" />
+      <path d="M12 9.5v4M12 17h.01" />
+    </svg>
+  );
+}
+
+/**
+ * Lista "requiere tu atención": cada fila con severidad (color + icono + texto)
+ * y una acción directa. Lo más grave primero.
+ */
+export function AttentionList({
+  items,
+  label,
+  empty,
+  onSelect,
+}: {
+  items: AttentionItem[];
+  label: string;
+  onSelect?: (key: string) => void;
+  /** Fila mostrada cuando no hay pendientes; si se omite, la lista no se pinta. */
+  empty?: { title: ReactNode; detail?: ReactNode };
+}) {
+  const order: Record<AttentionTone, number> = { bad: 0, warn: 1, info: 2, good: 3 };
+  const sorted = [...items].sort((a, b) => order[a.tone] - order[b.tone]);
+  if (!sorted.length && !empty) return null;
+  const rows: AttentionItem[] = sorted.length ? sorted : [{ key: "empty", tone: "good", title: empty!.title, detail: empty!.detail }];
+  return (
+    <section className="attention-list" aria-label={label}>
+      {rows.map((item) => {
+        const body = (
+          <>
+            <span className="attention-icon" aria-hidden>
+              <AttentionGlyph tone={item.tone} />
+            </span>
+            <span className="attention-copy">
+              <strong>{item.title}</strong>
+              {item.detail ? <small>{item.detail}</small> : null}
+            </span>
+            {item.action ? (
+              <span className="attention-action">
+                {item.action}
+                <svg viewBox="0 0 24 24" aria-hidden>
+                  <path d="M5 12h14M13 6l6 6-6 6" />
+                </svg>
+              </span>
+            ) : null}
+          </>
+        );
+        const className = `attention-row attention-${item.tone}`;
+        if (item.href) {
+          return (
+            <a key={item.key} href={item.href} className={className}>
+              {body}
+            </a>
+          );
+        }
+        if (item.selectable && onSelect) {
+          return (
+            <button key={item.key} type="button" className={className} onClick={() => onSelect(item.key)}>
+              {body}
+            </button>
+          );
+        }
+        return (
+          <div key={item.key} className={className}>
+            {body}
+          </div>
+        );
+      })}
     </section>
   );
 }

@@ -1,5 +1,11 @@
+/*
+ * Dashboard ejecutivo. Jerarquía de lectura:
+ * 1) frase resumen, 2) lo que requiere acción, 3) indicador principal y estado
+ * en vivo, 4) indicadores de apoyo, 5) detalle. El color solo comunica estado.
+ */
+
 .toolbar {
-  margin-bottom: 16px;
+  margin-bottom: 18px;
 }
 
 .toolbar select {
@@ -30,58 +36,436 @@
   background: var(--line);
 }
 
-.attentionGrid {
+/* ---------- 1. Resumen ---------- */
+
+.summary {
+  max-width: 920px;
+  margin: 0 0 16px;
+  color: var(--ink-soft);
+  font-size: 15.5px;
+  line-height: 1.6;
+}
+
+.summary strong {
+  color: var(--ink);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.textGood {
+  color: var(--good);
+  font-weight: 600;
+}
+
+.textBad {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.textWarn {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* ---------- 3. Indicador principal y estado en vivo ---------- */
+
+.heroGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(0, 1.75fr) minmax(280px, 1fr);
+  gap: 16px;
   margin-bottom: 16px;
 }
 
-.attentionCard {
-  display: grid;
-  gap: 5px;
+.hero,
+.live {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  padding: 22px 24px;
   border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border-radius: var(--r-lg);
   background: var(--surface);
-  padding: 14px 16px;
 }
 
-.attentionCard span {
+.heroHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.heroHead > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.statusChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  font-size: 12px;
   font-weight: 650;
 }
 
-.attentionCard strong {
-  min-width: 0;
-  overflow: hidden;
+.statusChip::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.statusChip.good {
+  background: var(--good-soft);
+  color: var(--good);
+}
+
+.statusChip.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.statusChip.bad {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.heroValueRow {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin: 10px 0 18px;
+}
+
+.heroValue {
   color: var(--ink);
-  font-size: 15px;
+  font-family: var(--font-display);
+  font-size: 48px;
   font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
 }
 
-.attentionCard small {
-  min-width: 0;
-  overflow: hidden;
+.heroValue small {
+  margin-left: 2px;
+  color: var(--muted);
+  font-size: 0.55em;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.heroCompare {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 4px;
   color: var(--muted);
   font-size: 12.5px;
-  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  height: 22px;
+  padding: 0 8px 0 6px;
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.kpis {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+.delta svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
+
+.deltaGood {
+  background: var(--good-soft);
+  color: var(--good);
+}
+
+.deltaBad {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+
+.deltaPlain {
+  background: var(--plain-bg);
+  color: var(--muted);
+}
+
+.deltaNote {
+  margin-left: 4px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.deltaMuted {
+  color: var(--muted-soft);
+}
+
+/* Bullet graph (Stephen Few): valor, meta y rangos cualitativos en una línea. */
+.bullet {
+  margin-bottom: 22px;
+}
+
+.bulletTrack {
+  position: relative;
+  display: flex;
+  height: 14px;
+  overflow: visible;
+  border-radius: 4px;
+}
+
+.bulletZoneBad,
+.bulletZoneWarn,
+.bulletZoneGood {
+  height: 100%;
+}
+
+.bulletZoneBad {
+  border-radius: 4px 0 0 4px;
+  background: var(--canvas-deep);
+}
+
+.bulletZoneWarn {
+  background: color-mix(in srgb, var(--canvas-deep) 45%, var(--line-strong));
+}
+
+.bulletZoneGood {
+  border-radius: 0 4px 4px 0;
+  background: var(--line-strong);
+}
+
+.bulletValue {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 0;
+  border-radius: 3px;
+  background: var(--chart-1);
+}
+
+.bulletTarget {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 3px;
+  margin-left: -1.5px;
+  border-radius: 2px;
+  background: var(--ink);
+}
+
+.bulletScale {
+  position: relative;
+  height: 18px;
+  margin-top: 6px;
+  color: var(--muted-soft);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bulletScale span {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.bulletScale span:first-child {
+  left: 0;
+  transform: none;
+}
+
+.bulletScale span:last-child {
+  transform: translateX(-100%);
+}
+
+.bulletScale .bulletTargetLabel {
+  color: var(--ink-soft);
+  font-weight: 650;
+}
+
+.heroSplit {
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.heroSplitTitle {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.inlineLink {
+  color: var(--primary);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.inlineLink:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.liveValue {
+  margin: 10px 0 16px;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 48px;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
+}
+
+.liveValue small {
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 550;
+  letter-spacing: 0;
+}
+
+.liveBar {
+  display: flex;
+  gap: 3px;
+  height: 10px;
+  margin-bottom: 18px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: var(--canvas-deep);
+}
+
+.liveBar span {
+  flex-basis: 0;
+  min-width: 0;
+}
+
+.liveWorking {
+  background: var(--good);
+}
+
+.livePaused {
+  background: var(--warn);
+}
+
+.liveMissing {
+  background: var(--line-strong);
+}
+
+.liveList {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.liveList li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: 13.5px;
+}
+
+.liveList li:last-child {
+  border-bottom: 0;
+}
+
+.liveList i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.liveList b {
+  margin-left: auto;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 4. Indicadores de apoyo ---------- */
+
+.kpiStrip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.kpi {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 16px 20px;
+}
+
+.kpi + .kpi {
+  border-left: 1px solid var(--line);
+}
+
+.kpi > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.kpi strong {
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi small {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 5. Detalle ---------- */
 
 .charts {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.75fr);
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 1fr);
   gap: 16px;
   align-items: stretch;
   margin-bottom: 12px;
@@ -93,50 +477,115 @@
   margin: 0;
 }
 
-.charts > section > :last-child {
-  flex: 1;
-}
-
-.liveNow {
+.ranking {
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
-.liveNow div {
-  display: flex;
+.ranking li + li {
+  border-top: 1px solid var(--line);
+}
+
+.ranking a {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(80px, 1fr) 56px;
   align-items: center;
-  justify-content: space-between;
-  min-height: 42px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--surface-sunken);
-  padding: 0 12px;
-}
-
-.liveNow span {
-  color: var(--muted);
-  font-size: 12.5px;
-  font-weight: 550;
-}
-
-.liveNow strong {
+  gap: 14px;
+  min-height: 52px;
+  padding: 6px 4px;
   color: var(--ink);
-  font-size: 20px;
-  font-weight: 650;
+  text-decoration: none;
+  border-radius: var(--r-sm);
 }
+
+.ranking a:hover {
+  background: var(--surface-hover);
+}
+
+.rankName {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.rankName strong {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rankName small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rankBar {
+  position: relative;
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: var(--canvas-deep);
+}
+
+.rankBar > span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: var(--r-pill);
+}
+
+.rankBar i {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--ink);
+  opacity: 0.55;
+}
+
+.rankGood {
+  background: var(--chart-1);
+}
+
+.rankWarn {
+  background: var(--warn);
+}
+
+.rankBad {
+  background: var(--bad);
+}
+
+.ranking b {
+  justify-self: end;
+  font-size: 14px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.rankNote {
+  margin: 10px 0 0;
+  color: var(--muted-soft);
+  font-size: 12px;
+}
+
+/* ---------- Responsivo ---------- */
 
 @media (max-width: 1180px) {
+  .heroGrid,
   .charts {
     grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 980px) {
-  .kpis {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .toolbar select {
     flex: 1 1 160px;
     max-width: none;
@@ -144,27 +593,26 @@
 }
 
 @media (max-width: 760px) {
-  .attentionGrid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 520px) {
-  .kpis {
+  .kpiStrip {
     grid-template-columns: 1fr;
   }
 
-  .range {
-    width: 100%;
+  .kpi + .kpi {
+    border-top: 1px solid var(--line);
+    border-left: 0;
   }
 
-  .range input {
-    flex: 1 1 0;
-    width: auto;
-    min-width: 0;
+  .hero,
+  .live {
+    padding: 18px;
   }
 
-  .divider {
+  .heroValue,
+  .liveValue {
+    font-size: 40px;
+  }
+
+  .bulletScale span:last-child {
     display: none;
   }
 }

@@ -319,7 +319,7 @@ export default function EmployeesPage() {
                         ) : (
                           <div className={styles.productivity}>
                             <span className="num">{productivity}%</span>
-                            <div className="usage-bar" aria-hidden>
+                            <div className={`usage-bar ${productivity < 65 ? "bad" : productivity < 85 ? "warn" : ""}`} aria-hidden>
                               <i style={{ width: `${Math.min(100, productivity)}%` }} />
                             </div>
                           </div>

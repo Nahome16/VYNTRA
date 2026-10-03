@@ -136,23 +136,23 @@
 }
 
 .segmentProductive {
-  background: var(--primary);
+  background: var(--chart-1);
 }
 
 .segmentNeutral {
-  background: var(--cyan);
+  background: var(--chart-2);
 }
 
 .segmentBad {
-  background: var(--bad);
+  background: var(--chart-3);
 }
 
 .segmentIdle {
-  background: var(--line-strong);
+  background: var(--chart-4);
 }
 
 .segmentBreak {
-  background: var(--warn);
+  background: var(--muted-soft);
 }
 
 .productivity .num {

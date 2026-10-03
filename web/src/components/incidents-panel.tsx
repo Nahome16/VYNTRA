@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useId, useMemo, useState } from "react";
-import { Chip, Drawer, EmptyBlock, RefreshButton, StatusLine } from "@/components/ui";
+import { Chip, Drawer, EmptyBlock, MetricBand, RefreshButton, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { Incident, IncidentStatus } from "@/lib/types";
@@ -262,28 +262,22 @@ export function IncidentsPanel({ active = true }: { active?: boolean }) {
 
   return (
     <div className={styles.root}>
-      <section className={styles.metrics} aria-label={t("Resumen de incidencias")}>
-        <div>
-          <span>{t("En filtro")}</span>
-          <strong>{stats.all}</strong>
-          <small>{t("Incidencias cargadas")}</small>
-        </div>
-        <div>
-          <span><i className={styles.dotWarn} aria-hidden />{t("Pendientes")}</span>
-          <strong className={stats.pending ? styles.valueWarn : ""}>{stats.pending}</strong>
-          <small>{t("Requieren revision")}</small>
-        </div>
-        <div>
-          <span><i className={styles.dotGood} aria-hidden />{t("Aprobadas")}</span>
-          <strong>{stats.approved}</strong>
-          <small>{t("Validado por RR. HH.")}</small>
-        </div>
-        <div>
-          <span><i className={styles.dotBad} aria-hidden />{t("Rechazadas")}</span>
-          <strong className={stats.rejected ? styles.valueBad : ""}>{stats.rejected}</strong>
-          <small>{t("No proceden")}</small>
-        </div>
-      </section>
+      <MetricBand
+        label={t("Resumen de incidencias")}
+        items={[
+          {
+            key: "pending",
+            lead: true,
+            tone: stats.pending ? "warn" : "good",
+            label: t("Pendientes"),
+            value: stats.pending,
+            status: stats.pending ? t("Requieren tu revisión") : t("Bandeja al día"),
+          },
+          { key: "approved", label: t("Aprobadas"), value: stats.approved, detail: t("Validado por RR. HH.") },
+          { key: "rejected", label: t("Rechazadas"), value: stats.rejected, detail: t("No proceden") },
+          { key: "all", label: t("Total en filtro"), value: stats.all, detail: t("Incidencias cargadas") },
+        ]}
+      />
 
       <div className="toolbar">
         <div className="segmented" role="group" aria-label={t("Estado")}>

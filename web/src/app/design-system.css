@@ -1,6 +1,6 @@
 /* ==========================================================================
    VYNTRA Control — sistema de diseno v2
-   Neutros calidos, un unico acento (teal VYNTRA), bordes para la estructura y
+   Neutros frios, tinta casi negra y un unico acento (azul VYNTRA), bordes para la estructura y
    sombra solo para lo que flota. Se carga despues de globals.css y se limita
    al panel (.app-shell); el acceso usa su propio modulo (login-screen.module.css)
    y la estacion web conserva su propio diseno.
@@ -1342,4 +1342,278 @@ body {
 
 .app-shell .context-menu {
   z-index: 90;
+}
+
+/* --- Jerarquia de indicadores (MetricBand) --------------------------------
+   Una sola franja con divisores: los indicadores "lead" pesan más y muestran
+   su estado con un borde y una etiqueta; el número nunca se colorea. */
+.metric-band {
+  display: grid;
+  grid-template-columns: var(--metric-cols, repeat(4, minmax(0, 1fr)));
+  margin-bottom: 16px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+
+.metric {
+  position: relative;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 16px 20px;
+}
+
+.metric + .metric {
+  border-left: 1px solid var(--line);
+}
+
+.metric-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.metric-value {
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-of {
+  color: var(--muted);
+  font-size: 0.55em;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.metric-detail {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-lead {
+  padding: 18px 22px;
+}
+
+.metric-lead .metric-label {
+  color: var(--ink-soft);
+}
+
+.metric-lead .metric-value {
+  font-size: 34px;
+  letter-spacing: -0.03em;
+}
+
+.metric-lead::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  background: transparent;
+}
+
+.metric-lead.metric-good::before { background: var(--good); }
+.metric-lead.metric-warn::before { background: var(--warn); }
+.metric-lead.metric-bad::before { background: var(--bad); }
+
+.metric-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  background: var(--plain-bg);
+  color: var(--ink-soft);
+  font-size: 11.5px;
+  font-weight: 650;
+}
+
+.metric-good .metric-status { background: var(--good-soft); color: var(--good); }
+.metric-warn .metric-status { background: var(--warn-soft); color: var(--warn); }
+.metric-bad .metric-status { background: var(--bad-soft); color: var(--bad); }
+
+.metric-meter {
+  display: block;
+  height: 6px;
+  margin: 2px 0;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: var(--canvas-deep);
+}
+
+.metric-meter i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--chart-1);
+}
+
+.metric-warn .metric-meter i { background: var(--warn); }
+.metric-bad .metric-meter i { background: var(--bad); }
+
+@media (max-width: 980px) {
+  .metric-band {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric + .metric {
+    border-left: 0;
+  }
+
+  .metric {
+    border-top: 1px solid var(--line);
+  }
+
+  .metric:nth-child(-n + 2) {
+    border-top: 0;
+  }
+
+  .metric:nth-child(even) {
+    border-left: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 560px) {
+  .metric-band {
+    grid-template-columns: 1fr;
+  }
+
+  .metric:nth-child(even) {
+    border-left: 0;
+  }
+
+  .metric:nth-child(2) {
+    border-top: 1px solid var(--line);
+  }
+}
+
+/* --- Requiere tu atencion (AttentionList) ---------------------------------
+   Severidad con color + icono + texto (nunca solo color) y acción directa. */
+.attention-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.attention-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+  padding: 12px 16px 12px 14px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  transition: background-color 0.15s var(--ease);
+}
+
+a.attention-row:hover,
+button.attention-row:hover {
+  background: var(--surface-hover);
+}
+
+.attention-bad { border-left-color: var(--bad); }
+.attention-warn { border-left-color: var(--warn); }
+.attention-info { border-left-color: var(--primary); }
+.attention-good { border-left-color: var(--good); }
+
+.attention-icon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+
+.attention-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.attention-bad .attention-icon { background: var(--bad-soft); color: var(--bad); }
+.attention-warn .attention-icon { background: var(--warn-soft); color: var(--warn); }
+.attention-info .attention-icon { background: var(--primary-soft); color: var(--primary); }
+.attention-good .attention-icon { background: var(--good-soft); color: var(--good); }
+
+.attention-copy {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.attention-copy strong {
+  font-size: 14.5px;
+  font-weight: 650;
+}
+
+.attention-copy small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attention-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.attention-action svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.15s var(--ease);
+}
+
+.attention-row:hover .attention-action svg {
+  transform: translateX(3px);
+}
+
+@media (max-width: 640px) {
+  .attention-action {
+    display: none;
+  }
 }

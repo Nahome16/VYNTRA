@@ -97,34 +97,8 @@
 }
 
 /* --- Avisos --------------------------------------------------------------- */
-.alerts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.alertButton {
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  transition:
-    border-color 0.15s var(--ease),
-    background 0.15s var(--ease);
-}
-
-.alertButton:hover {
-  border-color: var(--line-strong);
-  background: var(--surface-hover);
-  color: var(--ink);
-}
 
 /* --- KPIs ----------------------------------------------------------------- */
-.kpis {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
 
 /* --- Tarjetas ------------------------------------------------------------- */
 .card {
@@ -662,10 +636,6 @@
     grid-template-columns: 1fr;
   }
 
-  .kpis {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -715,7 +685,6 @@
 }
 
 @media (max-width: 560px) {
-  .kpis,
   .facts,
   .miniFacts,
   .consoleFacts {
@@ -729,4 +698,10 @@
   .consoleMain h2 {
     white-space: normal;
   }
+}
+
+/* La rejilla de la página ya separa los bloques compartidos. */
+.page > :global(.metric-band),
+.page > :global(.attention-list) {
+  margin-bottom: 0;
 }

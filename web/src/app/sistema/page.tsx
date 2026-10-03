@@ -2,7 +2,19 @@
 
 import { FormEvent, KeyboardEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
-import { Chip, Drawer, EmptyBlock, MenuItem, RefreshButton, RowMenu, StatCard, StatusLine, Tabs, UsageBar } from "@/components/ui";
+import {
+  AttentionList,
+  Chip,
+  Drawer,
+  EmptyBlock,
+  MenuItem,
+  MetricBand,
+  RefreshButton,
+  RowMenu,
+  StatusLine,
+  Tabs,
+  UsageBar,
+} from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { todayISO } from "@/lib/dates";
@@ -1005,67 +1017,68 @@ export default function SystemPage() {
           </div>
         </section>
 
-        {alerts.length ? (
-          <div className={styles.alerts} aria-label={t("Avisos")}>
-            {alerts.map((alert) =>
-              alert.companyId ? (
-                <button
-                  key={alert.key}
-                  type="button"
-                  className={`alert ${alert.tone} ${styles.alertButton}`}
-                  onClick={() => openAlert(alert.companyId, alert.tab)}
-                >
-                  <i aria-hidden />
-                  {alert.text}
-                </button>
-              ) : (
-                <span key={alert.key} className={`alert ${alert.tone}`}>
-                  <i aria-hidden />
-                  {alert.text}
-                </span>
-              ),
-            )}
-          </div>
-        ) : null}
+        <AttentionList
+          label={t("Avisos")}
+          items={alerts.map((alert) => ({
+            key: alert.key,
+            tone: alert.tone,
+            title: alert.text,
+            selectable: Boolean(alert.companyId),
+            action: alert.companyId ? t("Abrir") : undefined,
+          }))}
+          onSelect={(key) => {
+            const alert = alerts.find((row) => row.key === key);
+            if (alert) openAlert(alert.companyId, alert.tab);
+          }}
+        />
 
-        <div className={styles.kpis}>
-          <StatCard
-            label={t("Empresas activas")}
-            value={`${activeCompanies.length}`}
-            detail={
-              expiringCount
-                ? fill(t(expiringCount === 1 ? "1 por vencer o vencida" : "{n} por vencer o vencidas"), { n: expiringCount })
-                : archivedCount
-                  ? fill(t("de {total} registradas · {n} archivadas"), { total: companies.length, n: archivedCount })
-                  : fill(t("de {total} registradas"), { total: companies.length })
-            }
-          />
-          <StatCard
-            label={t("Usuarios del panel")}
-            value={`${users.length}`}
-            detail={fill(t("{admins} admin. del sistema · {supervisors} supervisores"), {
-              admins: systemAdmins.length,
-              supervisors: supervisors.length,
-            })}
-          />
-          <StatCard
-            label={t("Dispositivos")}
-            value={`${totalDevices}`}
-            detail={fill(t(companiesWithDevices === 1 ? "Agentes registrados en 1 empresa" : "Agentes registrados en {n} empresas"), {
-              n: companiesWithDevices,
-            })}
-          />
-          <StatCard
-            label={t("Uso de licencias")}
-            value={license.total ? `${license.pct}%` : "—"}
-            detail={
-              license.total
+        <MetricBand
+          label={t("Indicadores del sistema")}
+          items={[
+            {
+              key: "licenses",
+              lead: true,
+              tone: !license.total ? "plain" : license.pct >= 100 ? "bad" : license.pct >= 85 ? "warn" : "good",
+              label: t("Uso de licencias"),
+              value: license.total ? `${license.pct}%` : "—",
+              meter: license.total ? license.pct : undefined,
+              status: !license.total ? undefined : license.pct >= 100 ? t("Al límite") : license.pct >= 85 ? t("Cerca del límite") : t("Con margen"),
+              detail: license.total
                 ? fill(t("{used} de {total} empleados contratados"), { used: license.used, total: license.total })
-                : t("Sin límites de plan definidos")
-            }
-            tone={license.pct >= 100 ? "bad" : license.pct >= 85 ? "warn" : "plain"}
-          />
-        </div>
+                : t("Sin límites de plan definidos"),
+            },
+            {
+              key: "companies",
+              lead: true,
+              tone: expiringCount ? "warn" : "good",
+              label: t("Empresas activas"),
+              value: activeCompanies.length,
+              status: expiringCount
+                ? fill(t(expiringCount === 1 ? "1 por vencer o vencida" : "{n} por vencer o vencidas"), { n: expiringCount })
+                : t("Suscripciones al día"),
+              detail: archivedCount
+                ? fill(t("de {total} registradas · {n} archivadas"), { total: companies.length, n: archivedCount })
+                : fill(t("de {total} registradas"), { total: companies.length }),
+            },
+            {
+              key: "users",
+              label: t("Usuarios del panel"),
+              value: users.length,
+              detail: fill(t("{admins} admin. del sistema · {supervisors} supervisores"), {
+                admins: systemAdmins.length,
+                supervisors: supervisors.length,
+              }),
+            },
+            {
+              key: "devices",
+              label: t("Dispositivos"),
+              value: totalDevices,
+              detail: fill(t(companiesWithDevices === 1 ? "Agentes registrados en 1 empresa" : "Agentes registrados en {n} empresas"), {
+                n: companiesWithDevices,
+              }),
+            },
+          ]}
+        />
 
         {statusSlot}
 

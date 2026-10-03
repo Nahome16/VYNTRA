@@ -122,52 +122,15 @@
 }
 
 .stats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   border-top: 1px solid var(--line);
 }
 
-.stat {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  padding: 14px 22px 16px;
-}
-
-.stat + .stat {
-  border-left: 1px solid var(--line);
-}
-
-.statLabel {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--muted);
-  font-size: 12.5px;
-  font-weight: 500;
-}
-
-.statLabel i {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-
-.statValue {
-  color: var(--ink);
-  font-size: 22px;
-  font-weight: 600;
-  letter-spacing: -0.025em;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-}
-
-.statValue.bad { color: var(--bad); }
-.statValue.warn { color: var(--warn); }
-
-.statDetail {
-  color: var(--muted);
-  font-size: 12px;
+/* La franja compartida va integrada en la tarjeta de cabecera. */
+.stats :global(.metric-band) {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
 /* --- Pestanas y secciones ------------------------------------------------- */
@@ -614,18 +577,6 @@
 }
 
 @media (max-width: 980px) {
-  .stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .stat:nth-child(3) {
-    border-left: 0;
-  }
-
-  .stat:nth-child(n + 3) {
-    border-top: 1px solid var(--line);
-  }
-
   .grid2 {
     grid-template-columns: 1fr;
   }

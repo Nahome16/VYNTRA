@@ -270,6 +270,24 @@
   cursor: default;
 }
 
+.barsTarget {
+  position: absolute;
+  right: 0;
+  left: 0;
+  z-index: 2;
+  height: 0;
+  border-top: 1.5px solid var(--good);
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+.swatchTarget {
+  display: inline-block;
+  width: 14px;
+  height: 0;
+  border-top: 2px solid var(--good);
+}
+
 .bar {
   width: 100%;
   max-width: 40px;

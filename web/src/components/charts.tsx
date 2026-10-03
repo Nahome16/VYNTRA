@@ -5,8 +5,8 @@ import styles from "./charts.module.css";
 
 /* ==========================================================================
    Graficas sin dependencias externas (sistema de diseno v2).
-   Colores por token: --chart-1 productivo (teal), --chart-2 neutral (pizarra),
-   --chart-3 no productivo (rosa), --chart-4 inactivo (gris, con trama).
+   Colores por token: --chart-1 productivo (azul de marca), --chart-2 neutral (azul claro),
+   --chart-3 no productivo (gris oscuro), --chart-4 inactivo (gris, con trama).
    Alturas fijas y ancho medido: el texto nunca se escala ni se deforma.
    ========================================================================== */
 
@@ -230,6 +230,8 @@ export function BarTrendChart({
   averageLabel,
   valueSuffix = "%",
   height = 220,
+  target,
+  targetLabel,
 }: {
   points: TrendPoint[];
   emptyLabel: string;
@@ -237,6 +239,9 @@ export function BarTrendChart({
   averageLabel: string;
   valueSuffix?: string;
   height?: number;
+  /** Meta opcional: se dibuja como linea continua de referencia. */
+  target?: number;
+  targetLabel?: string;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   if (!points.length) return <ChartEmpty>{emptyLabel}</ChartEmpty>;
@@ -256,6 +261,12 @@ export function BarTrendChart({
           <i className={styles.swatchLine} aria-hidden />
           {averageLabel} <b>{average.toFixed(1)}{valueSuffix}</b>
         </li>
+        {target !== undefined ? (
+          <li>
+            <i className={styles.swatchTarget} aria-hidden />
+            {targetLabel} <b>{target}{valueSuffix}</b>
+          </li>
+        ) : null}
       </ul>
 
       <div className={styles.bars} role="img" aria-label={`${averageLabel}: ${average.toFixed(1)}${valueSuffix}`}>
@@ -269,6 +280,7 @@ export function BarTrendChart({
             <span key={tick} className={styles.barsGridLine} style={{ bottom: `${tick}%` }} aria-hidden />
           ))}
           <span className={styles.barsAverage} style={{ bottom: `${clampPct(average)}%` }} aria-hidden />
+          {target !== undefined ? <span className={styles.barsTarget} style={{ bottom: `${clampPct(target)}%` }} aria-hidden /> : null}
           {points.map((point, index) => (
             <div
               className={styles.barSlot}
@@ -403,8 +415,8 @@ export type CompositionSegment = {
   key: string;
   label: string;
   seconds: number;
-  /** 1 a 4; 4 se dibuja con trama por tratarse de ausencia de actividad. */
-  slot: 1 | 2 | 3 | 4;
+  /** 1 a 5; 4 se dibuja con trama por tratarse de ausencia de actividad. */
+  slot: ChartSlot;
   display: string;
 };
 

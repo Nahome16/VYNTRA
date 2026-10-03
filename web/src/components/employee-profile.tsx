@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Chip, EmptyBlock, Panel, RefreshButton, StatusLine, Tabs } from "@/components/ui";
+import { Chip, EmptyBlock, MetricBand, Panel, RefreshButton, StatusLine, Tabs } from "@/components/ui";
 import { BarTrendChart, CompositionChart, TrendChart, swatchClass } from "@/components/charts";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
@@ -10,7 +10,7 @@ import { apiFetch } from "@/lib/api";
 import { downloadCsv } from "@/lib/csv";
 import { useDialog } from "@/lib/use-dialog";
 import { monthStartISO, todayISO } from "@/lib/dates";
-import { formatDuration, fullDate } from "@/lib/format";
+import { formatDuration, fullDate, metricTone } from "@/lib/format";
 import styles from "./employee-profile.module.css";
 
 const activityHours = [9, 10, 11, 12, 13, 14, 15, 16, 17];
@@ -508,30 +508,59 @@ export function EmployeeProfile({
             </div>
 
             <div className={styles.stats}>
-              <div className={styles.stat}>
-                <span className={styles.statLabel}>{t("Horas rango")}</span>
-                <strong className={styles.statValue}>{formatDuration(employeeDetail.totals.active_seconds)}</strong>
-                <small className={styles.statDetail}>{t("Actividad real capturada")}</small>
-              </div>
-              <div className={styles.stat}>
-                <span className={styles.statLabel}><i className={`${styles.mk} ${styles.mk1}`} aria-hidden />{t("Productividad")}</span>
-                <strong className={styles.statValue}>{employeeDetail.totals.productivity_pct}%</strong>
-                <small className={styles.statDetail}>{t("Sobre tiempo activo")}</small>
-              </div>
-              <div className={styles.stat}>
-                <span className={styles.statLabel}><i className={`${styles.mk} ${styles.mk3}`} aria-hidden />{t("No productivo")}</span>
-                <strong className={`${styles.statValue}${employeeDetail.totals.non_productive_pct > 12 ? ` ${styles.bad}` : ""}`}>
-                  {employeeDetail.totals.non_productive_pct}%
-                </strong>
-                <small className={styles.statDetail}>{formatDuration(employeeDetail.totals.non_productive_seconds)}</small>
-              </div>
-              <div className={styles.stat}>
-                <span className={styles.statLabel}><i className={`${styles.mk} ${styles.mk4}`} aria-hidden />{t("Inactivo")}</span>
-                <strong className={`${styles.statValue}${employeeDetail.totals.idle_pct > 15 ? ` ${styles.warn}` : ""}`}>
-                  {employeeDetail.totals.idle_pct}%
-                </strong>
-                <small className={styles.statDetail}>{formatDuration(employeeDetail.totals.idle_seconds)}</small>
-              </div>
+              <MetricBand
+                label={t("Indicadores del empleado")}
+                items={[
+                  {
+                    key: "productivity",
+                    lead: true,
+                    tone: metricTone(employeeDetail.totals.productivity_pct),
+                    label: (
+                      <>
+                        <i className={`${styles.mk} ${styles.mk1}`} aria-hidden />
+                        {t("Productividad")}
+                      </>
+                    ),
+                    value: `${employeeDetail.totals.productivity_pct}%`,
+                    meter: employeeDetail.totals.productivity_pct,
+                    status:
+                      metricTone(employeeDetail.totals.productivity_pct) === "good"
+                        ? t("En meta")
+                        : metricTone(employeeDetail.totals.productivity_pct) === "warn"
+                          ? t("Aceptable")
+                          : t("Bajo la meta"),
+                    detail: `${t("Meta")} 85%`,
+                  },
+                  {
+                    key: "hours",
+                    label: t("Horas rango"),
+                    value: formatDuration(employeeDetail.totals.active_seconds),
+                    detail: t("Actividad real capturada"),
+                  },
+                  {
+                    key: "non-productive",
+                    label: (
+                      <>
+                        <i className={`${styles.mk} ${styles.mk3}`} aria-hidden />
+                        {t("No productivo")}
+                      </>
+                    ),
+                    value: `${employeeDetail.totals.non_productive_pct}%`,
+                    detail: formatDuration(employeeDetail.totals.non_productive_seconds),
+                  },
+                  {
+                    key: "idle",
+                    label: (
+                      <>
+                        <i className={`${styles.mk} ${styles.mk4}`} aria-hidden />
+                        {t("Inactivo")}
+                      </>
+                    ),
+                    value: `${employeeDetail.totals.idle_pct}%`,
+                    detail: formatDuration(employeeDetail.totals.idle_seconds),
+                  },
+                ]}
+              />
             </div>
           </section>
 
@@ -596,6 +625,8 @@ export function EmployeeProfile({
                       seriesLabel={t("Productivo + neutral")}
                       averageLabel={t("Promedio")}
                       height={150}
+                      target={85}
+                      targetLabel={t("Meta")}
                     />
                   )}
                 </Panel>

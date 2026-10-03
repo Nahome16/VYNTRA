@@ -2,57 +2,58 @@
 
 /* ==========================================================================
    VYNTRA Control — sistema de diseño
-   Lienzo blanco · superficies planas · acento cobalto. El color se reserva
+   Lienzo blanco · superficies planas · negro de marca y acento azul. El color se reserva
    para comunicar estado; nunca se usa como decoración.
    ========================================================================== */
 
 :root {
-  /* Superficies: neutros calidos (base) */
-  --canvas: #f7f6f4;
-  --canvas-deep: #efede9;
+  /* Superficies: neutros frios que acompañan el negro y azul de la marca */
+  --canvas: #f6f7f9;
+  --canvas-deep: #eceef2;
   --surface: #ffffff;
-  --surface-sunken: #faf9f7;
-  --surface-hover: #f4f2ef;
+  --surface-sunken: #f9fafb;
+  --surface-hover: #f2f4f7;
 
-  /* Tinta */
-  --ink: #1c1b19;
-  --ink-soft: #46423d;
-  --muted: #6f6a63;
-  --muted-soft: #a19c94;
+  /* Tinta: casi negro de marca */
+  --ink: #0b0d12;
+  --ink-soft: #344054;
+  --muted: #5f6878;
+  --muted-soft: #98a2b3;
 
   /* Lineas */
-  --line: #e7e4df;
-  --line-strong: #d6d2cb;
+  --line: #e4e7ec;
+  --line-strong: #d0d5dd;
 
-  /* Acento de marca: teal VYNTRA */
-  --primary: #0d7c86;
-  --primary-dark: #0a6670;
-  --primary-ink: #0b5961;
-  --primary-soft: #eaf6f6;
-  --primary-soft-2: #cdebeb;
+  /* Acento de marca: azul VYNTRA, reservado para acciones, enlaces y el dato principal */
+  --primary: #2563eb;
+  --primary-dark: #1d4ed8;
+  --primary-ink: #1e40af;
+  --primary-soft: #eff4ff;
+  --primary-soft-2: #d6e4fe;
 
-  /* Semanticos */
-  --good: #15803d;
-  --good-soft: #eaf6ee;
-  --good-line: #b7e0c5;
-  --warn: #b45309;
-  --warn-soft: #fdf3e4;
-  --warn-line: #f1d3a4;
-  --bad: #c9302c;
-  --bad-soft: #fdeeed;
-  --bad-line: #f3c4c1;
-  --cyan: #2f6fb3;
-  --cyan-soft: #ecf3fb;
-  --cyan-line: #c3d8f0;
-  --plain-bg: #f1efec;
-  --font-sans: "Segoe UI", system-ui, sans-serif;
-  --font-mono: "Cascadia Mono", Consolas, monospace;
+  /* Semanticos: solo comunican estado */
+  --good: #067647;
+  --good-soft: #ecfdf3;
+  --good-line: #abefc6;
+  --warn: #b54708;
+  --warn-soft: #fffaeb;
+  --warn-line: #fedf89;
+  --bad: #d92d20;
+  --bad-soft: #fef3f2;
+  --bad-line: #fecdca;
+  --cyan: #0e7090;
+  --cyan-soft: #ecfdff;
+  --cyan-line: #a5f0fc;
+  --plain-bg: #f2f4f7;
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "SF Mono", monospace;
 
   /* Elevacion: los bordes dan estructura; la sombra es solo para lo que flota */
-  --shadow-xs: 0 1px 1px rgba(28, 27, 25, 0.03);
-  --shadow-sm: 0 1px 2px rgba(28, 27, 25, 0.04);
-  --shadow-md: 0 1px 2px rgba(28, 27, 25, 0.04), 0 6px 16px rgba(28, 27, 25, 0.06);
-  --shadow-lg: 0 2px 6px rgba(28, 27, 25, 0.06), 0 24px 60px rgba(28, 27, 25, 0.16);
+  --shadow-xs: 0 1px 1px rgba(16, 24, 40, 0.03);
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-md: 0 1px 2px rgba(16, 24, 40, 0.04), 0 6px 16px rgba(16, 24, 40, 0.07);
+  --shadow-lg: 0 2px 6px rgba(16, 24, 40, 0.06), 0 24px 60px rgba(16, 24, 40, 0.18);
   --shadow: var(--shadow-md);
 
   /* Radios */
@@ -64,58 +65,59 @@
 
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 
-  /* Series: productivo (teal), neutral (pizarra), no productivo (rosa), inactivo (gris) */
-  --chart-1: #0d7c86;
-  --chart-2: #6b8fb8;
-  --chart-3: #e11d48;
-  --chart-4: #c9c4bc;
+  /* Series: productivo (azul de marca), neutral (azul claro), no productivo (gris oscuro),
+     inactivo (gris claro con trama). El rojo queda reservado para alertas. */
+  --chart-1: #2563eb;
+  --chart-2: #93c5fd;
+  --chart-3: #667085;
+  --chart-4: #d0d5dd;
 }
 
 /* Modo nocturno: se redefinen los mismos tokens, nunca los componentes. */
 :root[data-theme="dark"] {
-  --canvas: #121110;
-  --canvas-deep: #0c0b0a;
-  --surface: #1a1917;
-  --surface-sunken: #161514;
-  --surface-hover: #22211f;
+  --canvas: #08090b;
+  --canvas-deep: #050607;
+  --surface: #101216;
+  --surface-sunken: #0c0e11;
+  --surface-hover: #171a20;
 
-  --ink: #edebe7;
-  --ink-soft: #c9c5be;
-  --muted: #9a958d;
-  --muted-soft: #6f6a63;
+  --ink: #eceef2;
+  --ink-soft: #c3c8d1;
+  --muted: #8d95a3;
+  --muted-soft: #5f6775;
 
-  --line: #2a2826;
-  --line-strong: #3a3734;
+  --line: #20242b;
+  --line-strong: #2f343d;
 
-  --primary: #2ec4cb;
-  --primary-dark: #25a9b0;
-  --primary-ink: #9fe7ea;
-  --primary-soft: #0f2a2c;
-  --primary-soft-2: #16403f;
+  --primary: #3b82f6;
+  --primary-dark: #2563eb;
+  --primary-ink: #9cc2ff;
+  --primary-soft: #0e1a30;
+  --primary-soft-2: #16284a;
 
-  --good: #4ade80;
-  --good-soft: #0f2a1a;
-  --good-line: #1d5132;
-  --warn: #f5b547;
-  --warn-soft: #2c210f;
-  --warn-line: #5a431b;
-  --bad: #f87171;
-  --bad-soft: #2e1515;
-  --bad-line: #5c2626;
-  --cyan: #7fb0ea;
-  --cyan-soft: #14243a;
-  --cyan-line: #25406a;
-  --plain-bg: #22211f;
+  --good: #47cd89;
+  --good-soft: #0b2117;
+  --good-line: #17472d;
+  --warn: #fdb022;
+  --warn-soft: #2a1d07;
+  --warn-line: #5a3d0c;
+  --bad: #f97066;
+  --bad-soft: #2d1210;
+  --bad-line: #5c221d;
+  --cyan: #67e3f9;
+  --cyan-soft: #0b2229;
+  --cyan-line: #164c58;
+  --plain-bg: #171a20;
 
   --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.3);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 20px rgba(0, 0, 0, 0.3);
   --shadow-lg: 0 2px 8px rgba(0, 0, 0, 0.4), 0 24px 60px rgba(0, 0, 0, 0.5);
 
-  --chart-1: #2ec4cb;
-  --chart-2: #7f9fc6;
-  --chart-3: #fb7185;
-  --chart-4: #4a4642;
+  --chart-1: #60a5fa;
+  --chart-2: #2f5596;
+  --chart-3: #98a2b3;
+  --chart-4: #3a404a;
 
   color-scheme: dark;
 }
@@ -127,7 +129,7 @@
 }
 
 :root[data-theme="dark"] .secondary-button {
-  color: #0b1020;
+  color: #ffffff;
   font-weight: 700;
 }
 

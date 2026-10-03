@@ -2,8 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
-import { Chip, Drawer, EmptyBlock, EmptyState, Panel, RefreshButton, RowMenu, StatusLine } from "@/components/ui";
-import { StatTile } from "@/components/charts";
+import { Chip, Drawer, EmptyBlock, EmptyState, MetricBand, Panel, RefreshButton, RowMenu, StatusLine } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { CatalogsResponse, DeviceRecord, DevicesResponse, SystemCompany, SystemOverviewResponse } from "@/lib/types";
@@ -83,6 +82,7 @@ export default function DevicesPage() {
   const onlineCount = useMemo(() => devices.filter((device) => device.status === "online").length, [devices]);
   const revokedCount = useMemo(() => devices.filter((device) => device.status === "revoked").length, [devices]);
   const assignedCount = useMemo(() => devices.filter((device) => device.employee_id).length, [devices]);
+  const offlineCount = Math.max(0, devices.length - onlineCount - revokedCount);
   const activeCompanyName = useMemo(
     () => companies.find((company) => company.id === companyId)?.name || devices[0]?.company || user?.company || t("Sistema"),
     [companies, companyId, devices, t, user?.company],
@@ -377,22 +377,40 @@ export default function DevicesPage() {
         </>
       )}
     >
-      <section className={styles.kpis} aria-label={t("Resumen")}>
-        <StatTile label={t("Dispositivos")} value={`${devices.length}`} detail={t("En inventario")} />
-        <StatTile
-          label={t("En línea")}
-          marker={onlineCount ? <span className="live-dot" aria-hidden /> : <span className={styles.markerIdle} aria-hidden />}
-          value={`${onlineCount}`}
-          detail={t("Vistos en 10 minutos")}
-        />
-        <StatTile label={t("Asignados")} value={`${assignedCount}`} detail={t("Con empleado")} />
-        <StatTile
-          label={t("Revocados")}
-          value={`${revokedCount}`}
-          valueTone={revokedCount ? "warn" : "plain"}
-          detail={t("Token inactivo")}
-        />
-      </section>
+      <MetricBand
+        label={t("Resumen")}
+        items={[
+          {
+            key: "online",
+            lead: true,
+            label: (
+              <>
+                {onlineCount ? <span className="live-dot" aria-hidden /> : <span className={styles.markerIdle} aria-hidden />}
+                {t("En línea")}
+              </>
+            ),
+            value: (
+              <>
+                {onlineCount}
+                <span className="metric-of"> / {devices.length - revokedCount}</span>
+              </>
+            ),
+            meter: devices.length - revokedCount ? (onlineCount / (devices.length - revokedCount)) * 100 : 0,
+            detail: t("Vistos en 10 minutos"),
+          },
+          {
+            key: "offline",
+            lead: true,
+            tone: offlineCount ? "bad" : "good",
+            label: t("Sin conexión"),
+            value: offlineCount,
+            status: offlineCount ? t("Revisar equipos") : t("Todos reportando"),
+          },
+          { key: "assigned", label: t("Asignados"), value: assignedCount, detail: t("Con empleado") },
+          { key: "revoked", label: t("Revocados"), value: revokedCount, detail: t("Token inactivo") },
+          { key: "total", label: t("Total"), value: devices.length, detail: t("En inventario") },
+        ]}
+      />
 
       {issuedToken && !createOpen && !controlOpen ? (
         <div className={styles.pageToken}>

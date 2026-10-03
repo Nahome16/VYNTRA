@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
-import { EmptyBlock, Panel, RefreshButton } from "@/components/ui";
-import { BarTrendChart, DonutChart, DonutSegment, StatTile } from "@/components/charts";
+import { AttentionItem, AttentionList, EmptyBlock, Panel, RefreshButton } from "@/components/ui";
+import { BarTrendChart, CompositionChart, CompositionSegment, swatchClass } from "@/components/charts";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { formatDuration, fullDate, metricTone } from "@/lib/format";
@@ -71,6 +71,11 @@ function buildParams({
 
 type Delta = { text: string; direction: "up" | "down"; tone: "plain" | "good" | "bad"; note: string };
 
+/** Meta de productividad y umbral aceptable (los mismos que usa metricTone). */
+const PRODUCTIVITY_TARGET = 85;
+const PRODUCTIVITY_ACCEPTABLE = 65;
+
+
 type IncidentResponse = {
   company: { id: string; name: string };
   count: number;
@@ -106,13 +111,34 @@ function compareToPrevious(
   return {
     text: `${diff > 0 ? "+" : "−"}${Math.abs(diff).toFixed(1)} pts`,
     direction: diff > 0 ? "up" : "down",
-    tone: better ? "good" : "bad",
+    tone: Math.abs(diff) <= 1 ? "plain" : better ? "good" : "bad",
     note,
   };
 }
 
-function valueTone(tone: "plain" | "good" | "warn" | "bad") {
-  return tone === "good" ? "plain" : tone;
+/** Variacion relativa (%) para magnitudes como horas activas. */
+function relativeChange(current: number, previous: number | undefined, hasPrevious: boolean, note: string): Delta | undefined {
+  if (!hasPrevious || !previous) return undefined;
+  const change = ((current - previous) / previous) * 100;
+  if (!Number.isFinite(change) || Math.abs(change) < 0.5) return undefined;
+  return {
+    text: `${change > 0 ? "+" : "−"}${Math.abs(change).toFixed(0)}%`,
+    direction: change > 0 ? "up" : "down",
+    tone: Math.abs(change) < 3 ? "plain" : change > 0 ? "good" : "bad",
+    note,
+  };
+}
+
+function DeltaChip({ delta, compact = false }: { delta: Delta; compact?: boolean }) {
+  return (
+    <span className={`${styles.delta} ${styles[`delta${delta.tone === "good" ? "Good" : delta.tone === "bad" ? "Bad" : "Plain"}`]}`}>
+      <svg viewBox="0 0 24 24" aria-hidden>
+        {delta.direction === "up" ? <path d="M12 19V5M5 12l7-7 7 7" /> : <path d="M12 5v14M19 12l-7 7-7-7" />}
+      </svg>
+      {delta.text}
+      {compact ? null : <span className={styles.deltaNote}>{delta.note}</span>}
+    </span>
+  );
 }
 
 export default function DashboardPage() {
@@ -310,36 +336,98 @@ export default function DashboardPage() {
 
   const hasPrevious = Boolean(previousTotals && previousTotals.total_seconds > 0);
   const comparisonNote = t("vs periodo anterior");
-  const donutSegments: DonutSegment[] = totals
+
+  const composition: CompositionSegment[] = totals
     ? [
-        {
-          key: "productive",
-          label: t("Productivo"),
-          value: Math.max(0, Math.round((totals.productivity_pct - totals.neutral_pct) * 10) / 10),
-          slot: 1,
-          detail: formatDuration(totals.productive_seconds),
-        },
-        { key: "neutral", label: t("Neutral"), value: totals.neutral_pct, slot: 2, detail: formatDuration(totals.neutral_seconds) },
+        { key: "productive", label: t("Productivo"), seconds: totals.productive_seconds, slot: 1, display: formatDuration(totals.productive_seconds) },
+        { key: "neutral", label: t("Neutral"), seconds: totals.neutral_seconds, slot: 2, display: formatDuration(totals.neutral_seconds) },
         {
           key: "non-productive",
           label: t("No productivo"),
-          value: totals.non_productive_pct,
+          seconds: totals.non_productive_seconds,
           slot: 3,
-          detail: formatDuration(totals.non_productive_seconds),
+          display: formatDuration(totals.non_productive_seconds),
         },
-        ...(totals.uncategorized_pct > 0
+        ...(totals.uncategorized_seconds > 0
           ? [
               {
                 key: "uncategorized",
                 label: t("Sin clasificar"),
-                value: totals.uncategorized_pct,
+                seconds: totals.uncategorized_seconds,
                 slot: 5 as const,
-                detail: formatDuration(totals.uncategorized_seconds),
+                display: formatDuration(totals.uncategorized_seconds),
               },
             ]
           : []),
+        { key: "idle", label: t("Inactivo"), seconds: totals.idle_seconds, slot: 4, display: formatDuration(totals.idle_seconds) },
       ]
     : [];
+
+  const employeeFollowUp = useMemo(() => {
+    if (!dashboard) return [];
+    const names = new Map((catalogs?.employees || []).map((employee) => [employee.id, employee]));
+    const departments = new Map((catalogs?.departments || []).map((department) => [department.id, department.name]));
+    const totalsByEmployee = new Map<string, { active: number; good: number }>();
+    dashboard.blocks.forEach((block) => {
+      if (!block.employee_id) return;
+      const row = totalsByEmployee.get(block.employee_id) || { active: 0, good: 0 };
+      row.active += block.active_seconds || 0;
+      row.good += (block.productive_seconds || 0) + (block.neutral_seconds || 0);
+      totalsByEmployee.set(block.employee_id, row);
+    });
+    return Array.from(totalsByEmployee.entries())
+      .filter(([, row]) => row.active >= 600)
+      .map(([id, row]) => {
+        const employee = names.get(id);
+        return {
+          id,
+          name: employee?.full_name || t("Empleado"),
+          department: (employee?.department_id && departments.get(employee.department_id)) || "",
+          pct: Math.round((row.good / row.active) * 1000) / 10,
+          active: row.active,
+        };
+      })
+      .sort((a, b) => a.pct - b.pct);
+  }, [catalogs, dashboard, t]);
+
+  const productivityDelta = totals ? compareToPrevious(totals.productivity_pct, previousTotals?.productivity_pct, hasPrevious, comparisonNote) : undefined;
+  const productivityStatus = totals ? metricTone(totals.productivity_pct) : "plain";
+  const statusLabel = productivityStatus === "good" ? t("En meta") : productivityStatus === "warn" ? t("Aceptable") : t("Bajo la meta");
+  const activeDelta = totals ? relativeChange(totals.active_seconds, previousTotals?.active_seconds, hasPrevious, comparisonNote) : undefined;
+
+  const attentionItems: AttentionItem[] = [];
+  if (operationsSnapshot?.pendingIncidents) {
+    attentionItems.push({
+      key: "incidents",
+      tone: "warn",
+      title: `${operationsSnapshot.pendingIncidents} ${operationsSnapshot.pendingIncidents === 1 ? t("incidencia por revisar") : t("incidencias por revisar")}`,
+      detail: operationsSnapshot.firstIncidentLabel,
+      href: "/incidencias",
+      action: t("Revisar"),
+    });
+  }
+  if (operationsSnapshot?.offlineDevices) {
+    attentionItems.push({
+      key: "devices",
+      tone: "bad",
+      title: `${operationsSnapshot.offlineDevices} ${operationsSnapshot.offlineDevices === 1 ? t("equipo sin conexión") : t("equipos sin conexión")}`,
+      detail: operationsSnapshot.firstOfflineDevice,
+      href: "/dispositivos",
+      action: t("Ver equipos"),
+    });
+  }
+  if (operationsSnapshot && operationsSnapshot.missing > 0 && operationsSnapshot.totalEmployees > 0) {
+    attentionItems.push({
+      key: "attendance",
+      tone: "info",
+      title: `${operationsSnapshot.missing} ${t("de")} ${operationsSnapshot.totalEmployees} ${t("sin jornada activa ahora")}`,
+      detail: t("Sin entrada registrada o jornada finalizada"),
+      href: "/asistencia",
+      action: t("Ver asistencia"),
+    });
+  }
+  const live = operationsSnapshot;
+  const liveTotal = live?.totalEmployees || 0;
 
   return (
     <AppShell
@@ -410,58 +498,166 @@ export default function DashboardPage() {
         />
       ) : (
         <>
-          {operationsSnapshot ? (
-            <section className={styles.attentionGrid} aria-label={t("Requiere atencion")}>
-              <div className={styles.attentionCard}>
-                <span>{t("Requiere atencion")}</span>
-                <strong>{operationsSnapshot.pendingIncidents} {t("incidencias pendientes")}</strong>
-                <small>{operationsSnapshot.pendingIncidents ? operationsSnapshot.firstIncidentLabel : t("Sin solicitudes pendientes")}</small>
-              </div>
-              <div className={styles.attentionCard}>
-                <span>{t("Equipos")}</span>
-                <strong>{operationsSnapshot.offlineDevices} {t("sin conexion")}</strong>
-                <small>{operationsSnapshot.offlineDevices ? operationsSnapshot.firstOfflineDevice : t("Todos los equipos reportando")}</small>
-              </div>
-              <div className={styles.attentionCard}>
-                <span>{t("Ahora mismo")}</span>
-                <strong>{operationsSnapshot.working} {t("trabajando")} · {operationsSnapshot.paused} {t("en pausa")}</strong>
-                <small>{operationsSnapshot.totalEmployees ? `${operationsSnapshot.missing} ${t("sin entrada o finalizados")}` : t("Sin asistencia en vivo")}</small>
-              </div>
-            </section>
+          {/* 1. Resumen en una frase: lo primero que lee un jefe. */}
+          <p className={styles.summary}>
+            {t("El equipo registró")} <strong>{formatDuration(totals.active_seconds)}</strong> {t("de tiempo activo con")}{" "}
+            <strong>{totals.productivity_pct}%</strong> {t("de productividad")}
+            {productivityDelta ? (
+              <>
+                {" "}
+                (<span className={styles[`text${productivityDelta.tone === "good" ? "Good" : "Bad"}`]}>{productivityDelta.text}</span> {comparisonNote})
+              </>
+            ) : null}
+            .{" "}
+            {attentionItems.length ? (
+              <>
+                {t("Hay")} <strong>{attentionItems.filter((item) => item.tone !== "info").length || attentionItems.length}</strong>{" "}
+                {attentionItems.filter((item) => item.tone !== "info").length === 1 || (attentionItems.length === 1) ? t("tema que requiere tu atención.") : t("temas que requieren tu atención.")}
+              </>
+            ) : (
+              t("No hay pendientes que requieran tu atención.")
+            )}
+          </p>
+
+          {/* 2. Lo que requiere accion, con severidad. */}
+          {live ? (
+            <AttentionList
+              items={attentionItems}
+              label={t("Requiere tu atención")}
+              empty={{ title: t("Todo en orden"), detail: t("Sin incidencias pendientes ni equipos desconectados.") }}
+            />
           ) : null}
 
-          <section className={styles.kpis} aria-label={t("Indicadores")}>
-            <StatTile
-              label={t("Tiempo activo")}
-              value={formatDuration(totals.active_seconds)}
-              detail={`${t("Total registrado")}: ${formatDuration(totals.total_seconds)}`}
-            />
-            <StatTile
-              label={t("Productividad")}
-              marker={1}
-              value={`${totals.productivity_pct}%`}
-              valueTone={valueTone(metricTone(totals.productivity_pct))}
-              detail={`${formatDuration(totals.productive_seconds + totals.neutral_seconds)} ${t("productivo + neutral")}`}
-              delta={compareToPrevious(totals.productivity_pct, previousTotals?.productivity_pct, hasPrevious, comparisonNote)}
-            />
-            <StatTile
-              label={t("No productivo")}
-              marker={3}
-              value={`${totals.non_productive_pct}%`}
-              valueTone={totals.non_productive_pct > 12 ? "bad" : "plain"}
-              detail={formatDuration(totals.non_productive_seconds)}
-              delta={compareToPrevious(totals.non_productive_pct, previousTotals?.non_productive_pct, hasPrevious, comparisonNote, true)}
-            />
-            <StatTile
-              label={t("Inactivo")}
-              marker={4}
-              value={`${totals.idle_pct}%`}
-              valueTone={totals.idle_pct > 15 ? "warn" : "plain"}
-              detail={formatDuration(totals.idle_seconds)}
-              delta={compareToPrevious(totals.idle_pct, previousTotals?.idle_pct, hasPrevious, comparisonNote, true)}
-            />
+          {/* 3. El indicador principal, con meta y comparacion; a su lado, el estado en vivo. */}
+          <section className={styles.heroGrid}>
+            <article className={styles.hero} aria-label={t("Productividad del equipo")}>
+              <header className={styles.heroHead}>
+                <span>{t("Productividad del equipo")}</span>
+                <span className={`${styles.statusChip} ${styles[productivityStatus]}`}>{statusLabel}</span>
+              </header>
+              <div className={styles.heroValueRow}>
+                <strong className={styles.heroValue}>
+                  {totals.productivity_pct}
+                  <small>%</small>
+                </strong>
+                <div className={styles.heroCompare}>
+                  {productivityDelta ? <DeltaChip delta={productivityDelta} /> : <span className={styles.deltaMuted}>{t("Sin comparación disponible")}</span>}
+                  {hasPrevious && previousTotals ? (
+                    <span>
+                      {t("Periodo anterior")}: {previousTotals.productivity_pct}%
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className={styles.bullet} role="img" aria-label={`${t("Productividad")} ${totals.productivity_pct}%, ${t("meta")} ${PRODUCTIVITY_TARGET}%`}>
+                <div className={styles.bulletTrack}>
+                  <span className={styles.bulletZoneBad} style={{ width: `${PRODUCTIVITY_ACCEPTABLE}%` }} />
+                  <span className={styles.bulletZoneWarn} style={{ width: `${PRODUCTIVITY_TARGET - PRODUCTIVITY_ACCEPTABLE}%` }} />
+                  <span className={styles.bulletZoneGood} style={{ width: `${100 - PRODUCTIVITY_TARGET}%` }} />
+                  <span className={styles.bulletValue} style={{ width: `${Math.min(100, Math.max(0, totals.productivity_pct))}%` }} />
+                  <span className={styles.bulletTarget} style={{ left: `${PRODUCTIVITY_TARGET}%` }} />
+                </div>
+                <div className={styles.bulletScale} aria-hidden>
+                  <span>0%</span>
+                  <span style={{ left: `${PRODUCTIVITY_ACCEPTABLE}%` }}>{PRODUCTIVITY_ACCEPTABLE}%</span>
+                  <span className={styles.bulletTargetLabel} style={{ left: `${PRODUCTIVITY_TARGET}%` }}>
+                    {t("Meta")} {PRODUCTIVITY_TARGET}%
+                  </span>
+                  <span style={{ left: "100%" }}>100%</span>
+                </div>
+              </div>
+
+              <div className={styles.heroSplit}>
+                <span className={styles.heroSplitTitle}>{t("En qué se fue el tiempo")}</span>
+                <CompositionChart segments={composition} emptyLabel={t("Sin actividad registrada en el periodo.")} />
+              </div>
+            </article>
+
+            <article className={styles.live} aria-label={t("Ahora mismo")}>
+              <header className={styles.heroHead}>
+                <span>
+                  <i className="live-dot" aria-hidden /> {t("Ahora mismo")}
+                </span>
+                <a href="/asistencia" className={styles.inlineLink}>
+                  {t("Asistencia en vivo")}
+                </a>
+              </header>
+              <strong className={styles.liveValue}>
+                {live?.working ?? 0}
+                <small>
+                  {" "}
+                  / {liveTotal} {t("trabajando")}
+                </small>
+              </strong>
+              <div className={styles.liveBar} aria-hidden>
+                {liveTotal > 0 ? (
+                  <>
+                    <span className={styles.liveWorking} style={{ flexGrow: live?.working || 0 }} />
+                    <span className={styles.livePaused} style={{ flexGrow: live?.paused || 0 }} />
+                    <span className={styles.liveMissing} style={{ flexGrow: live?.missing || 0 }} />
+                  </>
+                ) : null}
+              </div>
+              <ul className={styles.liveList}>
+                <li>
+                  <i className={styles.liveWorking} aria-hidden />
+                  {t("Trabajando")}
+                  <b>{live?.working ?? 0}</b>
+                </li>
+                <li>
+                  <i className={styles.livePaused} aria-hidden />
+                  {t("En pausa")}
+                  <b>{live?.paused ?? 0}</b>
+                </li>
+                <li>
+                  <i className={styles.liveMissing} aria-hidden />
+                  {t("Sin jornada activa")}
+                  <b>{live?.missing ?? 0}</b>
+                </li>
+              </ul>
+            </article>
           </section>
 
+          {/* 4. Indicadores de apoyo, con menos peso visual. */}
+          <section className={styles.kpiStrip} aria-label={t("Indicadores")}>
+            <div className={styles.kpi}>
+              <span>{t("Tiempo activo")}</span>
+              <strong>{formatDuration(totals.active_seconds)}</strong>
+              <small>
+                {activeDelta ? <DeltaChip delta={activeDelta} compact /> : null}
+                {t("de")} {formatDuration(totals.total_seconds)} {t("registradas")}
+              </small>
+            </div>
+            <div className={styles.kpi}>
+              <span>
+                <i className={swatchClass(3)} aria-hidden /> {t("No productivo")}
+              </span>
+              <strong>{totals.non_productive_pct}%</strong>
+              <small>
+                {(() => {
+                  const delta = compareToPrevious(totals.non_productive_pct, previousTotals?.non_productive_pct, hasPrevious, comparisonNote, true);
+                  return delta ? <DeltaChip delta={delta} compact /> : null;
+                })()}
+                {formatDuration(totals.non_productive_seconds)}
+              </small>
+            </div>
+            <div className={styles.kpi}>
+              <span>
+                <i className={swatchClass(4)} aria-hidden /> {t("Inactivo")}
+              </span>
+              <strong>{totals.idle_pct}%</strong>
+              <small>
+                {(() => {
+                  const delta = compareToPrevious(totals.idle_pct, previousTotals?.idle_pct, hasPrevious, comparisonNote, true);
+                  return delta ? <DeltaChip delta={delta} compact /> : null;
+                })()}
+                {formatDuration(totals.idle_seconds)}
+              </small>
+            </div>
+          </section>
+
+          {/* 5. Detalle: tendencia y personas que requieren seguimiento. */}
           <section className={styles.charts}>
             <Panel
               title={t("Tendencia de productividad")}
@@ -472,33 +668,38 @@ export default function DashboardPage() {
                 emptyLabel={t("Sin datos suficientes para graficar.")}
                 seriesLabel={t("Productividad diaria")}
                 averageLabel={t("Promedio")}
+                target={PRODUCTIVITY_TARGET}
+                targetLabel={t("Meta")}
               />
             </Panel>
 
-            <Panel title={t("Composición del tiempo")} meta={`${formatDuration(totals.active_seconds)} ${t("activos")}`}>
-              <DonutChart
-                segments={donutSegments}
-                centerValue={`${totals.productivity_pct}%`}
-                centerLabel={t("productivo + neutral")}
-                ariaLabel={`${t("Productivo")} ${totals.productivity_pct}%`}
-              />
-            </Panel>
-
-            <Panel title={t("Ahora mismo")} meta={operationsSnapshot ? `${operationsSnapshot.totalEmployees} ${t("personas")}` : undefined}>
-              <div className={styles.liveNow}>
-                <div>
-                  <span>{t("Trabajando")}</span>
-                  <strong>{operationsSnapshot?.working ?? 0}</strong>
-                </div>
-                <div>
-                  <span>{t("En pausa")}</span>
-                  <strong>{operationsSnapshot?.paused ?? 0}</strong>
-                </div>
-                <div>
-                  <span>{t("Sin entrada")}</span>
-                  <strong>{operationsSnapshot?.missing ?? 0}</strong>
-                </div>
-              </div>
+            <Panel title={t("Seguimiento del equipo")} meta={employeeFollowUp.length ? `${employeeFollowUp.length} ${t("personas con actividad")}` : undefined}>
+              {employeeFollowUp.length ? (
+                <ol className={styles.ranking}>
+                  {employeeFollowUp.slice(0, 6).map((row) => {
+                    const tone = metricTone(row.pct);
+                    const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
+                    return (
+                      <li key={row.id}>
+                        <a href={`/empleados/perfil/${row.id}?${params.toString()}`}>
+                          <span className={styles.rankName}>
+                            <strong>{row.name}</strong>
+                            <small>{row.department || formatDuration(row.active)}</small>
+                          </span>
+                          <span className={styles.rankBar} aria-hidden>
+                            <span className={styles[`rank${tone === "good" ? "Good" : tone === "warn" ? "Warn" : "Bad"}`]} style={{ width: `${Math.min(100, row.pct)}%` }} />
+                            <i style={{ left: `${PRODUCTIVITY_TARGET}%` }} />
+                          </span>
+                          <b className={tone === "bad" ? styles.textBad : undefined}>{row.pct}%</b>
+                        </a>
+                      </li>
+                    );
+                  })}
+                </ol>
+              ) : (
+                <EmptyBlock title={t("Sin actividad registrada en el periodo.")} description={t("Cuando los equipos reporten actividad verás aquí a quién dar seguimiento.")} />
+              )}
+              {employeeFollowUp.length ? <p className={styles.rankNote}>{t("Ordenado de menor a mayor productividad. La línea marca la meta.")}</p> : null}
             </Panel>
           </section>
         </>

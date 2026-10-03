@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
-import { Chip, Drawer, EmptyBlock, RefreshButton, RowMenu, StatusLine, Tabs } from "@/components/ui";
+import { Chip, Drawer, EmptyBlock, MetricBand, RefreshButton, RowMenu, StatusLine, Tabs } from "@/components/ui";
 import { useAuth } from "@/components/auth-provider";
 import { usePreferences, useT } from "@/components/preferences-provider";
 import { AttendanceEmployee, AttendanceOverviewResponse, AttendanceShift } from "@/lib/types";
@@ -848,33 +848,41 @@ export default function AttendancePage() {
         </div>
 
         {overview ? (
-        <section className={styles.metrics} aria-label={t("Resumen de asistencia")}>
-          <div>
-            <span><i className={`live-dot ${styles.metricDot}`} aria-hidden />{t("Activos ahora")}</span>
-            <strong className="tabular">{stats.activeNow}</strong>
-            <small>{t("de")} {stats.totalEmployees} {t("asociados")}</small>
-          </div>
-          <div>
-            <span>{t("Ausentes hoy")}</span>
-            <strong className={`tabular ${stats.absentToday ? styles.valueBad : ""}`}>{stats.absentToday}</strong>
-            <small>{t("sin entrada registrada")}</small>
-          </div>
-          <div>
-            <span>{t("Break")}</span>
-            <strong className="tabular">{formatDuration(stats.breakSeconds)}</strong>
-            <small>{t("en el rango")}</small>
-          </div>
-          <div>
-            <span>{t("Lunch")}</span>
-            <strong className="tabular">{formatDuration(stats.lunchSeconds)}</strong>
-            <small>{t("en el rango")}</small>
-          </div>
-          <div>
-            <span>{t("Justificado")}</span>
-            <strong className="tabular">{formatDuration(stats.justifiedSeconds)}</strong>
-            <small>{t("por incidencias aprobadas")}</small>
-          </div>
-        </section>
+        <MetricBand
+          label={t("Resumen de asistencia")}
+          items={[
+            {
+              key: "active",
+              lead: true,
+              label: (
+                <>
+                  <i className="live-dot" aria-hidden />
+                  {t("Activos ahora")}
+                </>
+              ),
+              value: (
+                <>
+                  {stats.activeNow}
+                  <span className="metric-of"> / {stats.totalEmployees}</span>
+                </>
+              ),
+              meter: stats.totalEmployees ? (stats.activeNow / stats.totalEmployees) * 100 : 0,
+              detail: t("asociados con jornada en curso"),
+            },
+            {
+              key: "absent",
+              lead: true,
+              tone: stats.absentToday ? "bad" : "good",
+              label: t("Ausentes hoy"),
+              value: stats.absentToday,
+              status: stats.absentToday ? t("Requiere seguimiento") : t("Sin ausencias"),
+              detail: stats.absentToday ? t("sin entrada registrada") : undefined,
+            },
+            { key: "break", label: t("Break"), value: formatDuration(stats.breakSeconds), detail: t("en el rango") },
+            { key: "lunch", label: t("Lunch"), value: formatDuration(stats.lunchSeconds), detail: t("en el rango") },
+            { key: "justified", label: t("Justificado"), value: formatDuration(stats.justifiedSeconds), detail: t("por incidencias aprobadas") },
+          ]}
+        />
         ) : null}
 
         {!overview ? (

@@ -7783,9 +7783,14 @@ def uncategorized_activity_summary(
         current["samples"] += int(row.samples or 0)
         current["seconds"] += int(row.seconds or 0)
 
-    items = sorted(grouped.values(), key=lambda item: int(item["seconds"]), reverse=True)[: max(1, min(limit, 100))]
+    total_count = len(grouped)
+    bounded_limit = max(1, min(limit, 100))
+    items = sorted(grouped.values(), key=lambda item: int(item["seconds"]), reverse=True)[:bounded_limit]
     return {
         "company": {"id": company.id, "name": company.name},
+        "count": total_count,
+        "returned": len(items),
+        "limit": bounded_limit,
         "items": items,
     }
 

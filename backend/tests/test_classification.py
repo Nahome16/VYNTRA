@@ -1,10 +1,15 @@
 """La clasificacion en memoria debe ser identica a la implementacion original."""
 
+from datetime import timedelta
 import itertools
 import random
 
+from fastapi.testclient import TestClient
+
+from app.auth import create_admin_access_token
 from app.main import classify_activity, classify_with_rules, load_active_productivity_rules
-from app.models import Employee, ProductivityRule
+from app.main import app, get_or_create_app, get_or_create_window_title
+from app.models import Activity, AdminSession, Employee, ProductivityRule, Role, User, now_utc
 
 
 def reference_classify(rules, employee, executable_name, title_text_value):
@@ -90,3 +95,76 @@ def test_db_wrapper_uses_same_rules(db):
         )
     assert classify_activity(db, company.id, employee, "excel.exe", "Presupuesto") == "productive"
     assert classify_activity(db, company.id, employee, "chrome.exe", "facebook") == "non_productive"
+
+
+def admin_headers(db, company):
+    role = Role(company_id=company.id, name="admin")
+    db.add(role)
+    db.flush()
+    user = User(
+        company_id=company.id,
+        role_id=role.id,
+        email="admin-classification@example.test",
+        full_name="Admin Clasificacion",
+        password_hash="test",
+    )
+    db.add(user)
+    db.flush()
+    session = AdminSession(user_id=user.id, company_id=company.id, expires_at=now_utc() + timedelta(hours=1))
+    db.add(session)
+    db.commit()
+    return {"Authorization": f"Bearer {create_admin_access_token(user, 'admin', session.id)}"}
+
+
+def test_uncategorized_endpoint_reports_total_count_beyond_limit(db):
+    from tests.factories import create_company_setup
+
+    company, _department, _position, employee, device = create_company_setup(db)
+    for index in range(35):
+        app_row = get_or_create_app(db, company.id, f"pendiente-{index}.exe")
+        title_row = get_or_create_window_title(db, company.id, f"Pendiente {index}")
+        db.add(
+            Activity(
+                company_id=company.id,
+                employee_id=employee.id,
+                device_id=device.id,
+                app_id=app_row.id,
+                window_title_id=title_row.id,
+                started_at=now_utc() + timedelta(seconds=index),
+                duration_seconds=60,
+                classification="uncategorized",
+                source_event_id=f"pending-{index}",
+                source_sample_index=0,
+            )
+        )
+    db.commit()
+
+    client = TestClient(app)
+    headers = admin_headers(db, company)
+    first_page = client.get("/api/productivity/uncategorized?limit=30", headers=headers)
+    assert first_page.status_code == 200, first_page.text
+    body = first_page.json()
+    assert body["count"] == 35
+    assert body["returned"] == 30
+    assert len(body["items"]) == 30
+
+    first_item = body["items"][0]
+    created = client.post(
+        "/api/productivity/rules",
+        headers=headers,
+        json={
+            "executable_name": first_item["executable_name"],
+            "title_contains": first_item["rule_title_contains"] or "",
+            "classification": "productive",
+            "priority": 120,
+            "reclassify": True,
+            "rebuild_blocks": False,
+        },
+    )
+    assert created.status_code == 200, created.text
+    assert created.json()["reclassify"]["changed"] == 1
+
+    next_page = client.get("/api/productivity/uncategorized?limit=30", headers=headers)
+    assert next_page.status_code == 200, next_page.text
+    assert next_page.json()["count"] == 34
+    assert len(next_page.json()["items"]) == 30

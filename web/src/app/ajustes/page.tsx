@@ -256,6 +256,7 @@ export default function SettingsPage() {
   const [catalogs, setCatalogs] = useState<CatalogsResponse | null>(null);
   const [rules, setRules] = useState<ProductivityRule[]>([]);
   const [uncategorized, setUncategorized] = useState<UncategorizedItem[]>([]);
+  const [uncategorizedCount, setUncategorizedCount] = useState(0);
   const [accessCodes, setAccessCodes] = useState<AccessCode[]>([]);
   const [statusText, setStatusText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -323,6 +324,7 @@ export default function SettingsPage() {
       setCatalogs(null);
       setRules([]);
       setUncategorized([]);
+      setUncategorizedCount(0);
       setAccessCodes([]);
       setSettingsError(false);
       setStatusText(t("Selecciona una empresa en Sistema para administrar ajustes"));
@@ -342,13 +344,14 @@ export default function SettingsPage() {
         canReadEmployees ? apiGet<CatalogsResponse>(`/api/productivity/catalogs${companyQuery}`) : Promise.resolve(null),
         canReadRules ? apiGet<{ rules: ProductivityRule[] }>(`/api/productivity/rules${companyQuery}`) : Promise.resolve({ rules: [] }),
         canReadRules
-          ? apiGet<{ items: UncategorizedItem[] }>(`/api/productivity/uncategorized${companyLimitQuery}`)
-          : Promise.resolve({ items: [] }),
+          ? apiGet<{ count?: number; items: UncategorizedItem[] }>(`/api/productivity/uncategorized${companyLimitQuery}`)
+          : Promise.resolve({ count: 0, items: [] }),
         canReadAccessCodes ? apiGet<{ codes: AccessCode[] }>(`/api/settings/access-codes${companyQuery}`) : Promise.resolve({ codes: [] }),
       ]);
       setCatalogs(nextCatalogs);
       setRules(nextRules.rules);
       setUncategorized(nextUncategorized.items);
+      setUncategorizedCount(nextUncategorized.count ?? nextUncategorized.items.length);
       setAccessCodes(nextCodes.codes);
       setAccessEmployeeId(
         (current) =>
@@ -775,6 +778,7 @@ export default function SettingsPage() {
           rebuild_blocks: true,
         });
         setUncategorized((current) => current.filter((item) => item !== row.item));
+        setUncategorizedCount((current) => Math.max(0, current - 1));
         await loadSettings();
       }
       setStatusText(t("Clasificacion actualizada"));
@@ -1243,7 +1247,7 @@ export default function SettingsPage() {
                 }}
               >
                 <i aria-hidden />
-                {uncategorized.length} {t("pendientes de clasificar")}
+                {uncategorizedCount} {t("pendientes de clasificar")}
               </button>
               {hasRuleFilters ? (
                 <button type="button" className="btn btn-ghost btn-sm" onClick={clearRuleFilters}>{t("Limpiar filtros")}</button>

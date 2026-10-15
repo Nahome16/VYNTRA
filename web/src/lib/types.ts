@@ -26,9 +26,10 @@ export type SystemCompany = {
     employee_limit: number;
     subscription_status: "active" | "trial" | "past_due" | "suspended" | "cancelled";
     subscription_ends_at: string;
+    billing_anchor_date: string;
     admin_notice: string;
   };
-  /** Recordatorio de facturación: periodo cerrado aún sin factura enviada. */
+  /** Recordatorio prepago: periodo vigente aún sin factura enviada. */
   billing?: {
     pending_period: { start: string; end: string; label: string } | null;
     last_invoice: { number: string; period_start: string; period_end: string; status: InvoiceStatus; sent_at: string | null } | null;
@@ -36,6 +37,7 @@ export type SystemCompany = {
 };
 
 export type InvoiceStatus = "sent" | "partial" | "failed" | "not_configured";
+export type InvoicePaymentStatus = "issued" | "paid" | "overdue" | "void";
 
 export type InvoiceAmounts = {
   number: string;
@@ -56,7 +58,13 @@ export type InvoiceRecord = InvoiceAmounts & {
   id: string;
   company_id: string;
   status: InvoiceStatus;
-  recipients: Array<{ email: string; full_name: string; status: string }>;
+  delivery_status: InvoiceStatus;
+  archive_status: string;
+  payment_status: InvoicePaymentStatus;
+  paid_on: string | null;
+  payment_reference: string;
+  message: string;
+  recipients: Array<{ email: string; full_name: string; status: string; archive_status?: string }>;
   send_count: number;
   sent_at: string | null;
   sent_by: { id: string; full_name: string; email: string } | null;
@@ -68,7 +76,20 @@ export type BillingPeriod = {
   end: string;
   label: string;
   status: "open" | "closed";
-  invoice: { id: string; number: string; status: InvoiceStatus; sent_at: string | null } | null;
+  invoice: {
+    id: string;
+    number: string;
+    status: InvoiceStatus;
+    delivery_status: InvoiceStatus;
+    payment_status: InvoicePaymentStatus;
+    archive_status: string;
+    active_users: number;
+    total_cents: number;
+    currency: string;
+    message: string;
+    sent_at: string | null;
+  } | null;
+  default_message: string;
 };
 
 export type BillingResponse = {
@@ -78,11 +99,13 @@ export type BillingResponse = {
     currency: string;
     due_business_days: number;
     billing_start: string;
+    billing_anchor_date: string;
     payment_configured: boolean;
     contact_email: string;
   };
   active_users: number;
   recipients: Array<{ id: string; email: string; full_name: string; role: string }>;
+  default_message: string;
   periods: BillingPeriod[];
   default_period_start: string;
   invoices: InvoiceRecord[];
@@ -91,6 +114,7 @@ export type BillingResponse = {
 export type InvoicePreviewResponse = {
   invoice: InvoiceAmounts;
   subject: string;
+  message: string;
   html: string;
   recipients: Array<{ email: string; full_name: string }>;
   already_sent: boolean;
@@ -98,7 +122,7 @@ export type InvoicePreviewResponse = {
 
 export type InvoiceSendResponse = {
   invoice: InvoiceRecord;
-  delivery: Array<{ email: string; status: string }>;
+  delivery: Array<{ email: string; status: string; archive_status: string }>;
 };
 
 export type PanelUser = {

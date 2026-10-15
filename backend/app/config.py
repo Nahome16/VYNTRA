@@ -73,6 +73,14 @@ class Settings:
     smtp_use_tls: bool = _bool_env("SMTP_USE_TLS", True)
     smtp_use_ssl: bool = _bool_env("SMTP_USE_SSL", False)
     smtp_timeout_seconds: int = int(os.environ.get("SMTP_TIMEOUT_SECONDS", "10"))
+    # Copia auditable de facturas enviadas. IMAP es independiente de SMTP:
+    # SMTP entrega el mensaje; IMAP lo agrega al buzon Enviados.
+    imap_host: str = os.environ.get("IMAP_HOST", "")
+    imap_port: int = int(os.environ.get("IMAP_PORT", "993"))
+    imap_username: str = os.environ.get("IMAP_USERNAME", os.environ.get("SMTP_USERNAME", ""))
+    imap_password: str = os.environ.get("IMAP_PASSWORD", os.environ.get("SMTP_PASSWORD", ""))
+    imap_sent_mailbox: str = os.environ.get("IMAP_SENT_MAILBOX", "Sent")
+    imap_use_ssl: bool = _bool_env("IMAP_USE_SSL", True)
     app_public_url: str = os.environ.get("APP_PUBLIC_URL", "")
     station_domain: str = os.environ.get("STATION_DOMAIN", "")
     station_public_url: str = os.environ.get("STATION_PUBLIC_URL", "")

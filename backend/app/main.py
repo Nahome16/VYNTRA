@@ -7,10 +7,12 @@ import calendar
 import csv
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 import base64
 import io
 import hashlib
 import html as html_lib
+import imaplib
 import json
 import logging
 import math
@@ -279,6 +281,7 @@ class SystemCompanyControlsPayload(StrictPayload):
     employee_limit: int = Field(default=0, ge=0, le=100000)
     subscription_status: Literal["active", "trial", "past_due", "suspended", "cancelled"] = "active"
     subscription_ends_at: str | None = Field(default=None, max_length=10)
+    billing_anchor_date: str | None = Field(default=None, max_length=10)
     admin_notice: str | None = Field(default=None, max_length=255)
 
 
@@ -307,6 +310,12 @@ class InvoiceRequestPayload(StrictPayload):
     period_start: str = Field(..., min_length=1, max_length=40)
     active_users: int | None = Field(default=None, ge=0, le=100000)
     recipients: list[str] | None = Field(default=None, max_length=50)
+    message: str | None = Field(default=None, max_length=4000)
+
+
+class InvoicePaymentPayload(StrictPayload):
+    paid_on: str | None = Field(default=None, max_length=10)
+    reference: str | None = Field(default=None, max_length=180)
 
 
 class DeviceCreatePayload(StrictPayload):
@@ -383,33 +392,46 @@ def smtp_configured() -> bool:
     return bool(settings.smtp_host.strip() and settings.smtp_from_email.strip())
 
 
-def send_plain_email(to_email: str, subject: str, body: str) -> str:
-    return send_email(to_email, subject, body)
+def imap_archive_configured() -> bool:
+    return bool(
+        settings.imap_host.strip()
+        and settings.imap_username.strip()
+        and settings.imap_password
+        and settings.imap_sent_mailbox.strip()
+    )
 
 
-def send_email(
+def build_email_message(
     to_email: str,
     subject: str,
     body: str,
     *,
     html: str | None = None,
     reply_to: str | None = None,
-) -> str:
-    """Envia un correo de texto (con alternativa HTML opcional). Devuelve sent/failed/not_configured."""
+    attachments: list[tuple[str, bytes, str, str]] | None = None,
+) -> EmailMessage:
+    """Construye una unica representacion MIME para entregar y archivar."""
     recipient = clean_email(to_email)
-    if not smtp_configured():
-        return "not_configured"
-
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = f"{settings.smtp_from_name} <{settings.smtp_from_email}>"
     message["To"] = recipient
+    message["Date"] = formatdate(localtime=False)
+    message["Message-ID"] = make_msgid(domain=(settings.smtp_from_email.split("@")[-1] or None))
     if reply_to:
         message["Reply-To"] = reply_to
     message.set_content(body)
     if html:
         message.add_alternative(html, subtype="html")
+    for filename, content, maintype, subtype in attachments or []:
+        message.add_attachment(content, maintype=maintype, subtype=subtype, filename=filename)
+    return message
 
+
+def deliver_email_message(message: EmailMessage) -> str:
+    if not smtp_configured():
+        return "not_configured"
+    subject = str(message.get("Subject") or "")
     try:
         if settings.smtp_use_ssl:
             with smtplib.SMTP_SSL(
@@ -434,8 +456,85 @@ def send_email(
     except Exception:
         logger.exception("SMTP delivery failed (subject=%r)", subject)
         return "failed"
-
     return "sent"
+
+
+def archive_sent_email(message: EmailMessage) -> str:
+    """Agrega la copia MIME exacta a Enviados sin cambiar el resultado SMTP."""
+    if not imap_archive_configured():
+        return "not_configured"
+    connection = None
+    try:
+        if settings.imap_use_ssl:
+            connection = imaplib.IMAP4_SSL(
+                settings.imap_host,
+                settings.imap_port,
+                timeout=settings.smtp_timeout_seconds,
+            )
+        else:
+            connection = imaplib.IMAP4(
+                settings.imap_host,
+                settings.imap_port,
+                timeout=settings.smtp_timeout_seconds,
+            )
+            connection.starttls()
+        connection.login(settings.imap_username, settings.imap_password)
+        status_value, _response = connection.append(
+            settings.imap_sent_mailbox,
+            "\\Seen",
+            None,
+            message.as_bytes(),
+        )
+        return "sent" if status_value == "OK" else "failed"
+    except Exception:
+        logger.exception("IMAP sent-copy archive failed (subject=%r)", str(message.get("Subject") or ""))
+        return "failed"
+    finally:
+        if connection is not None:
+            try:
+                connection.logout()
+            except Exception:
+                pass
+
+
+def send_plain_email(to_email: str, subject: str, body: str) -> str:
+    return send_email(to_email, subject, body)
+
+
+def send_email(
+    to_email: str,
+    subject: str,
+    body: str,
+    *,
+    html: str | None = None,
+    reply_to: str | None = None,
+) -> str:
+    """Envia un correo de texto (con alternativa HTML opcional). Devuelve sent/failed/not_configured."""
+    return deliver_email_message(build_email_message(to_email, subject, body, html=html, reply_to=reply_to))
+
+
+def send_invoice_email(
+    to_email: str,
+    subject: str,
+    body: str,
+    *,
+    html: str,
+    reply_to: str | None,
+    pdf_bytes: bytes,
+    invoice_number: str,
+) -> dict[str, str]:
+    safe_number = re.sub(r"[^A-Za-z0-9-]", "", invoice_number) or "factura"
+    message = build_email_message(
+        to_email,
+        subject,
+        body,
+        html=html,
+        reply_to=reply_to,
+        attachments=[(f"Factura-{safe_number}.pdf", pdf_bytes, "application", "pdf")],
+    )
+    delivery_status = deliver_email_message(message)
+    archive_status = archive_sent_email(message) if delivery_status == "sent" else "not_attempted"
+    return {"delivery_status": delivery_status, "archive_status": archive_status}
 
 
 def ip_allowed(path: str, ip_address: str) -> bool:
@@ -1183,6 +1282,7 @@ COMPANY_CONTROL_DEFAULTS = {
     "employee_limit": "0",
     "subscription_status": "active",
     "subscription_ends_at": "",
+    "billing_anchor_date": "",
     "admin_notice": "",
 }
 
@@ -1229,6 +1329,7 @@ def company_controls(db: Session, company_id: str) -> dict:
         "employee_limit": employee_limit,
         "subscription_status": values.get("subscription_status") or "active",
         "subscription_ends_at": values.get("subscription_ends_at") or "",
+        "billing_anchor_date": values.get("billing_anchor_date") or billing_start_date().isoformat(),
         "admin_notice": values.get("admin_notice") or "",
     }
 
@@ -2156,6 +2257,7 @@ def seed_company_settings(db: Session, company_id: str):
         ("employee_limit", "0", "Limite comercial de usuarios monitoreados; 0 significa sin limite."),
         ("subscription_status", "active", "Estado comercial de la suscripcion."),
         ("subscription_ends_at", "", "Fecha de vencimiento comercial en formato YYYY-MM-DD."),
+        ("billing_anchor_date", billing_start_date().isoformat(), "Fecha ancla de la suscripcion mensual prepaga."),
         ("admin_notice", "", "Mensaje visible para administradores de la empresa."),
     ]
     for key, value, description in settings_seed:
@@ -3577,6 +3679,49 @@ def ensure_employee_schedule_schema():
                 conn.execute(text(f"ALTER TABLE employee_schedules ADD COLUMN {column} {ddl}"))
 
 
+def ensure_invoice_schema():
+    """Amplia facturas existentes sin perder el estado historico de entrega."""
+    if not is_postgresql():
+        return
+    columns = {
+        "payment_status": "VARCHAR(30) NOT NULL DEFAULT 'issued'",
+        "delivery_status": "VARCHAR(30) NOT NULL DEFAULT 'failed'",
+        "archive_status": "VARCHAR(30) NOT NULL DEFAULT 'not_configured'",
+        "paid_on": "VARCHAR(10)",
+        "payment_reference": "VARCHAR(180) NOT NULL DEFAULT ''",
+        "email_subject": "VARCHAR(255) NOT NULL DEFAULT ''",
+        "email_message": "TEXT NOT NULL DEFAULT ''",
+        "email_html": "TEXT NOT NULL DEFAULT ''",
+        "email_plain": "TEXT NOT NULL DEFAULT ''",
+        "document_json": "TEXT NOT NULL DEFAULT '{}'",
+    }
+    with engine.begin() as conn:
+        existing = {
+            row[0]
+            for row in conn.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_name = 'invoices'
+                    """
+                )
+            )
+        }
+        for column, ddl in columns.items():
+            if column not in existing:
+                conn.execute(text(f"ALTER TABLE invoices ADD COLUMN {column} {ddl}"))
+        conn.execute(
+            text(
+                """
+                UPDATE invoices
+                SET delivery_status = status
+                WHERE delivery_status = 'failed' AND status <> 'failed'
+                """
+            )
+        )
+
+
 @app.on_event("startup")
 def on_startup():
     # Fail-closed: fuera de desarrollo no se arranca con secretos debiles o de ejemplo.
@@ -3586,6 +3731,7 @@ def on_startup():
     ensure_employee_credential_schema()
     ensure_user_schema()
     ensure_employee_schedule_schema()
+    ensure_invoice_schema()
     ensure_incident_schema()
     ensure_indexes()
     bootstrap_data()
@@ -3618,10 +3764,9 @@ def health_ready():
 # Reglas: USD 15.00 (BILLING_UNIT_PRICE_CENTS) por usuario monitoreado activo,
 # sin IVA. Los periodos van del dia ancla (el dia de BILLING_START_DATE) de un
 # mes al dia anterior del mes siguiente: 15 sep - 14 oct, 15 oct - 14 nov...
-# Emision = hoy en la zona de la empresa; vencimiento = emision + N dias
-# habiles (lunes a viernes, sin feriados). El envio es manual desde la consola
-# sistema. Los textos fuera de ASCII se escriben con escapes \u o entidades HTML
-# para mantener el codigo fuente en ASCII.
+# La factura se emite para el periodo vigente (prepago), con vencimiento a N dias
+# habiles desde la emision. El envio es manual desde la consola sistema; un
+# reenvio conserva importes, fechas y contenido de la emision original.
 
 DEFAULT_BILLING_START = date(2026, 9, 15)
 INVOICE_DELIVERED_STATUSES = ("sent", "partial")
@@ -3646,6 +3791,19 @@ def billing_start_date() -> date:
         return date.fromisoformat((settings.billing_start_date or "").strip())
     except ValueError:
         return DEFAULT_BILLING_START
+
+
+def company_billing_start_date(db: Session, company: Company) -> date:
+    """Fecha ancla mensual por empresa; conserva el primer periodo ya emitido."""
+    existing_start = db.execute(
+        select(func.min(Invoice.period_start)).where(Invoice.company_id == company.id)
+    ).scalar_one_or_none()
+    values = get_company_settings_map(db, company.id)
+    raw_value = existing_start or values.get("billing_anchor_date") or settings.billing_start_date
+    try:
+        return date.fromisoformat(str(raw_value).strip())
+    except ValueError:
+        return billing_start_date()
 
 
 def billing_today(company: Company | None) -> date:
@@ -3725,12 +3883,7 @@ def default_billing_period_start(
     status_by_start: dict[str, str],
     today: date,
 ) -> date:
-    pending = latest_undelivered_closed_period(periods, status_by_start, today)
-    if pending:
-        return pending[0]
-    closed = [period for period in periods if period[1] < today]
-    if closed:
-        return closed[0][0]
+    """En prepago se propone siempre el periodo vigente, no el ultimo cerrado."""
     return periods[0][0]
 
 
@@ -3803,12 +3956,12 @@ def active_users_text(count: int) -> str:
     return "1 usuario activo" if count == 1 else f"{count} usuarios activos"
 
 
-def invoice_number_prefix(period_end: date) -> str:
-    return f"VYN-{period_end.strftime('%Y%m')}-"
+def invoice_number_prefix(issued_on: date) -> str:
+    return f"VYN-{issued_on.strftime('%Y%m')}-"
 
 
-def next_invoice_number(db: Session, period_end: date) -> str:
-    prefix = invoice_number_prefix(period_end)
+def next_invoice_number(db: Session, issued_on: date) -> str:
+    prefix = invoice_number_prefix(issued_on)
     existing = db.execute(
         select(func.count()).select_from(Invoice).where(Invoice.number.startswith(prefix))
     ).scalar_one()
@@ -3824,6 +3977,19 @@ def invoice_delivery_status(statuses: list[str]) -> str:
     if any(item == "sent" for item in statuses):
         return "partial"
     if statuses and all(item == "not_configured" for item in statuses):
+        return "not_configured"
+    return "failed"
+
+
+def invoice_archive_status(statuses: list[str]) -> str:
+    attempted = [item for item in statuses if item != "not_attempted"]
+    if not attempted:
+        return "not_attempted"
+    if all(item == "sent" for item in attempted):
+        return "sent"
+    if any(item == "sent" for item in attempted):
+        return "partial"
+    if all(item == "not_configured" for item in attempted):
         return "not_configured"
     return "failed"
 
@@ -3897,8 +4063,7 @@ INVOICE_EMAIL_TEMPLATE = Template("""<!doctype html>
 
               <p style="margin:0 0 6px; font-size:15px; line-height:22px; color:#344054;">${greeting}</p>
               <p style="margin:0 0 28px; font-size:15px; line-height:23px; color:#344054;">
-                Esta es la factura de <strong style="color:#0b0d12;">${company}</strong> por el servicio VYNTRA del periodo
-                <strong style="color:#0b0d12;">${period_long}</strong>.
+                ${intro_message}
               </p>
 
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #e4e7ec; border-radius:12px;">
@@ -4065,6 +4230,15 @@ def invoice_greeting(company_name: str, recipients: list[dict]) -> str:
     return "Hola, equipo:"
 
 
+def default_invoice_message(company_name: str, period_start: date, period_end: date) -> str:
+    return (
+        f"Adjuntamos la factura de {company_name} correspondiente al nuevo periodo de servicio VYNTRA "
+        f"del {format_period_long(period_start, period_end)}. "
+        f"Agradecemos realizar el pago dentro de {business_days_text(settings.billing_due_business_days)} "
+        "y usar el numero de factura como referencia."
+    )
+
+
 def render_invoice_email(
     *,
     number: str,
@@ -4080,13 +4254,15 @@ def render_invoice_email(
     total_cents: int,
     currency: str,
     recipients: list[dict],
+    message: str = "",
+    billing_anchor: date | None = None,
     due_business_days: int | None = None,
 ) -> tuple[str, str, str]:
     """Devuelve (asunto, html, texto plano) de la factura. Puro: no toca la base de datos."""
     esc = html_lib.escape
     due_days = settings.billing_due_business_days if due_business_days is None else due_business_days
     contact_email = (settings.billing_contact_email or "").strip()
-    next_start, next_end = billing_period_for(period_end + timedelta(days=1))
+    next_start, next_end = billing_period_for(period_end + timedelta(days=1), billing_anchor or period_start)
     period_label = format_period_label(period_start, period_end)
     period_long = format_period_long(period_start, period_end)
     next_period = format_period_long(next_start, next_end)
@@ -4095,6 +4271,8 @@ def render_invoice_email(
     tax_money = format_money(tax_cents, currency)
     unit_money = format_money(unit_price_cents, currency)
     greeting = invoice_greeting(company_name, recipients)
+    intro_message = clean_text(message, 4000) or default_invoice_message(company_name, period_start, period_end)
+    intro_message_html = "<br>".join(esc(line) for line in intro_message.splitlines())
     line_detail = (
         f"{active_users_text(active_users)} {MIDDOT} "
         f"{format_date_numeric(period_start)} al {format_date_numeric(period_end)}"
@@ -4134,6 +4312,7 @@ def render_invoice_email(
         preheader=esc(preheader),
         logo_url=esc(settings.billing_logo_url or "", quote=True),
         greeting=esc(greeting),
+        intro_message=intro_message_html,
         company=esc(company_name),
         period_long=esc(period_long),
         currency=esc(currency),
@@ -4161,7 +4340,7 @@ def render_invoice_email(
     plain_lines = [
         greeting,
         "",
-        f"Esta es la factura de {company_name} por el servicio VYNTRA del periodo {period_long}.",
+        intro_message,
         "",
         f"Factura: {number}",
         f"Monto a pagar: {total_money}",
@@ -4258,8 +4437,8 @@ def resolve_invoice_recipients(eligible: list[dict], requested: list[str] | None
     return selected
 
 
-def resolve_invoice_period(raw_period_start: str, today: date) -> tuple[date, date]:
-    start = billing_start_date()
+def resolve_invoice_period(raw_period_start: str, today: date, start: date | None = None) -> tuple[date, date]:
+    start = start or billing_start_date()
     try:
         period_start = date.fromisoformat(clean_text(raw_period_start, 40))
     except ValueError as exc:
@@ -4288,24 +4467,48 @@ def find_company_invoice(db: Session, company_id: str, period_start: date) -> In
 def prepare_invoice_draft(db: Session, company: Company, payload: InvoiceRequestPayload) -> dict:
     """Calcula cantidad, importes, fechas, numero y destinatarios sin persistir nada."""
     today = billing_today(company)
-    period_start, period_end = resolve_invoice_period(payload.period_start, today)
+    anchor = company_billing_start_date(db, company)
+    period_start, period_end = resolve_invoice_period(payload.period_start, today, anchor)
     recipients = resolve_invoice_recipients(eligible_invoice_recipients(db, company.id), payload.recipients)
+    unit_price_cents = max(0, int(settings.billing_unit_price_cents))
+    existing = find_company_invoice(db, company.id, period_start)
+    message = clean_text(payload.message, 4000)
+    if existing is not None:
+        return {
+            "existing": existing,
+            "billing_anchor": anchor,
+            "number": existing.number,
+            "period_start": date.fromisoformat(existing.period_start),
+            "period_end": date.fromisoformat(existing.period_end),
+            "issued_on": date.fromisoformat(existing.issued_on),
+            "due_on": date.fromisoformat(existing.due_on),
+            "active_users": existing.active_users,
+            "unit_price_cents": existing.unit_price_cents,
+            "currency": existing.currency,
+            "recipients": recipients,
+            "message": message or existing.email_message,
+            "subtotal_cents": existing.subtotal_cents,
+            "tax_cents": existing.tax_cents,
+            "total_cents": existing.total_cents,
+        }
+
     active_users = (
         payload.active_users if payload.active_users is not None else count_active_monitored_users(db, company.id)
     )
-    unit_price_cents = max(0, int(settings.billing_unit_price_cents))
-    existing = find_company_invoice(db, company.id, period_start)
+    issued_on = today
     return {
         "existing": existing,
-        "number": existing.number if existing else next_invoice_number(db, period_end),
+        "billing_anchor": anchor,
+        "number": next_invoice_number(db, issued_on),
         "period_start": period_start,
         "period_end": period_end,
-        "issued_on": today,
-        "due_on": add_business_days(today, settings.billing_due_business_days),
+        "issued_on": issued_on,
+        "due_on": add_business_days(issued_on, settings.billing_due_business_days),
         "active_users": int(active_users),
         "unit_price_cents": unit_price_cents,
         "currency": (settings.billing_currency or "USD").strip().upper()[:8] or "USD",
         "recipients": recipients,
+        "message": message,
         **invoice_amounts(active_users, unit_price_cents),
     }
 
@@ -4325,6 +4528,8 @@ def render_invoice_draft(company: Company, draft: dict) -> tuple[str, str, str]:
         total_cents=draft["total_cents"],
         currency=draft["currency"],
         recipients=draft["recipients"],
+        message=draft["message"],
+        billing_anchor=draft["billing_anchor"],
     )
 
 
@@ -4344,9 +4549,10 @@ def invoice_document_data(
     total_cents: int,
     currency: str,
     recipients: list[dict],
+    billing_anchor: date | None = None,
 ) -> dict:
     """Textos ya formateados de la factura para el PDF (mismos datos que el correo)."""
-    next_start, next_end = billing_period_for(period_end + timedelta(days=1))
+    next_start, next_end = billing_period_for(period_end + timedelta(days=1), billing_anchor or period_start)
     return {
         "number": number,
         "company_name": company_name or "-",
@@ -4398,6 +4604,7 @@ def invoice_recipients(invoice: Invoice) -> list[dict]:
             "email": str(item.get("email") or ""),
             "full_name": str(item.get("full_name") or ""),
             "status": str(item.get("status") or ""),
+            "archive_status": str(item.get("archive_status") or ""),
         }
         for item in value
         if isinstance(item, dict)
@@ -4405,6 +4612,8 @@ def invoice_recipients(invoice: Invoice) -> list[dict]:
 
 
 def render_stored_invoice(company: Company | None, invoice: Invoice) -> tuple[str, str, str]:
+    if invoice.email_subject and invoice.email_html and invoice.email_plain:
+        return invoice.email_subject, invoice.email_html, invoice.email_plain
     company_name = (company.legal_name or company.name) if company else ""
     return render_invoice_email(
         number=invoice.number,
@@ -4420,11 +4629,17 @@ def render_stored_invoice(company: Company | None, invoice: Invoice) -> tuple[st
         total_cents=invoice.total_cents,
         currency=invoice.currency,
         recipients=invoice_recipients(invoice),
+        message=invoice.email_message,
+        billing_anchor=date.fromisoformat(invoice.period_start),
     )
 
 
 def serialize_invoice(db: Session, invoice: Invoice) -> dict:
     sent_by = db.get(User, invoice.sent_by_user_id) if invoice.sent_by_user_id else None
+    company = db.get(Company, invoice.company_id)
+    payment_status = invoice.payment_status or "issued"
+    if payment_status == "issued" and date.fromisoformat(invoice.due_on) < billing_today(company):
+        payment_status = "overdue"
     return {
         "id": invoice.id,
         "number": invoice.number,
@@ -4443,6 +4658,12 @@ def serialize_invoice(db: Session, invoice: Invoice) -> dict:
         "total_cents": invoice.total_cents,
         "currency": invoice.currency,
         "status": invoice.status,
+        "delivery_status": invoice.delivery_status or invoice.status,
+        "archive_status": invoice.archive_status or "not_configured",
+        "payment_status": payment_status,
+        "paid_on": invoice.paid_on,
+        "payment_reference": invoice.payment_reference,
+        "message": invoice.email_message,
         "recipients": invoice_recipients(invoice),
         "send_count": invoice.send_count,
         "sent_at": invoice.sent_at.isoformat() if invoice.sent_at else None,
@@ -4454,7 +4675,7 @@ def serialize_invoice(db: Session, invoice: Invoice) -> dict:
 
 
 def company_billing_summary(db: Session, company: Company) -> dict:
-    """Recordatorio para la consola sistema: periodo cerrado pendiente y ultima factura."""
+    """Recordatorio prepago: periodo vigente aun no emitido y ultima factura."""
     if company.status == "archived":
         return {"pending_period": None, "last_invoice": None}
     rows = db.execute(
@@ -4463,9 +4684,11 @@ def company_billing_summary(db: Session, company: Company) -> dict:
         .order_by(Invoice.period_start.desc())
     ).all()
     today = billing_today(company)
-    pending = latest_undelivered_closed_period(
-        billing_periods_until(today), {row.period_start: row.status for row in rows}, today
-    )
+    anchor = company_billing_start_date(db, company)
+    periods = billing_periods_until(today, anchor)
+    current_period = periods[0]
+    current_invoice = next((row for row in rows if row.period_start == current_period[0].isoformat()), None)
+    pending = current_period if current_invoice is None or current_invoice.status not in INVOICE_DELIVERED_STATUSES else None
     last = rows[0] if rows else None
     return {
         "pending_period": (
@@ -5161,6 +5384,21 @@ def update_system_company_controls(
     ends_at = clean_text(payload.subscription_ends_at, 10)
     if ends_at:
         validate_date(ends_at, "subscription_ends_at")
+    current_anchor = company_controls(db, company.id).get("billing_anchor_date") or billing_start_date().isoformat()
+    anchor_date = clean_text(payload.billing_anchor_date, 10) if payload.billing_anchor_date is not None else current_anchor
+    anchor_date = anchor_date or billing_start_date().isoformat()
+    validate_date(anchor_date, "billing_anchor_date")
+    earliest_invoice_start = db.execute(
+        select(func.min(Invoice.period_start)).where(Invoice.company_id == company.id)
+    ).scalar_one_or_none()
+    if earliest_invoice_start and anchor_date != earliest_invoice_start:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "La fecha ancla no puede cambiar despues de emitir facturas; "
+                f"debe permanecer en {earliest_invoice_start}."
+            ),
+        )
     if payload.timezone is not None:
         company.timezone = validate_timezone(payload.timezone, company.timezone)
         schedules = db.execute(
@@ -5181,6 +5419,7 @@ def update_system_company_controls(
     )
     set_company_setting(db, company.id, "subscription_status", payload.subscription_status, "Estado comercial de la suscripcion.")
     set_company_setting(db, company.id, "subscription_ends_at", ends_at, "Fecha de vencimiento comercial en formato YYYY-MM-DD.")
+    set_company_setting(db, company.id, "billing_anchor_date", anchor_date, "Fecha ancla de la suscripcion mensual prepaga.")
     set_company_setting(db, company.id, "admin_notice", clean_text(payload.admin_notice, 255), "Mensaje visible para administradores de la empresa.")
     db.add(
         AuditLog(
@@ -5298,6 +5537,13 @@ def invoice_period_ref(invoice: Invoice | None) -> dict | None:
         "id": invoice.id,
         "number": invoice.number,
         "status": invoice.status,
+        "delivery_status": invoice.delivery_status or invoice.status,
+        "payment_status": invoice.payment_status or "issued",
+        "archive_status": invoice.archive_status or "not_configured",
+        "active_users": invoice.active_users,
+        "total_cents": invoice.total_cents,
+        "currency": invoice.currency,
+        "message": invoice.email_message,
         "sent_at": invoice.sent_at.isoformat() if invoice.sent_at else None,
     }
 
@@ -5311,13 +5557,14 @@ def system_company_billing(
     require_system_admin(admin)
     company = get_billing_company(db, company_id)
     today = billing_today(company)
+    anchor = company_billing_start_date(db, company)
     invoices = db.execute(
         select(Invoice)
         .where(Invoice.company_id == company.id)
         .order_by(Invoice.period_start.desc())
     ).scalars().all()
     by_start = {invoice.period_start: invoice for invoice in invoices}
-    periods = billing_periods_until(today)
+    periods = billing_periods_until(today, anchor)
     status_by_start = {invoice.period_start: invoice.status for invoice in invoices}
     return {
         "company": {"id": company.id, "name": company.name, "legal_name": company.legal_name},
@@ -5326,11 +5573,17 @@ def system_company_billing(
             "currency": (settings.billing_currency or "USD").strip().upper()[:8] or "USD",
             "due_business_days": settings.billing_due_business_days,
             "billing_start": billing_start_date().isoformat(),
+            "billing_anchor_date": anchor.isoformat(),
             "payment_configured": billing_payment_configured(),
             "contact_email": (settings.billing_contact_email or "").strip(),
         },
         "active_users": count_active_monitored_users(db, company.id),
         "recipients": eligible_invoice_recipients(db, company.id),
+        "default_message": default_invoice_message(
+            company.legal_name or company.name,
+            periods[0][0],
+            periods[0][1],
+        ),
         "periods": [
             {
                 "start": period_start.isoformat(),
@@ -5338,6 +5591,11 @@ def system_company_billing(
                 "label": format_period_label(period_start, period_end),
                 "status": "closed" if period_end < today else "open",
                 "invoice": invoice_period_ref(by_start.get(period_start.isoformat())),
+                "default_message": default_invoice_message(
+                    company.legal_name or company.name,
+                    period_start,
+                    period_end,
+                ),
             }
             for period_start, period_end in periods
         ],
@@ -5356,8 +5614,17 @@ def preview_company_invoice(
     require_system_admin(admin)
     company = get_billing_company(db, company_id, require_active=True)
     draft = prepare_invoice_draft(db, company, payload)
-    subject, html_body, _plain = render_invoice_draft(company, draft)
     existing = draft["existing"]
+    if existing and existing.email_subject and existing.email_html:
+        subject, html_body = existing.email_subject, existing.email_html
+        preview_message = existing.email_message
+    else:
+        subject, html_body, _plain = render_invoice_draft(company, draft)
+        preview_message = draft["message"] or default_invoice_message(
+            company.legal_name or company.name,
+            draft["period_start"],
+            draft["period_end"],
+        )
     return {
         "invoice": {
             "number": draft["number"],
@@ -5374,6 +5641,7 @@ def preview_company_invoice(
             "currency": draft["currency"],
         },
         "subject": subject,
+        "message": preview_message,
         "html": html_body,
         "recipients": [{"email": row["email"], "full_name": row["full_name"]} for row in draft["recipients"]],
         "already_sent": bool(existing and existing.status in INVOICE_DELIVERED_STATUSES),
@@ -5398,6 +5666,7 @@ def send_company_invoice(
         )
 
     invoice = draft["existing"]
+    is_new_invoice = invoice is None
     if invoice is None:
         invoice = Invoice(
             company_id=company.id,
@@ -5406,16 +5675,19 @@ def send_company_invoice(
             send_count=0,
         )
         db.add(invoice)
-    invoice.period_end = draft["period_end"].isoformat()
-    invoice.issued_on = draft["issued_on"].isoformat()
-    invoice.due_on = draft["due_on"].isoformat()
-    invoice.active_users = draft["active_users"]
-    invoice.unit_price_cents = draft["unit_price_cents"]
-    invoice.subtotal_cents = draft["subtotal_cents"]
-    invoice.tax_cents = draft["tax_cents"]
-    invoice.total_cents = draft["total_cents"]
-    invoice.currency = draft["currency"]
+    if is_new_invoice:
+        invoice.period_end = draft["period_end"].isoformat()
+        invoice.issued_on = draft["issued_on"].isoformat()
+        invoice.due_on = draft["due_on"].isoformat()
+        invoice.active_users = draft["active_users"]
+        invoice.unit_price_cents = draft["unit_price_cents"]
+        invoice.subtotal_cents = draft["subtotal_cents"]
+        invoice.tax_cents = draft["tax_cents"]
+        invoice.total_cents = draft["total_cents"]
+        invoice.currency = draft["currency"]
+        invoice.payment_status = "issued"
     invoice.status = "failed"
+    invoice.delivery_status = "failed"
     invoice.recipients_json = json_text(
         [{"email": row["email"], "full_name": row["full_name"], "status": "pending"} for row in draft["recipients"]]
     )
@@ -5425,21 +5697,78 @@ def send_company_invoice(
         db.rollback()
         raise HTTPException(status_code=409, detail="Otra factura se genero al mismo tiempo; intenta de nuevo.") from exc
 
-    subject, html_body, plain_body = render_invoice_draft(company, draft)
+    effective_message = draft["message"] or default_invoice_message(
+        company.legal_name or company.name,
+        draft["period_start"],
+        draft["period_end"],
+    )
+    draft["message"] = effective_message
+    stored_document = parse_json_payload(invoice.document_json or "{}") if not is_new_invoice else {}
+    if not is_new_invoice and invoice.email_subject and invoice.email_html and invoice.email_plain:
+        subject, html_body, plain_body = invoice.email_subject, invoice.email_html, invoice.email_plain
+        effective_message = invoice.email_message
+    else:
+        subject, html_body, plain_body = render_invoice_draft(company, draft)
+    document = stored_document if isinstance(stored_document, dict) and stored_document.get("number") else invoice_document_data(
+        number=draft["number"],
+        company_name=company.legal_name or company.name,
+        period_start=draft["period_start"],
+        period_end=draft["period_end"],
+        issued_on=draft["issued_on"],
+        due_on=draft["due_on"],
+        active_users=draft["active_users"],
+        unit_price_cents=draft["unit_price_cents"],
+        subtotal_cents=draft["subtotal_cents"],
+        tax_cents=draft["tax_cents"],
+        total_cents=draft["total_cents"],
+        currency=draft["currency"],
+        recipients=draft["recipients"],
+        billing_anchor=draft["billing_anchor"],
+    )
+    pdf_bytes = build_invoice_pdf(document)
+    if is_new_invoice or not invoice.email_subject:
+        invoice.email_subject = subject
+        invoice.email_message = effective_message
+        invoice.email_html = html_body
+        invoice.email_plain = plain_body
+        invoice.document_json = json_text(document)
     reply_to = (settings.billing_contact_email or "").strip() or None
     delivery = []
     for row in draft["recipients"]:
         try:
-            delivery_status = send_email(row["email"], subject, plain_body, html=html_body, reply_to=reply_to)
+            result = send_invoice_email(
+                row["email"],
+                subject,
+                plain_body,
+                html=html_body,
+                reply_to=reply_to,
+                pdf_bytes=pdf_bytes,
+                invoice_number=invoice.number,
+            )
         except HTTPException:
-            delivery_status = "failed"
-        delivery.append({"email": row["email"], "status": delivery_status})
+            result = {"delivery_status": "failed", "archive_status": "not_attempted"}
+        delivery.append(
+            {
+                "email": row["email"],
+                "status": result["delivery_status"],
+                "archive_status": result["archive_status"],
+            }
+        )
 
     status_by_email = {item["email"]: item["status"] for item in delivery}
     invoice.status = invoice_delivery_status([item["status"] for item in delivery])
+    invoice.delivery_status = invoice.status
+    invoice.archive_status = invoice_archive_status([item["archive_status"] for item in delivery])
     invoice.recipients_json = json_text(
         [
-            {"email": row["email"], "full_name": row["full_name"], "status": status_by_email[row["email"]]}
+            {
+                "email": row["email"],
+                "full_name": row["full_name"],
+                "status": status_by_email[row["email"]],
+                "archive_status": next(
+                    item["archive_status"] for item in delivery if item["email"] == row["email"]
+                ),
+            }
             for row in draft["recipients"]
         ]
     )
@@ -5464,6 +5793,7 @@ def send_company_invoice(
                     "total_cents": invoice.total_cents,
                     "currency": invoice.currency,
                     "status": invoice.status,
+                    "archive_status": invoice.archive_status,
                     "send_count": invoice.send_count,
                     "recipients": delivery,
                 }
@@ -5473,6 +5803,68 @@ def send_company_invoice(
     db.commit()
     db.refresh(invoice)
     return {"invoice": serialize_invoice(db, invoice), "delivery": delivery}
+
+
+@app.post("/api/system/invoices/{invoice_id}/mark-paid")
+def mark_invoice_paid(
+    invoice_id: str,
+    payload: InvoicePaymentPayload,
+    request: Request,
+    admin: AdminPrincipal = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Confirma un pago manual y extiende la suscripcion hasta el fin facturado."""
+    require_system_admin(admin)
+    invoice = db.get(Invoice, invoice_id)
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    company = db.get(Company, invoice.company_id)
+    if company is None:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if invoice.payment_status == "void":
+        raise HTTPException(status_code=400, detail="Una factura anulada no puede marcarse como pagada.")
+    paid_on = clean_text(payload.paid_on, 10) or billing_today(company).isoformat()
+    validate_date(paid_on, "paid_on")
+    invoice.payment_status = "paid"
+    invoice.paid_on = paid_on
+    invoice.payment_reference = clean_text(payload.reference, 180)
+    invoice.updated_at = now_utc()
+    controls = company_controls(db, company.id)
+    subscription_end = date.fromisoformat(invoice.period_end)
+    try:
+        current_end = date.fromisoformat(clean_text(controls.get("subscription_ends_at"), 10))
+        subscription_end = max(subscription_end, current_end)
+    except ValueError:
+        pass
+    set_company_setting(db, company.id, "subscription_status", "active", "Estado comercial de la suscripcion.")
+    set_company_setting(
+        db,
+        company.id,
+        "subscription_ends_at",
+        subscription_end.isoformat(),
+        "Fecha de vencimiento comercial en formato YYYY-MM-DD.",
+    )
+    db.add(
+        AuditLog(
+            company_id=company.id,
+            user_id=admin.user_id,
+            action="invoice_marked_paid",
+            entity_type="invoice",
+            entity_id=invoice.id,
+            ip_address=client_ip(request),
+            payload_json=json_text(
+                {
+                    "number": invoice.number,
+                    "paid_on": paid_on,
+                    "reference": invoice.payment_reference,
+                    "subscription_ends_at": subscription_end.isoformat(),
+                }
+            ),
+        )
+    )
+    db.commit()
+    db.refresh(invoice)
+    return {"invoice": serialize_invoice(db, invoice), "company": serialize_system_company(db, company)}
 
 
 @app.get("/api/system/invoices/{invoice_id}/html")
@@ -5514,6 +5906,7 @@ def download_company_invoice_draft_pdf(
         total_cents=draft["total_cents"],
         currency=draft["currency"],
         recipients=draft["recipients"],
+        billing_anchor=draft["billing_anchor"],
     )
     return invoice_pdf_response(build_invoice_pdf(doc), draft["number"])
 
@@ -5530,7 +5923,8 @@ def download_invoice_pdf(
     if invoice is None:
         raise HTTPException(status_code=404, detail="Invoice not found")
     company = db.get(Company, invoice.company_id)
-    doc = invoice_document_data(
+    stored_doc = parse_json_payload(invoice.document_json or "{}")
+    doc = stored_doc if isinstance(stored_doc, dict) and stored_doc.get("number") else invoice_document_data(
         number=invoice.number,
         company_name=(company.legal_name or company.name) if company else "",
         period_start=date.fromisoformat(invoice.period_start),
@@ -5544,6 +5938,7 @@ def download_invoice_pdf(
         total_cents=invoice.total_cents,
         currency=invoice.currency,
         recipients=invoice_recipients(invoice),
+        billing_anchor=date.fromisoformat(invoice.period_start),
     )
     return invoice_pdf_response(build_invoice_pdf(doc), invoice.number)
 

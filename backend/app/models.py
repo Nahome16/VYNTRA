@@ -586,14 +586,14 @@ class AuditLog(Base):
 
 
 class Invoice(Base):
-    """Factura mensual de una empresa (una por empresa y periodo; reenviar actualiza la fila)."""
+    """Factura mensual prepaga de una empresa (una por empresa y periodo)."""
 
     __tablename__ = "invoices"
     __table_args__ = (UniqueConstraint("company_id", "period_start", name="uq_invoice_company_period"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     company_id: Mapped[str] = mapped_column(ForeignKey("companies.id"), nullable=False)
-    # VYN-{YYYYMM del fin del periodo}-{secuencia de 4 digitos}
+    # VYN-{YYYYMM de emision}-{secuencia de 4 digitos}
     number: Mapped[str] = mapped_column(String(40), nullable=False, unique=True)
     period_start: Mapped[str] = mapped_column(String(10), nullable=False)
     period_end: Mapped[str] = mapped_column(String(10), nullable=False)
@@ -605,9 +605,23 @@ class Invoice(Base):
     tax_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="USD")
+    # Compatibilidad: estado de entrega del ultimo envio.
     # sent | partial | failed | not_configured
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="failed")
-    # Lista de {email, full_name, status} del ultimo envio.
+    # Estado financiero independiente del correo: issued | paid | overdue | void.
+    payment_status: Mapped[str] = mapped_column(String(30), nullable=False, default="issued")
+    delivery_status: Mapped[str] = mapped_column(String(30), nullable=False, default="failed")
+    # sent | partial | failed | not_configured (copia IMAP en Enviados).
+    archive_status: Mapped[str] = mapped_column(String(30), nullable=False, default="not_configured")
+    paid_on: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    payment_reference: Mapped[str] = mapped_column(String(180), nullable=False, default="")
+    # Instantanea inmutable de la emision; los reenvios no alteran importes ni fechas.
+    email_subject: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    email_message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    email_html: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    email_plain: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    document_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    # Lista de {email, full_name, status, archive_status} del ultimo envio.
     recipients_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     send_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

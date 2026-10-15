@@ -18,6 +18,7 @@ backend/.env.production
 backend/.certs/
 backend/storage/
 backend/data/
+backend/.test-runtime/
 downloads/
 capturas/
 

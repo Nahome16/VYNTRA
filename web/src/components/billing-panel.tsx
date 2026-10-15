@@ -5,7 +5,14 @@ import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { AttentionList, Chip, ConfirmDialog, Drawer, EmptyBlock } from "@/components/ui";
 import { downloadAuthenticatedFile } from "@/lib/download-file";
-import { BillingResponse, InvoicePreviewResponse, InvoiceRecord, InvoiceSendResponse, InvoiceStatus } from "@/lib/types";
+import {
+  BillingResponse,
+  InvoicePaymentStatus,
+  InvoicePreviewResponse,
+  InvoiceRecord,
+  InvoiceSendResponse,
+  InvoiceStatus,
+} from "@/lib/types";
 import styles from "./billing-panel.module.css";
 
 /*
@@ -47,6 +54,20 @@ const statusLabel: Record<InvoiceStatus, string> = {
   not_configured: "Correo sin configurar",
 };
 
+const paymentTone: Record<InvoicePaymentStatus, "good" | "warn" | "bad" | "plain"> = {
+  issued: "warn",
+  paid: "good",
+  overdue: "bad",
+  void: "plain",
+};
+
+const paymentLabel: Record<InvoicePaymentStatus, string> = {
+  issued: "Pendiente de pago",
+  paid: "Pagada",
+  overdue: "Pago vencido",
+  void: "Anulada",
+};
+
 type Preview = InvoicePreviewResponse & { source: "draft" | "history" };
 
 function DownloadIcon() {
@@ -65,12 +86,15 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
   const [loadError, setLoadError] = useState("");
   const [periodStart, setPeriodStart] = useState("");
   const [activeUsers, setActiveUsers] = useState("");
+  const [message, setMessage] = useState("");
   const [selectedRecipients, setSelectedRecipients] = useState<string[]>([]);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [payingInvoice, setPayingInvoice] = useState<InvoiceRecord | null>(null);
+  const [markingPaid, setMarkingPaid] = useState(false);
   const [notice, setNotice] = useState<{ tone: "good" | "warn" | "bad"; text: string } | null>(null);
 
   const loadBilling = useCallback(async () => {
@@ -78,13 +102,16 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
     try {
       const response = await apiGet<BillingResponse>(`/api/system/companies/${companyId}/billing`);
       setBilling(response);
-      setPeriodStart((current) => (current && response.periods.some((period) => period.start === current) ? current : response.default_period_start));
-      setActiveUsers(String(response.active_users));
+      const selectedStart = response.periods.some((period) => period.start === periodStart) ? periodStart : response.default_period_start;
+      const selectedPeriod = response.periods.find((period) => period.start === selectedStart) || response.periods[0];
+      setPeriodStart(selectedStart);
+      setActiveUsers(String(selectedPeriod?.invoice?.active_users ?? response.active_users));
+      setMessage(selectedPeriod?.invoice?.message || selectedPeriod?.default_message || response.default_message);
       setSelectedRecipients(response.recipients.map((recipient) => recipient.email));
     } catch {
       setLoadError(t("No se pudo cargar la facturación de esta empresa."));
     }
-  }, [apiGet, companyId, t]);
+  }, [apiGet, companyId, periodStart, t]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -103,13 +130,21 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
   const total = users * unitPrice;
   const alreadySent = Boolean(period?.invoice && (period.invoice.status === "sent" || period.invoice.status === "partial"));
   const pendingPeriod = useMemo(
-    () => billing?.periods.find((row) => row.status === "closed" && !(row.invoice && (row.invoice.status === "sent" || row.invoice.status === "partial"))) || null,
+    () => billing?.periods.find((row) => row.status === "open" && !(row.invoice && (row.invoice.status === "sent" || row.invoice.status === "partial"))) || null,
     [billing],
   );
   const canSend = Boolean(billing && period && selectedRecipients.length && activeUsers !== "" && users >= 0);
 
   function requestBody() {
-    return { period_start: periodStart, active_users: users, recipients: selectedRecipients };
+    return { period_start: periodStart, active_users: users, recipients: selectedRecipients, message };
+  }
+
+  function selectPeriod(nextStart: string) {
+    const nextPeriod = billing?.periods.find((row) => row.start === nextStart);
+    setPeriodStart(nextStart);
+    setActiveUsers(String(nextPeriod?.invoice?.active_users ?? billing?.active_users ?? 0));
+    setMessage(nextPeriod?.invoice?.message || nextPeriod?.default_message || billing?.default_message || "");
+    setPreview(null);
   }
 
   async function openPreview() {
@@ -118,6 +153,7 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
     setNotice(null);
     try {
       const response = await apiPost<InvoicePreviewResponse>(`/api/system/companies/${companyId}/invoices/preview`, requestBody());
+      setMessage(response.message);
       setPreview({ ...response, source: "draft" });
     } catch (error) {
       const detail = (error as { detail?: string }).detail;
@@ -134,6 +170,7 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
       setPreview({
         source: "history",
         subject: response.subject,
+        message: invoice.message,
         html: response.html,
         invoice,
         recipients: invoice.recipients.map((recipient) => ({ email: recipient.email, full_name: recipient.full_name })),
@@ -150,10 +187,17 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
     try {
       const response = await apiPost<InvoiceSendResponse>(`/api/system/companies/${companyId}/invoices/send`, requestBody());
       const sent = response.delivery.filter((row) => row.status === "sent").length;
+      const archived = response.delivery.filter((row) => row.archive_status === "sent").length;
       const status = response.invoice.status;
       setNotice(
         status === "sent"
-          ? { tone: "good", text: `${t("Factura")} ${response.invoice.number} ${t("enviada a")} ${sent} ${sent === 1 ? t("destinatario") : t("destinatarios")}.` }
+          ? {
+              tone: archived === sent ? "good" : "warn",
+              text:
+                archived === sent
+                  ? `${t("Factura")} ${response.invoice.number} ${t("enviada a")} ${sent} ${sent === 1 ? t("destinatario") : t("destinatarios")} · ${t("copia guardada en Enviados")}.`
+                  : `${t("Factura")} ${response.invoice.number} ${t("enviada")}, ${t("pero no se pudo guardar toda la copia en Enviados")}.`,
+            }
           : status === "not_configured"
             ? { tone: "warn", text: t("La factura quedó registrada, pero el servidor no tiene el correo (SMTP) configurado. No se envió.") }
             : status === "partial"
@@ -170,6 +214,24 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
       setConfirmOpen(false);
     } finally {
       setSending(false);
+    }
+  }
+
+  async function markPaid() {
+    if (!payingInvoice) return;
+    setMarkingPaid(true);
+    setNotice(null);
+    try {
+      await apiPost(`/api/system/invoices/${payingInvoice.id}/mark-paid`, {});
+      setNotice({ tone: "good", text: `${t("Factura")} ${payingInvoice.number} ${t("marcada como pagada")}.` });
+      setPayingInvoice(null);
+      await loadBilling();
+      onSent?.();
+    } catch (error) {
+      const detail = (error as { detail?: string }).detail;
+      setNotice({ tone: "bad", text: detail || t("No se pudo registrar el pago.") });
+    } finally {
+      setMarkingPaid(false);
     }
   }
 
@@ -239,7 +301,7 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
                   key: "pending",
                   tone: "warn" as const,
                   title: `${t("Factura pendiente de envío")}: ${pendingPeriod.label}`,
-                  detail: t("El periodo ya cerró y aún no se ha enviado la factura a la empresa."),
+                  detail: t("El periodo prepago ya inició y aún no se ha enviado la factura a la empresa."),
                   selectable: pendingPeriod.start !== periodStart,
                   action: pendingPeriod.start !== periodStart ? t("Seleccionar periodo") : undefined,
                 },
@@ -257,7 +319,7 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
             : []),
         ]}
         onSelect={(key) => {
-          if (key === "pending" && pendingPeriod) setPeriodStart(pendingPeriod.start);
+          if (key === "pending" && pendingPeriod) selectPeriod(pendingPeriod.start);
         }}
       />
 
@@ -271,16 +333,16 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
         <div className={styles.fields}>
           <label className={styles.field}>
             <span>{t("Periodo de facturación")}</span>
-            <select value={periodStart} onChange={(event) => setPeriodStart(event.target.value)}>
+            <select value={periodStart} onChange={(event) => selectPeriod(event.target.value)}>
               {billing.periods.map((row) => (
                 <option key={row.start} value={row.start}>
                   {row.label}
-                  {row.status === "open" ? ` · ${t("en curso")}` : ""}
+                  {row.status === "open" ? ` · ${t("vigente")}` : ""}
                   {row.invoice && (row.invoice.status === "sent" || row.invoice.status === "partial") ? ` · ${t("enviada")} (${row.invoice.number})` : ""}
                 </option>
               ))}
             </select>
-            {period?.status === "open" ? <small className={styles.hintWarn}>{t("Este periodo aún no termina; normalmente se factura el día siguiente al cierre.")}</small> : null}
+            {period?.status === "open" ? <small className={styles.hint}>{t("Este es el periodo mensual vigente y se factura por adelantado.")}</small> : null}
             {alreadySent && period?.invoice ? (
               <small className={styles.hint}>
                 {t("Ya se envió la factura")} {period.invoice.number} {t("el")} {dateTime(period.invoice.sent_at, locale)}. {t("Puedes reenviarla.")}
@@ -290,7 +352,14 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
 
           <label className={styles.field}>
             <span>{t("Usuarios activos")}</span>
-            <input type="number" min={0} max={100000} value={activeUsers} onChange={(event) => setActiveUsers(event.target.value)} />
+            <input
+              type="number"
+              min={0}
+              max={100000}
+              value={activeUsers}
+              onChange={(event) => setActiveUsers(event.target.value)}
+              disabled={Boolean(period?.invoice)}
+            />
             <small className={styles.hint}>
               {t("Hoy hay")} {billing.active_users} {billing.active_users === 1 ? t("empleado activo") : t("empleados activos")}.
             </small>
@@ -305,6 +374,18 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
           </small>
         </div>
       </div>
+
+      <label className={styles.messageField}>
+        <span>{t("Mensaje para el cliente")}</span>
+        <textarea
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          maxLength={4000}
+          rows={5}
+          disabled={Boolean(period?.invoice)}
+        />
+        <small>{t("Este texto aparecerá antes de la factura y quedará guardado con la emisión.")}</small>
+      </label>
 
       <fieldset className={styles.recipients}>
         <legend>{t("Destinatarios")}</legend>
@@ -350,7 +431,8 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
                   <th className="num">{t("Usuarios")}</th>
                   <th className="num">{t("Total")}</th>
                   <th>{t("Enviada")}</th>
-                  <th>{t("Estado")}</th>
+                  <th>{t("Pago")}</th>
+                  <th>{t("Correo")}</th>
                   <th aria-label={t("Acciones")} />
                 </tr>
               </thead>
@@ -374,7 +456,14 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
                       </small>
                     </td>
                     <td>
-                      <Chip tone={statusTone[invoice.status]}>{t(statusLabel[invoice.status])}</Chip>
+                      <Chip tone={paymentTone[invoice.payment_status]}>{t(paymentLabel[invoice.payment_status])}</Chip>
+                      {invoice.paid_on ? <small>{shortDate(invoice.paid_on, locale)}</small> : null}
+                    </td>
+                    <td>
+                      <Chip tone={statusTone[invoice.delivery_status]}>{t(statusLabel[invoice.delivery_status])}</Chip>
+                      <small>
+                        {invoice.archive_status === "sent" ? t("Copia en Enviados") : t("Copia no archivada")}
+                      </small>
                     </td>
                     <td className={styles.rowAction}>
                       <button type="button" className="btn btn-ghost btn-sm" onClick={() => void openHistory(invoice)}>
@@ -391,6 +480,11 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
                         <DownloadIcon />
                         PDF
                       </button>
+                      {invoice.payment_status !== "paid" && invoice.payment_status !== "void" ? (
+                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setPayingInvoice(invoice)}>
+                          {t("Marcar pagada")}
+                        </button>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -479,6 +573,20 @@ export function BillingPanel({ companyId, onSent }: { companyId: string; onSent?
         confirmLabel={sending ? t("Enviando...") : alreadySent ? t("Reenviar") : t("Enviar")}
         onConfirm={() => void sendInvoice()}
         onCancel={() => setConfirmOpen(false)}
+      />
+      <ConfirmDialog
+        open={Boolean(payingInvoice)}
+        danger={false}
+        busy={markingPaid}
+        title={t("¿Marcar la factura como pagada?")}
+        description={
+          <p>
+            {t("Se activará la suscripción hasta el final del periodo de la factura")} <strong>{payingInvoice?.number}</strong>.
+          </p>
+        }
+        confirmLabel={markingPaid ? t("Guardando...") : t("Marcar pagada")}
+        onConfirm={() => void markPaid()}
+        onCancel={() => setPayingInvoice(null)}
       />
     </section>
   );

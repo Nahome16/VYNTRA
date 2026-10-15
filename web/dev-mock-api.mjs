@@ -426,7 +426,7 @@ function catalogsPayload(company) {
 
 
 // --- Facturacion (simulada) ------------------------------------------------
-// Fecha simulada para ver el recordatorio de un periodo ya cerrado.
+// Fecha simulada para ver el periodo prepago vigente.
 const BILLING_TODAY = process.env.MOCK_BILLING_TODAY || "2026-10-16";
 const BILLING_START = "2026-09-15";
 const UNIT_PRICE_CENTS = 1500;
@@ -462,7 +462,22 @@ function billingPeriods(companyId) {
       end,
       label: periodLabel(start, end),
       status: end < BILLING_TODAY ? "closed" : "open",
-      invoice: invoice ? { id: invoice.id, number: invoice.number, status: invoice.status, sent_at: invoice.sent_at } : null,
+      invoice: invoice
+        ? {
+            id: invoice.id,
+            number: invoice.number,
+            status: invoice.status,
+            delivery_status: invoice.delivery_status,
+            payment_status: invoice.payment_status,
+            archive_status: invoice.archive_status,
+            active_users: invoice.active_users,
+            total_cents: invoice.total_cents,
+            currency: invoice.currency,
+            message: invoice.message,
+            sent_at: invoice.sent_at,
+          }
+        : null,
+      default_message: `Adjuntamos la factura correspondiente al nuevo periodo de servicio VYNTRA ${periodLabel(start, end)}.`,
     });
     start = isoAddMonths(start, 1);
   }
@@ -490,9 +505,25 @@ function invoiceAmounts(company, body) {
   const start = body.period_start;
   const end = isoAddDays(isoAddMonths(start, 1), -1);
   const existing = invoices.find((row) => row.company_id === company.id && row.period_start === start);
-  const prefix = `VYN-${end.slice(0, 4)}${end.slice(5, 7)}-`;
+  const prefix = `VYN-${BILLING_TODAY.slice(0, 4)}${BILLING_TODAY.slice(5, 7)}-`;
   const number = existing?.number || `${prefix}${String(invoices.filter((row) => row.number.startsWith(prefix)).length + 1).padStart(4, "0")}`;
   const activeUsers = Number.isFinite(Number(body.active_users)) ? Number(body.active_users) : company.employees_count;
+  if (existing) {
+    return {
+      number: existing.number,
+      period_start: existing.period_start,
+      period_end: existing.period_end,
+      period_label: existing.period_label,
+      issued_on: existing.issued_on,
+      due_on: existing.due_on,
+      active_users: existing.active_users,
+      unit_price_cents: existing.unit_price_cents,
+      subtotal_cents: existing.subtotal_cents,
+      tax_cents: existing.tax_cents,
+      total_cents: existing.total_cents,
+      currency: existing.currency,
+    };
+  }
   return {
     number,
     period_start: start,
@@ -523,7 +554,7 @@ function invoiceHtml(company, amounts) {
 
 function billingSummary(company) {
   const periods = billingPeriods(company.id);
-  const pending = periods.find((row) => row.status === "closed" && !(row.invoice && ["sent", "partial"].includes(row.invoice.status)));
+  const pending = periods.find((row) => row.status === "open" && !(row.invoice && ["sent", "partial"].includes(row.invoice.status)));
   const last = invoices.filter((row) => row.company_id === company.id).sort((a, b) => b.period_start.localeCompare(a.period_start))[0];
   return {
     pending_period: pending ? { start: pending.start, end: pending.end, label: pending.label } : null,
@@ -568,14 +599,14 @@ const server = http.createServer(async (req, res) => {
     const company = companies.find((row) => row.id === billingMatch[1]);
     if (!company) return send(res, 404, { detail: "Empresa no encontrada" });
     const periods = billingPeriods(company.id);
-    const pending = periods.find((row) => row.status === "closed" && !(row.invoice && ["sent", "partial"].includes(row.invoice.status)));
     send(res, 200, {
       company: { id: company.id, name: company.name, legal_name: company.legal_name },
-      settings: { unit_price_cents: UNIT_PRICE_CENTS, currency: "USD", due_business_days: 4, billing_start: BILLING_START, payment_configured: true, contact_email: "notificaciones@vyntralab.com" },
+      settings: { unit_price_cents: UNIT_PRICE_CENTS, currency: "USD", due_business_days: 4, billing_start: BILLING_START, billing_anchor_date: BILLING_START, payment_configured: true, contact_email: "notificaciones@vyntralab.com" },
       active_users: company.employees_count,
       recipients: billingRecipients(company.id),
+      default_message: periods[0].default_message,
       periods,
-      default_period_start: (pending || periods.find((row) => row.status === "closed") || periods[0]).start,
+      default_period_start: periods[0].start,
       invoices: invoices.filter((row) => row.company_id === company.id).sort((a, b) => b.period_start.localeCompare(a.period_start)),
     });
     return;
@@ -593,25 +624,42 @@ const server = http.createServer(async (req, res) => {
     const amounts = invoiceAmounts(company, body);
     const html = invoiceHtml(company, amounts);
     const subject = `Factura ${amounts.number} · VYNTRA · ${amounts.period_label}`;
+    const existing = invoices.find((row) => row.company_id === company.id && row.period_start === body.period_start);
+    const message = existing?.message || body.message || `Adjuntamos la factura correspondiente al nuevo periodo de servicio VYNTRA ${amounts.period_label}.`;
     if (invoiceActionMatch[2] === "preview") {
-      const existing = invoices.find((row) => row.company_id === company.id && row.period_start === body.period_start);
-      send(res, 200, { invoice: amounts, subject, html, recipients: chosen.map(({ email, full_name }) => ({ email, full_name })), already_sent: Boolean(existing) });
+      send(res, 200, { invoice: amounts, subject, message, html, recipients: chosen.map(({ email, full_name }) => ({ email, full_name })), already_sent: Boolean(existing) });
       return;
     }
-    let invoice = invoices.find((row) => row.company_id === company.id && row.period_start === body.period_start);
-    const recipients = chosen.map(({ email, full_name }) => ({ email, full_name, status: "sent" }));
+    let invoice = existing;
+    const recipients = chosen.map(({ email, full_name }) => ({ email, full_name, status: "sent", archive_status: "sent" }));
     if (!invoice) {
       invoice = { id: `inv-${randomUUID().slice(0, 8)}`, company_id: company.id, send_count: 0, created_at: new Date().toISOString() };
       invoices.push(invoice);
     }
     Object.assign(invoice, amounts, {
       status: "sent",
+      delivery_status: "sent",
+      archive_status: "sent",
+      payment_status: invoice.payment_status || "issued",
+      paid_on: invoice.paid_on || null,
+      payment_reference: invoice.payment_reference || "",
+      message,
       recipients,
       send_count: invoice.send_count + 1,
       sent_at: new Date().toISOString(),
       sent_by: { id: adminUser.id, full_name: adminUser.full_name, email: adminUser.email },
     });
-    send(res, 200, { invoice, delivery: recipients.map(({ email, status }) => ({ email, status })) });
+    send(res, 200, { invoice, delivery: recipients.map(({ email, status }) => ({ email, status, archive_status: "sent" })) });
+    return;
+  }
+
+  const markPaidMatch = path.match(/^\/api\/system\/invoices\/([^/]+)\/mark-paid$/);
+  if (markPaidMatch && req.method === "POST") {
+    const invoice = invoices.find((row) => row.id === markPaidMatch[1]);
+    if (!invoice) return send(res, 404, { detail: "Factura no encontrada" });
+    invoice.payment_status = "paid";
+    invoice.paid_on = BILLING_TODAY;
+    send(res, 200, { invoice });
     return;
   }
 

@@ -105,6 +105,12 @@ SMTP_FROM_EMAIL=notificaciones@tudominio.com
 SMTP_FROM_NAME=VYNTRA
 SMTP_USE_TLS=true
 SMTP_USE_SSL=false
+IMAP_HOST=imap.hostinger.com
+IMAP_PORT=993
+IMAP_USERNAME=notificaciones@tudominio.com
+IMAP_PASSWORD=...
+IMAP_SENT_MAILBOX=Sent
+IMAP_USE_SSL=true
 APP_PUBLIC_URL=https://app.tudominio.com
 BOOTSTRAP_ADMIN_EMAIL=admin@empresa.com
 BOOTSTRAP_ADMIN_PASSWORD_HASH=...
@@ -155,8 +161,9 @@ BILLING_IBAN=
 BILLING_ACCOUNT_HOLDER=
 ```
 
-Las facturas se envian por SMTP (una por destinatario owner/admin activo); sin
-`SMTP_HOST`/`SMTP_FROM_EMAIL` la factura queda guardada con estado
+Las facturas se envian por SMTP (una por destinatario owner/admin activo) y,
+si IMAP esta configurado, se guarda la misma copia MIME en la carpeta Enviados.
+Sin `SMTP_HOST`/`SMTP_FROM_EMAIL` la factura queda guardada con estado
 `not_configured`.
 
 `scripts/check_production_env.sh` comprueba estos valores (y rechaza

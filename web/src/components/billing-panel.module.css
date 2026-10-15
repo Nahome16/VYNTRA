@@ -82,6 +82,28 @@
   width: 100%;
 }
 
+.messageField {
+  display: grid;
+  gap: 6px;
+}
+
+.messageField > span {
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.messageField textarea {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+}
+
+.messageField small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .hint,
 .hintWarn {
   font-size: 12px;
@@ -202,7 +224,7 @@
 
 .tableWrap table {
   width: 100%;
-  min-width: 640px;
+  min-width: 820px;
   border-collapse: collapse;
 }
 

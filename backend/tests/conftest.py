@@ -10,11 +10,16 @@ import os
 from pathlib import Path
 import shutil
 import sys
-import tempfile
+from uuid import uuid4
 
 import pytest
 
-_TMP_DIR = Path(tempfile.mkdtemp(prefix="vyntra-tests-"))
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+# En algunos equipos Windows, las carpetas creadas por tempfile heredan una ACL
+# que impide a SQLite volver a abrirlas. Una carpeta privada dentro del proyecto
+# mantiene el aislamiento por ejecucion y se elimina al terminar la suite.
+_TMP_DIR = BACKEND_ROOT / ".test-runtime" / f"vyntra-tests-{uuid4().hex}"
+_TMP_DIR.mkdir(parents=True, exist_ok=False)
 os.environ["ENVIRONMENT"] = "test"
 os.environ["DATABASE_URL"] = f"sqlite:///{(_TMP_DIR / 'test.db').as_posix()}"
 os.environ["STORAGE_DIR"] = str(_TMP_DIR / "evidence")
@@ -23,7 +28,6 @@ os.environ.setdefault("LOG_LEVEL", "WARNING")
 os.environ.pop("ADMIN_ALLOWED_IPS", None)
 os.environ.pop("AGENT_ALLOWED_IPS", None)
 
-BACKEND_ROOT = Path(__file__).resolve().parents[1]
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
@@ -55,3 +59,7 @@ def storage_dir():
 def pytest_sessionfinish(session, exitstatus):
     engine.dispose()
     shutil.rmtree(_TMP_DIR, ignore_errors=True)
+    try:
+        _TMP_DIR.parent.rmdir()
+    except OSError:
+        pass

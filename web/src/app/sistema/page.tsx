@@ -293,6 +293,7 @@ export default function SystemPage() {
   const [controlsTimezone, setControlsTimezone] = useState("America/Managua");
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>("active");
   const [subscriptionEndsAt, setSubscriptionEndsAt] = useState("");
+  const [billingAnchorDate, setBillingAnchorDate] = useState("");
   const [adminNotice, setAdminNotice] = useState("");
 
   const [panelCompanyId, setPanelCompanyId] = useState("");
@@ -390,6 +391,7 @@ export default function SystemPage() {
     setEmployeeLimit(String(company.controls.employee_limit || 0));
     setSubscriptionStatus(company.controls.subscription_status || "active");
     setSubscriptionEndsAt(company.controls.subscription_ends_at || "");
+    setBillingAnchorDate(company.controls.billing_anchor_date || "");
     setAdminNotice(company.controls.admin_notice || "");
   }, [setActiveCompanyId]);
 
@@ -692,6 +694,7 @@ export default function SystemPage() {
         employee_limit: Number(employeeLimit || 0),
         subscription_status: subscriptionStatus,
         subscription_ends_at: subscriptionEndsAt || null,
+        billing_anchor_date: billingAnchorDate || null,
         admin_notice: adminNotice || null,
       });
       setCompanies((current) => current.map((company) => (company.id === response.company.id ? response.company : company)));
@@ -1388,6 +1391,12 @@ export default function SystemPage() {
                       <input type="date" value={subscriptionEndsAt} onChange={(event) => setSubscriptionEndsAt(event.target.value)} />
                     </Field>
                   </div>
+                  <Field
+                    label={t("Fecha ancla de facturación")}
+                    hint={t("Cada mensualidad inicia este día. No puede cambiarse después de emitir la primera factura.")}
+                  >
+                    <input type="date" value={billingAnchorDate} onChange={(event) => setBillingAnchorDate(event.target.value)} />
+                  </Field>
                   <Field label={t("Mensaje para admins")} hint={t("Se muestra como aviso a los administradores de esta empresa.")}>
                     <textarea
                       value={adminNotice}

@@ -2,6 +2,7 @@
 
 import dataclasses
 from datetime import date, timedelta
+from email import message_from_bytes
 
 from fastapi.testclient import TestClient
 import pytest
@@ -64,14 +65,14 @@ def test_default_and_pending_period():
     today = date(2026, 11, 20)
     periods = billing_periods_until(today, START)
     assert [p[0] for p in periods] == [date(2026, 11, 15), date(2026, 10, 15), date(2026, 9, 15)]
-    assert default_billing_period_start(periods, {}, today) == date(2026, 10, 15)
+    assert default_billing_period_start(periods, {}, today) == date(2026, 11, 15)
     assert latest_undelivered_closed_period(periods, {"2026-10-15": "sent"}, today) == (
         date(2026, 9, 15),
         date(2026, 10, 14),
     )
     delivered = {"2026-10-15": "sent", "2026-09-15": "partial"}
     assert latest_undelivered_closed_period(periods, delivered, today) is None
-    assert default_billing_period_start(periods, delivered, today) == date(2026, 10, 15)
+    assert default_billing_period_start(periods, delivered, today) == date(2026, 11, 15)
     # Sin periodos cerrados se sugiere el abierto.
     open_only = billing_periods_until(date(2026, 10, 3), START)
     assert default_billing_period_start(open_only, {}, date(2026, 10, 3)) == date(2026, 9, 15)
@@ -102,8 +103,8 @@ def _render(**overrides):
     values = dict(
         number="VYN-202610-0001",
         company_name="Cliente Uno S.A.",
-        period_start=date(2026, 9, 15),
-        period_end=date(2026, 10, 14),
+        period_start=date(2026, 10, 15),
+        period_end=date(2026, 11, 14),
         issued_on=date(2026, 10, 15),
         due_on=date(2026, 10, 21),
         active_users=7,
@@ -120,13 +121,14 @@ def _render(**overrides):
 
 def test_render_invoice_email_without_bank_data():
     subject, html, plain = _render()
-    assert subject == f"Factura VYN-202610-0001 {MIDDOT} VYNTRA {MIDDOT} 15 sep. {EN_DASH} 14 oct. 2026"
+    assert subject == f"Factura VYN-202610-0001 {MIDDOT} VYNTRA {MIDDOT} 15 oct. {EN_DASH} 14 nov. 2026"
     assert "Hola, Olga Owner:" in html
     assert "USD</span> 105.00" in html
     assert "7 usuarios activos" in html
     assert "Te enviaremos los datos de pago por separado." in html
     assert "Transferencia bancaria" not in html
-    assert "15 de octubre al 14 de noviembre de 2026" in html  # siguiente periodo
+    assert "15 de noviembre al 14 de diciembre de 2026" in html  # siguiente periodo
+    assert "nuevo periodo de servicio VYNTRA" in html
     assert "mailto:notificaciones@vyntralab.com?subject=Pago%20factura%20VYN-202610-0001" in html
     assert "VYN-202610-0001" in plain and "USD 105.00" in plain
     assert "$" not in html
@@ -152,6 +154,38 @@ def test_render_invoice_email_with_bank_rows_and_escaping(monkeypatch):
     assert "&lt;b&gt;Hack&lt;/b&gt; &amp; Co" in html
     assert "Hola, equipo de &lt;b&gt;Hack&lt;/b&gt; &amp; Co:" in html
     assert "Banco: Banco Prueba" in plain
+
+
+def test_invoice_email_attaches_pdf_and_archives_exact_message(monkeypatch):
+    captured = {}
+
+    def fake_deliver(message):
+        captured["delivered"] = message.as_bytes()
+        return "sent"
+
+    def fake_archive(message):
+        captured["archived"] = message.as_bytes()
+        return "sent"
+
+    monkeypatch.setattr(main, "deliver_email_message", fake_deliver)
+    monkeypatch.setattr(main, "archive_sent_email", fake_archive)
+    result = main.send_invoice_email(
+        "olga@cliente.test",
+        "Factura de prueba",
+        "Contenido plano",
+        html="<p>Contenido HTML</p>",
+        reply_to="pagos@vyntra.test",
+        pdf_bytes=b"%PDF-1.4\nprueba",
+        invoice_number="VYN-202610-0001",
+    )
+
+    assert result == {"delivery_status": "sent", "archive_status": "sent"}
+    assert captured["delivered"] == captured["archived"]
+    message = message_from_bytes(captured["delivered"])
+    attachment = next(part for part in message.walk() if part.get_filename())
+    assert attachment.get_filename() == "Factura-VYN-202610-0001.pdf"
+    assert attachment.get_content_type() == "application/pdf"
+    assert attachment.get_payload(decode=True).startswith(b"%PDF")
 
 
 def test_invoice_number_sequence(db):
@@ -245,6 +279,7 @@ def test_billing_overview_shape(billing):
         "currency": "USD",
         "due_business_days": 4,
         "billing_start": "2026-09-15",
+        "billing_anchor_date": "2026-09-15",
         "payment_configured": False,
         "contact_email": "notificaciones@vyntralab.com",
     }
@@ -258,7 +293,9 @@ def test_billing_overview_shape(billing):
     ]
     assert data["periods"][1]["label"] == f"15 sep. {EN_DASH} 14 oct. 2026"
     assert data["periods"][1]["invoice"] is None
-    assert data["default_period_start"] == "2026-09-15"
+    assert data["default_period_start"] == "2026-10-15"
+    assert "15 de octubre al 14 de noviembre de 2026" in data["default_message"]
+    assert "default_message" in data["periods"][0]
     assert data["invoices"] == []
 
     missing = client.get("/api/system/companies/no-existe/billing", headers=headers)
@@ -270,15 +307,15 @@ def test_preview_does_not_persist(billing, db):
     response = client.post(
         f"/api/system/companies/{company_id}/invoices/preview",
         headers=headers,
-        json={"period_start": "2026-09-15"},
+        json={"period_start": "2026-10-15"},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["invoice"] == {
         "number": "VYN-202610-0001",
-        "period_start": "2026-09-15",
-        "period_end": "2026-10-14",
-        "period_label": f"15 sep. {EN_DASH} 14 oct. 2026",
+        "period_start": "2026-10-15",
+        "period_end": "2026-11-14",
+        "period_label": f"15 oct. {EN_DASH} 14 nov. 2026",
         "issued_on": "2026-10-15",
         "due_on": "2026-10-21",
         "active_users": 7,
@@ -289,6 +326,7 @@ def test_preview_does_not_persist(billing, db):
         "currency": "USD",
     }
     assert data["subject"].startswith("Factura VYN-202610-0001")
+    assert "nuevo periodo de servicio VYNTRA" in data["message"]
     assert "Hola, equipo de Cliente Uno S.A.:" in data["html"]
     assert data["recipients"] == [
         {"email": "olga@cliente.test", "full_name": "Olga Owner"},
@@ -299,11 +337,18 @@ def test_preview_does_not_persist(billing, db):
     override = client.post(
         f"/api/system/companies/{company_id}/invoices/preview",
         headers=headers,
-        json={"period_start": "2026-09-15", "active_users": 3, "recipients": ["OLGA@cliente.test"]},
+        json={
+            "period_start": "2026-10-15",
+            "active_users": 3,
+            "recipients": ["OLGA@cliente.test"],
+            "message": "Mensaje especial para el cliente.",
+        },
     ).json()
     assert override["invoice"]["total_cents"] == 4500
     assert "Hola, Olga Owner:" in override["html"]
     assert override["recipients"] == [{"email": "olga@cliente.test", "full_name": "Olga Owner"}]
+    assert override["message"] == "Mensaje especial para el cliente."
+    assert "Mensaje especial para el cliente." in override["html"]
 
     db.expire_all()
     assert db.query(Invoice).count() == 0
@@ -315,24 +360,38 @@ def test_send_without_smtp_saves_invoice(billing, db):
     response = client.post(
         f"/api/system/companies/{company_id}/invoices/send",
         headers=headers,
-        json={"period_start": "2026-09-15"},
+        json={"period_start": "2026-10-15", "message": "Cobro prepago del periodo vigente."},
     )
     assert response.status_code == 200
     data = response.json()
     invoice = data["invoice"]
     assert invoice["status"] == "not_configured"
+    assert invoice["delivery_status"] == "not_configured"
+    assert invoice["archive_status"] == "not_attempted"
+    assert invoice["payment_status"] == "issued"
+    assert invoice["message"] == "Cobro prepago del periodo vigente."
     assert invoice["number"] == "VYN-202610-0001"
     assert invoice["total_cents"] == 10500
     assert invoice["send_count"] == 1
     assert invoice["sent_at"]
     assert invoice["sent_by"]["id"] == billing["system_user_id"]
     assert invoice["recipients"] == [
-        {"email": "olga@cliente.test", "full_name": "Olga Owner", "status": "not_configured"},
-        {"email": "adan@cliente.test", "full_name": "Adan Admin", "status": "not_configured"},
+        {
+            "email": "olga@cliente.test",
+            "full_name": "Olga Owner",
+            "status": "not_configured",
+            "archive_status": "not_attempted",
+        },
+        {
+            "email": "adan@cliente.test",
+            "full_name": "Adan Admin",
+            "status": "not_configured",
+            "archive_status": "not_attempted",
+        },
     ]
     assert data["delivery"] == [
-        {"email": "olga@cliente.test", "status": "not_configured"},
-        {"email": "adan@cliente.test", "status": "not_configured"},
+        {"email": "olga@cliente.test", "status": "not_configured", "archive_status": "not_attempted"},
+        {"email": "adan@cliente.test", "status": "not_configured", "archive_status": "not_attempted"},
     ]
 
     db.expire_all()
@@ -342,49 +401,81 @@ def test_send_without_smtp_saves_invoice(billing, db):
     assert "VYN-202610-0001" in audit.payload_json
 
     overview = client.get(f"/api/system/companies/{company_id}/billing", headers=headers).json()
-    assert overview["periods"][1]["invoice"]["number"] == "VYN-202610-0001"
+    assert overview["periods"][0]["invoice"]["number"] == "VYN-202610-0001"
     assert overview["invoices"][0]["id"] == invoice["id"]
     # not_configured no cuenta como enviada: el periodo sigue sugerido.
-    assert overview["default_period_start"] == "2026-09-15"
+    assert overview["default_period_start"] == "2026-10-15"
 
 
 def test_resend_same_period_keeps_number(billing, db, monkeypatch):
     calls = []
 
-    def fake_send_email(to_email, subject, body, *, html=None, reply_to=None):
-        calls.append({"to": to_email, "subject": subject, "html": html, "reply_to": reply_to})
-        return "sent"
+    def fake_send_invoice_email(
+        to_email, subject, body, *, html=None, reply_to=None, pdf_bytes=None, invoice_number=None
+    ):
+        calls.append(
+            {
+                "to": to_email,
+                "subject": subject,
+                "html": html,
+                "reply_to": reply_to,
+                "pdf_bytes": pdf_bytes,
+                "invoice_number": invoice_number,
+            }
+        )
+        return {"delivery_status": "sent", "archive_status": "sent"}
 
-    monkeypatch.setattr(main, "send_email", fake_send_email)
+    monkeypatch.setattr(main, "send_invoice_email", fake_send_invoice_email)
     client, headers, company_id = billing["client"], billing["headers"], billing["company_id"]
     url = f"/api/system/companies/{company_id}/invoices/send"
 
-    first = client.post(url, headers=headers, json={"period_start": "2026-09-15"}).json()["invoice"]
+    first = client.post(
+        url,
+        headers=headers,
+        json={"period_start": "2026-10-15", "message": "Mensaje original e inmutable."},
+    ).json()["invoice"]
     assert first["status"] == "sent"
     assert [call["to"] for call in calls] == ["olga@cliente.test", "adan@cliente.test"]
     assert calls[0]["reply_to"] == "notificaciones@vyntralab.com"
     assert "VYN-202610-0001" in calls[0]["html"]
+    assert calls[0]["pdf_bytes"].startswith(b"%PDF")
+    assert calls[0]["invoice_number"] == "VYN-202610-0001"
 
     second_response = client.post(
-        url, headers=headers, json={"period_start": "2026-09-15", "active_users": 9, "recipients": ["adan@cliente.test"]}
+        url,
+        headers=headers,
+        json={
+            "period_start": "2026-10-15",
+            "active_users": 9,
+            "recipients": ["adan@cliente.test"],
+            "message": "Este texto no debe reemplazar el original.",
+        },
     ).json()
     second = second_response["invoice"]
     assert second["id"] == first["id"]
     assert second["number"] == "VYN-202610-0001"
     assert second["send_count"] == 2
-    assert second["total_cents"] == 13500
-    assert second["recipients"] == [{"email": "adan@cliente.test", "full_name": "Adan Admin", "status": "sent"}]
-    assert second_response["delivery"] == [{"email": "adan@cliente.test", "status": "sent"}]
+    assert second["active_users"] == 7
+    assert second["total_cents"] == 10500
+    assert second["message"] == "Mensaje original e inmutable."
+    assert second["recipients"] == [
+        {"email": "adan@cliente.test", "full_name": "Adan Admin", "status": "sent", "archive_status": "sent"}
+    ]
+    assert second_response["delivery"] == [
+        {"email": "adan@cliente.test", "status": "sent", "archive_status": "sent"}
+    ]
 
     preview = client.post(
-        f"/api/system/companies/{company_id}/invoices/preview", headers=headers, json={"period_start": "2026-09-15"}
+        f"/api/system/companies/{company_id}/invoices/preview", headers=headers, json={"period_start": "2026-10-15"}
     ).json()
     assert preview["already_sent"] is True
     assert preview["invoice"]["number"] == "VYN-202610-0001"
 
-    # Un mes despues: el siguiente periodo usa el prefijo de su mes de cierre.
+    assert preview["message"] == "Mensaje original e inmutable."
+
+    # Un mes despues: el siguiente periodo usa el prefijo del mes de emision.
     billing["state"]["today"] = date(2026, 11, 20)
-    third = client.post(url, headers=headers, json={"period_start": "2026-10-15"}).json()["invoice"]
+    third = client.post(url, headers=headers, json={"period_start": "2026-11-15"}).json()["invoice"]
     assert third["number"] == "VYN-202611-0001"
     assert third["issued_on"] == "2026-11-20"
     assert third["due_on"] == "2026-11-26"
@@ -456,22 +547,34 @@ def test_system_overview_billing_reminder(billing, monkeypatch):
         return next(row for row in companies if row["id"] == company_id)["billing"]
 
     billing["state"]["today"] = date(2026, 10, 3)
-    assert company_billing() == {"pending_period": None, "last_invoice": None}
-
-    billing["state"]["today"] = date(2026, 10, 15)
     assert company_billing()["pending_period"] == {
         "start": "2026-09-15",
         "end": "2026-10-14",
         "label": f"15 sep. {EN_DASH} 14 oct. 2026",
     }
 
-    monkeypatch.setattr(main, "send_email", lambda *args, **kwargs: "sent")
-    client.post(f"/api/system/companies/{company_id}/invoices/send", headers=headers, json={"period_start": "2026-09-15"})
+    billing["state"]["today"] = date(2026, 10, 15)
+    assert company_billing()["pending_period"] == {
+        "start": "2026-10-15",
+        "end": "2026-11-14",
+        "label": f"15 oct. {EN_DASH} 14 nov. 2026",
+    }
+
+    monkeypatch.setattr(
+        main,
+        "send_invoice_email",
+        lambda *args, **kwargs: {"delivery_status": "sent", "archive_status": "sent"},
+    )
+    client.post(
+        f"/api/system/companies/{company_id}/invoices/send",
+        headers=headers,
+        json={"period_start": "2026-10-15"},
+    )
     summary = company_billing()
     assert summary["pending_period"] is None
     assert summary["last_invoice"]["number"] == "VYN-202610-0001"
     assert summary["last_invoice"]["status"] == "sent"
-    assert summary["last_invoice"]["period_start"] == "2026-09-15"
+    assert summary["last_invoice"]["period_start"] == "2026-10-15"
 
 
 def test_invoice_pdf_draft_and_history(billing, db):
@@ -479,7 +582,7 @@ def test_invoice_pdf_draft_and_history(billing, db):
     draft = client.post(
         f"/api/system/companies/{company_id}/invoices/pdf",
         headers=headers,
-        json={"period_start": "2026-09-15", "active_users": 3},
+        json={"period_start": "2026-10-15", "active_users": 3},
     )
     assert draft.status_code == 200
     assert draft.headers["content-type"] == "application/pdf"
@@ -489,7 +592,7 @@ def test_invoice_pdf_draft_and_history(billing, db):
     assert db.query(Invoice).count() == 0
 
     invoice = client.post(
-        f"/api/system/companies/{company_id}/invoices/send", headers=headers, json={"period_start": "2026-09-15"}
+        f"/api/system/companies/{company_id}/invoices/send", headers=headers, json={"period_start": "2026-10-15"}
     ).json()["invoice"]
     stored = client.get(f"/api/system/invoices/{invoice['id']}/pdf", headers=headers)
     assert stored.status_code == 200
@@ -502,3 +605,66 @@ def test_invoice_pdf_requires_system_admin(billing):
     body = {"period_start": "2026-09-15"}
     assert client.post(f"/api/system/companies/{company_id}/invoices/pdf", headers=headers, json=body).status_code == 403
     assert client.get("/api/system/invoices/cualquiera/pdf", headers=headers).status_code == 403
+
+
+def test_mark_invoice_paid_updates_subscription(billing, db):
+    client, headers, company_id = billing["client"], billing["headers"], billing["company_id"]
+    invoice = client.post(
+        f"/api/system/companies/{company_id}/invoices/send",
+        headers=headers,
+        json={"period_start": "2026-10-15"},
+    ).json()["invoice"]
+
+    paid = client.post(
+        f"/api/system/invoices/{invoice['id']}/mark-paid",
+        headers=headers,
+        json={"paid_on": "2026-10-16", "reference": "TRANSFERENCIA-1842"},
+    )
+    assert paid.status_code == 200
+    data = paid.json()
+    assert data["invoice"]["payment_status"] == "paid"
+    assert data["invoice"]["paid_on"] == "2026-10-16"
+    assert data["invoice"]["payment_reference"] == "TRANSFERENCIA-1842"
+    assert data["company"]["controls"]["subscription_status"] == "active"
+    assert data["company"]["controls"]["subscription_ends_at"] == "2026-11-14"
+
+    db.expire_all()
+    audit = db.query(AuditLog).filter(AuditLog.action == "invoice_marked_paid").one()
+    assert audit.entity_id == invoice["id"]
+
+
+def test_marking_older_invoice_paid_does_not_shorten_subscription(billing):
+    client, headers, company_id = billing["client"], billing["headers"], billing["company_id"]
+    older = client.post(
+        f"/api/system/companies/{company_id}/invoices/send",
+        headers=headers,
+        json={"period_start": "2026-09-15"},
+    ).json()["invoice"]
+    current = client.post(
+        f"/api/system/companies/{company_id}/invoices/send",
+        headers=headers,
+        json={"period_start": "2026-10-15"},
+    ).json()["invoice"]
+    current_paid = client.post(
+        f"/api/system/invoices/{current['id']}/mark-paid",
+        headers=headers,
+        json={},
+    ).json()
+    assert current_paid["company"]["controls"]["subscription_ends_at"] == "2026-11-14"
+
+    older_paid = client.post(
+        f"/api/system/invoices/{older['id']}/mark-paid",
+        headers=headers,
+        json={},
+    ).json()
+    assert older_paid["company"]["controls"]["subscription_ends_at"] == "2026-11-14"
+
+
+def test_paid_endpoint_requires_system_admin(billing):
+    client = billing["client"]
+    response = client.post(
+        "/api/system/invoices/no-existe/mark-paid",
+        headers=billing["company_headers"],
+        json={},
+    )
+    assert response.status_code == 403

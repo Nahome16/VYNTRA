@@ -389,8 +389,6 @@ INV_LINE_STRONG = colors.HexColor("#d0d5dd")
 INV_SOFT_BG = colors.HexColor("#f9fafb")
 INV_BLACK = colors.HexColor("#0a0a0a")
 INV_BLUE = colors.HexColor("#2563eb")
-INV_WARN_BG = colors.HexColor("#fffaeb")
-INV_WARN = colors.HexColor("#b54708")
 INVOICE_LOGO = Path(__file__).resolve().parent / "assets" / "vyntra-wordmark-white.png"
 
 
@@ -467,14 +465,7 @@ def build_invoice_pdf(doc: dict) -> bytes:
     pdf.setFillColor(INV_INK)
     pdf.drawString(left + 7 * mm + currency_w, box_y + 8 * mm, doc["total_amount"])
     pdf.setFont("Helvetica-Bold", 13)
-    pdf.drawRightString(right - 7 * mm, box_y + box_h - 16 * mm, doc["due_weekday_short"])
-    pill = doc["due_days_text"] + " para pagar"
-    pdf.setFont("Helvetica-Bold", 8)
-    pill_w = pdf.stringWidth(pill, "Helvetica-Bold", 8) + 7 * mm
-    pdf.setFillColor(INV_WARN_BG)
-    pdf.roundRect(right - 7 * mm - pill_w, box_y + 5.5 * mm, pill_w, 6 * mm, 3 * mm, fill=1, stroke=0)
-    pdf.setFillColor(INV_WARN)
-    pdf.drawRightString(right - 7 * mm - 3.5 * mm, box_y + 7.6 * mm, pill)
+    pdf.drawRightString(right - 7 * mm, box_y + 8 * mm, doc["due_weekday_short"])
 
     # Facturado a / Detalles.
     y = box_y - 12 * mm

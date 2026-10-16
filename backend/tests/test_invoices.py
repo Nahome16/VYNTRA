@@ -130,6 +130,7 @@ def test_render_invoice_email_without_bank_data():
     assert "15 de noviembre al 14 de diciembre de 2026" in html  # siguiente periodo
     assert "nuevo período de servicio VYNTRA" in html
     assert "Gracias por su confianza." in html
+    assert "días hábiles para pagar" not in html
     assert "mailto:notificaciones@vyntralab.com?subject=Pago%20factura%20VYN-202610-0001" in html
     assert "VYN-202610-0001" in plain and "USD 105.00" in plain
     assert "$" not in html

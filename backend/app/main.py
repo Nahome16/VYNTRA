@@ -4079,8 +4079,7 @@ INVOICE_EMAIL_TEMPLATE = Template("""<!doctype html>
                         </td>
                         <td class="stack stack-gap" valign="top" align="right" style="font-family:'Segoe UI', Arial, Helvetica, sans-serif;">
                           <p style="margin:0 0 6px; font-size:13px; font-weight:600; color:#5f6878;">Fecha l&iacute;mite de pago</p>
-                          <p style="margin:0 0 8px; font-size:17px; line-height:22px; font-weight:700; color:#0b0d12;">${due_weekday}</p>
-                          <span style="display:inline-block; padding:4px 10px; border-radius:999px; background-color:#fffaeb; color:#b54708; font-size:12px; font-weight:700;">${due_days} para pagar</span>
+                          <p style="margin:0; font-size:17px; line-height:22px; font-weight:700; color:#0b0d12;">${due_weekday}</p>
                         </td>
                       </tr>
                     </table>

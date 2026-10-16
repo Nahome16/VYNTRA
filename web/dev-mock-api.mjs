@@ -477,7 +477,7 @@ function billingPeriods(companyId) {
             sent_at: invoice.sent_at,
           }
         : null,
-      default_message: `Adjuntamos la factura correspondiente al nuevo periodo de servicio VYNTRA ${periodLabel(start, end)}.`,
+      default_message: `Adjuntamos la factura correspondiente al nuevo período de servicio VYNTRA, del ${periodLabel(start, end)}. Agradeceremos realizar el pago dentro del plazo indicado en la factura y utilizar el número de factura como referencia.\n\nGracias por su confianza. Quedamos a su disposición para cualquier consulta.`,
     });
     start = isoAddMonths(start, 1);
   }
@@ -625,7 +625,7 @@ const server = http.createServer(async (req, res) => {
     const html = invoiceHtml(company, amounts);
     const subject = `Factura ${amounts.number} · VYNTRA · ${amounts.period_label}`;
     const existing = invoices.find((row) => row.company_id === company.id && row.period_start === body.period_start);
-    const message = existing?.message || body.message || `Adjuntamos la factura correspondiente al nuevo periodo de servicio VYNTRA ${amounts.period_label}.`;
+    const message = existing?.message || body.message || `Adjuntamos la factura correspondiente al nuevo período de servicio VYNTRA, del ${amounts.period_label}. Agradeceremos realizar el pago dentro del plazo indicado en la factura y utilizar el número de factura como referencia.\n\nGracias por su confianza. Quedamos a su disposición para cualquier consulta.`;
     if (invoiceActionMatch[2] === "preview") {
       send(res, 200, { invoice: amounts, subject, message, html, recipients: chosen.map(({ email, full_name }) => ({ email, full_name })), already_sent: Boolean(existing) });
       return;

@@ -4232,10 +4232,11 @@ def invoice_greeting(company_name: str, recipients: list[dict]) -> str:
 
 def default_invoice_message(company_name: str, period_start: date, period_end: date) -> str:
     return (
-        f"Adjuntamos la factura de {company_name} correspondiente al nuevo periodo de servicio VYNTRA "
+        "Adjuntamos la factura correspondiente al nuevo período de servicio VYNTRA, "
         f"del {format_period_long(period_start, period_end)}. "
-        f"Agradecemos realizar el pago dentro de {business_days_text(settings.billing_due_business_days)} "
-        "y usar el numero de factura como referencia."
+        "Agradeceremos realizar el pago dentro del plazo indicado en la factura y utilizar "
+        "el número de factura como referencia.\n\n"
+        "Gracias por su confianza. Quedamos a su disposición para cualquier consulta."
     )
 
 

@@ -128,7 +128,8 @@ def test_render_invoice_email_without_bank_data():
     assert "Te enviaremos los datos de pago por separado." in html
     assert "Transferencia bancaria" not in html
     assert "15 de noviembre al 14 de diciembre de 2026" in html  # siguiente periodo
-    assert "nuevo periodo de servicio VYNTRA" in html
+    assert "nuevo período de servicio VYNTRA" in html
+    assert "Gracias por su confianza." in html
     assert "mailto:notificaciones@vyntralab.com?subject=Pago%20factura%20VYN-202610-0001" in html
     assert "VYN-202610-0001" in plain and "USD 105.00" in plain
     assert "$" not in html
@@ -326,7 +327,8 @@ def test_preview_does_not_persist(billing, db):
         "currency": "USD",
     }
     assert data["subject"].startswith("Factura VYN-202610-0001")
-    assert "nuevo periodo de servicio VYNTRA" in data["message"]
+    assert "nuevo período de servicio VYNTRA" in data["message"]
+    assert "Gracias por su confianza." in data["message"]
     assert "Hola, equipo de Cliente Uno S.A.:" in data["html"]
     assert data["recipients"] == [
         {"email": "olga@cliente.test", "full_name": "Olga Owner"},

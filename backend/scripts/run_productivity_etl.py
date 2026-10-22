@@ -227,8 +227,10 @@ def add_shift_pause_intervals(
     blocks: dict[tuple[str, str, str, str], dict],
     shifts: list[Shift],
     contexts: dict[str, CompanyContext] | None = None,
+    reference_now: datetime | None = None,
 ):
     contexts = contexts if contexts is not None else {}
+    reference_now = normalize_utc(reference_now or now_utc())
     for shift in shifts:
         ctx = company_context(db, shift.company_id, contexts)
         events = db.execute(
@@ -239,7 +241,17 @@ def add_shift_pause_intervals(
 
         open_break = None
         open_lunch = None
-        fallback_end = shift.ended_at or now_utc()
+        company_today = reference_now.astimezone(ctx.tz).date().isoformat()
+        is_historical_open = bool(
+            shift.started_at
+            and not shift.ended_at
+            and shift.status != "closed"
+            and shift.shift_date < company_today
+        )
+        # Una pausa sin cierre solo puede crecer mientras pertenece a la jornada
+        # local actual. Las jornadas historicas requieren correccion administrativa
+        # y no deben seguir agregando bloques cada vez que corre el ETL.
+        fallback_end = shift.ended_at or (None if is_historical_open else reference_now)
 
         for event in events:
             occurred_at = normalize_utc(event.occurred_at)
@@ -254,9 +266,9 @@ def add_shift_pause_intervals(
                 add_interval_to_blocks(db, blocks, shift, open_lunch, occurred_at, "lunch_seconds", ctx)
                 open_lunch = None
 
-        if open_break:
+        if open_break and fallback_end:
             add_interval_to_blocks(db, blocks, shift, open_break, fallback_end, "break_seconds", ctx)
-        if open_lunch:
+        if open_lunch and fallback_end:
             add_interval_to_blocks(db, blocks, shift, open_lunch, fallback_end, "lunch_seconds", ctx)
 
 
@@ -410,7 +422,8 @@ def run(company_id: str | None = None):
             block["non_productive_pct"] = percent(non_productive, active)
             block["neutral_pct"] = percent(neutral, active)
             block["uncategorized_pct"] = percent(uncategorized, active)
-            block["idle_pct"] = percent(idle, total)
+            observed = active + idle
+            block["idle_pct"] = percent(idle, observed)
             block["break_pct"] = percent(break_seconds, total)
             block["lunch_pct"] = percent(lunch_seconds, total)
             block["created_at"] = now

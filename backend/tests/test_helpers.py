@@ -11,16 +11,23 @@ from app import config as config_module
 from app.main import (
     MAX_SAMPLES_PER_EVENT,
     bounded_json_text,
+    canonical_productivity_metrics,
     cap_sample_lists,
     company_zoneinfo,
     csv_safe_cell,
     csv_safe_row,
+    ensure_shift_does_not_overlap,
     evidence_download_filename,
+    is_incomplete_shift,
     ip_allowed,
     ip_scope_for_path,
     parse_client_datetime,
+    productivity_totals,
+    serialize_shift_for_attendance,
+    validated_shift_seconds,
 )
-from app.models import Company, EvidenceFile
+from app.models import Company, EvidenceFile, Shift
+from tests.factories import create_company_setup
 
 
 @pytest.mark.parametrize(
@@ -208,3 +215,165 @@ def test_report_workday_seconds_keeps_lunch_inside_shift():
     }
 
     assert workday_seconds(shift) == 9 * 60 * 60
+
+
+def test_historical_open_shift_is_incomplete_and_stops_growing():
+    shift = Shift(
+        company_id="company-1",
+        employee_id="employee-1",
+        shift_date="2026-10-01",
+        status="open",
+        started_at=datetime(2026, 10, 1, 14, 0, tzinfo=timezone.utc),
+        work_seconds=2 * 60 * 60,
+        break_seconds=10 * 60,
+        lunch_seconds=0,
+        idle_seconds=0,
+    )
+
+    assert is_incomplete_shift(shift, "2026-10-21") is True
+    serialized = serialize_shift_for_attendance(shift, {}, company_today="2026-10-21")
+    assert serialized["is_incomplete"] is True
+    assert serialized["counts_toward_totals"] is False
+    assert serialized["current_phase"] == "INCOMPLETA"
+    assert serialized["work_seconds"] == 2 * 60 * 60
+
+
+def test_report_excludes_incomplete_shift_from_totals():
+    from app.reports import workday_seconds
+
+    assert workday_seconds(
+        {
+            "started_at": "2026-10-01T14:00:00+00:00",
+            "ended_at": None,
+            "work_seconds": 7200,
+            "break_seconds": 600,
+            "lunch_seconds": 0,
+            "is_incomplete": True,
+            "counts_toward_totals": False,
+        },
+        now=datetime(2026, 10, 21, tzinfo=timezone.utc),
+    ) == 0
+
+
+def test_productivity_totals_rebuild_active_and_observed_denominators():
+    totals = productivity_totals(
+        [
+            {
+                # Redundant historical values are deliberately inconsistent.
+                "total_seconds": 9999,
+                "active_seconds": 999,
+                "productive_seconds": 60,
+                "neutral_seconds": 30,
+                "non_productive_seconds": 10,
+                "uncategorized_seconds": 0,
+                "idle_seconds": 50,
+                "break_seconds": 60,
+                "lunch_seconds": 30,
+                "break_lunch_seconds": 90,
+                "justified_seconds": 0,
+            }
+        ]
+    )
+
+    assert totals["active_seconds"] == 100
+    assert totals["observed_seconds"] == 150
+    assert totals["total_seconds"] == 240
+    assert totals["productivity_pct"] == 90.0
+    assert totals["observed_productivity_pct"] == 60.0
+    assert totals["idle_pct"] == 33.33
+
+
+def test_canonical_productivity_metrics_rebuild_every_denominator_from_components():
+    metrics = canonical_productivity_metrics(
+        {
+            "total_seconds": 1,
+            "active_seconds": 1,
+            "productive_seconds": 60,
+            "neutral_seconds": 20,
+            "non_productive_seconds": 10,
+            "uncategorized_seconds": 10,
+            "idle_seconds": 50,
+            "break_seconds": 30,
+            "lunch_seconds": 60,
+        }
+    )
+
+    assert metrics["active_seconds"] == 100
+    assert metrics["observed_seconds"] == 150
+    assert metrics["break_lunch_seconds"] == 90
+    assert metrics["total_seconds"] == 240
+    assert metrics["productivity_pct"] == 80.0
+    assert metrics["observed_productivity_pct"] == 53.33
+    assert metrics["idle_pct"] == 33.33
+    assert metrics["break_pct"] == 12.5
+
+
+def test_validated_shift_seconds_subtracts_non_overlapping_pauses_from_work():
+    day = datetime(2026, 10, 21, tzinfo=timezone.utc)
+    work, breaks, lunch = validated_shift_seconds(
+        day.replace(hour=8),
+        day.replace(hour=17),
+        day.replace(hour=10),
+        day.replace(hour=10, minute=15),
+        day.replace(hour=12),
+        day.replace(hour=13),
+    )
+
+    assert work == 7 * 3600 + 45 * 60
+    assert breaks == 15 * 60
+    assert lunch == 60 * 60
+    assert work + breaks + lunch == 9 * 3600
+
+
+def test_validated_shift_seconds_rejects_overlapping_pauses():
+    day = datetime(2026, 10, 21, tzinfo=timezone.utc)
+    with pytest.raises(HTTPException, match="cannot overlap"):
+        validated_shift_seconds(
+            day.replace(hour=8),
+            day.replace(hour=17),
+            day.replace(hour=12),
+            day.replace(hour=13),
+            day.replace(hour=12, minute=30),
+            day.replace(hour=13, minute=30),
+        )
+
+
+def test_validated_open_shift_preserves_work_completed_before_latest_pause_event():
+    day = datetime(2026, 10, 21, tzinfo=timezone.utc)
+    work, breaks, lunch = validated_shift_seconds(
+        day.replace(hour=8),
+        None,
+        day.replace(hour=10),
+        day.replace(hour=10, minute=15),
+        None,
+        None,
+    )
+
+    assert work == 2 * 3600
+    assert breaks == 15 * 60
+    assert lunch == 0
+
+
+def test_shift_overlap_validation_rejects_cross_midnight_collision(db):
+    company, _department, _position, employee, _device = create_company_setup(db)
+    existing = Shift(
+        company_id=company.id,
+        employee_id=employee.id,
+        shift_date="2026-10-20",
+        status="closed",
+        started_at=datetime(2026, 10, 21, 2, 0, tzinfo=timezone.utc),
+        ended_at=datetime(2026, 10, 21, 10, 0, tzinfo=timezone.utc),
+    )
+    db.add(existing)
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        ensure_shift_does_not_overlap(
+            db,
+            company.id,
+            employee.id,
+            datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc),
+            datetime(2026, 10, 21, 17, 0, tzinfo=timezone.utc),
+        )
+
+    assert exc.value.status_code == 409

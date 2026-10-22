@@ -335,8 +335,8 @@ export default function SettingsPage() {
     setStatusText(t("Actualizando ajustes..."));
     const companyQuery = isSystemAdmin && activeCompanyId ? `?company_id=${encodeURIComponent(activeCompanyId)}` : "";
     const companyLimitQuery = isSystemAdmin && activeCompanyId
-      ? `?company_id=${encodeURIComponent(activeCompanyId)}&limit=30`
-      : "?limit=30";
+      ? `?company_id=${encodeURIComponent(activeCompanyId)}&limit=100`
+      : "?limit=100";
     try {
       // Solo se consultan las secciones para las que el rol tiene permiso; asi no
       // se provocan respuestas 403 (p. ej. un rol sin rules:read).
@@ -444,6 +444,8 @@ export default function SettingsPage() {
     const generalRules = rules.filter((rule) => scopeKind(rule) === "company").length;
     return [
       { id: "general", label: t("General empresa"), count: generalRules },
+      { id: "position", label: t("Por puesto"), count: rules.filter((rule) => scopeKind(rule) === "position").length },
+      { id: "employee", label: t("Por empleado"), count: rules.filter((rule) => scopeKind(rule) === "employee").length },
       ...departments.map((department) => ({
         id: department.id,
         label: department.name,
@@ -511,7 +513,11 @@ export default function SettingsPage() {
     return ruleRows.filter((row) => {
       const matchesDepartment =
         !ruleDepartmentFilter ||
-        (ruleDepartmentFilter === "general" ? row.scopeKind === "company" : row.department_id === ruleDepartmentFilter);
+        (ruleDepartmentFilter === "general"
+          ? row.scopeKind === "company"
+          : ruleDepartmentFilter === "position" || ruleDepartmentFilter === "employee"
+            ? row.scopeKind === ruleDepartmentFilter
+            : row.department_id === ruleDepartmentFilter);
       const matchesClassification = !ruleClassificationFilter || row.classification === ruleClassificationFilter;
       const matchesSearch = matchesNeedle([row.app, row.title, row.scope, t(classificationLabel(row.classification))], needle);
       return matchesDepartment && matchesClassification && matchesSearch;
@@ -1249,6 +1255,9 @@ export default function SettingsPage() {
                 <i aria-hidden />
                 {uncategorizedCount} {t("pendientes de clasificar")}
               </button>
+              {uncategorizedCount > uncategorized.length ? (
+                <small>{t("Mostrando")} {uncategorized.length} {t("de")} {uncategorizedCount}</small>
+              ) : null}
               {hasRuleFilters ? (
                 <button type="button" className="btn btn-ghost btn-sm" onClick={clearRuleFilters}>{t("Limpiar filtros")}</button>
               ) : null}
@@ -1273,7 +1282,7 @@ export default function SettingsPage() {
                       if (scope.id === "general") {
                         setQuickRuleScope("company");
                         setQuickRuleDepartmentId("");
-                      } else {
+                      } else if (scope.id !== "position" && scope.id !== "employee") {
                         setQuickRuleScope("department");
                         setQuickRuleDepartmentId(scope.id);
                       }

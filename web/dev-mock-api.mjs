@@ -330,27 +330,33 @@ function csvLogs(logs) {
 }
 
 function mockTotals(active, productive, neutral, nonProductive, uncategorized, idle) {
-  const total = active + idle;
+  const observed = active + idle;
+  const breakSeconds = 1800;
+  const lunchSeconds = 3600;
+  const total = observed + breakSeconds + lunchSeconds;
   const pct = (part, whole) => (whole ? Math.round((part / whole) * 1000) / 10 : 0);
   return {
     total_seconds: total,
     active_seconds: active,
+    observed_seconds: observed,
     productive_seconds: productive,
     neutral_seconds: neutral,
     non_productive_seconds: nonProductive,
     uncategorized_seconds: uncategorized,
     idle_seconds: idle,
-    break_seconds: 1800,
-    lunch_seconds: 3600,
+    break_seconds: breakSeconds,
+    lunch_seconds: lunchSeconds,
+    break_lunch_seconds: breakSeconds + lunchSeconds,
     justified_seconds: 0,
     productivity_pct: pct(productive + neutral, active),
+    observed_productivity_pct: pct(productive + neutral, observed),
     acceptable_pct: pct(productive + neutral, active),
     non_productive_pct: pct(nonProductive, active),
     neutral_pct: pct(neutral, active),
     uncategorized_pct: pct(uncategorized, active),
-    idle_pct: pct(idle, total),
-    break_pct: 0,
-    lunch_pct: 0,
+    idle_pct: pct(idle, observed),
+    break_pct: pct(breakSeconds, total),
+    lunch_pct: pct(lunchSeconds, total),
   };
 }
 

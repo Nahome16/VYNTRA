@@ -212,6 +212,7 @@ export type DevicesResponse = {
 export type DashboardTotals = {
   total_seconds: number;
   active_seconds: number;
+  observed_seconds: number;
   productive_seconds: number;
   neutral_seconds: number;
   non_productive_seconds: number;
@@ -221,6 +222,7 @@ export type DashboardTotals = {
   lunch_seconds: number;
   justified_seconds: number;
   productivity_pct: number;
+  observed_productivity_pct: number;
   acceptable_pct: number;
   non_productive_pct: number;
   neutral_pct: number;
@@ -234,6 +236,7 @@ export type DashboardDay = {
   block_date: string;
   total_seconds: number;
   active_seconds: number;
+  observed_seconds: number;
   productive_seconds: number;
   neutral_seconds: number;
   non_productive_seconds: number;
@@ -243,6 +246,7 @@ export type DashboardDay = {
   lunch_seconds: number;
   justified_seconds: number;
   productivity_pct: number;
+  observed_productivity_pct: number;
   acceptable_pct: number;
   idle_pct: number;
   break_pct: number;
@@ -418,6 +422,8 @@ export type AttendanceShift = {
   shift_date: string;
   status: string;
   current_phase?: string;
+  is_incomplete?: boolean;
+  counts_toward_totals?: boolean;
   started_at: string | null;
   ended_at: string | null;
   work_seconds: number;

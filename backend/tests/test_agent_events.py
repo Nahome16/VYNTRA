@@ -163,10 +163,29 @@ def test_reported_seconds_are_capped_to_elapsed_time(db, setup, client):
     assert body["ok"] is True
     db.expire_all()
     shift = db.query(Shift).one()
-    assert 3600 <= shift.work_seconds <= 3600 + 300 + 5
-    assert shift.break_seconds <= 3600 + 300 + 5
+    elapsed_limit = int((datetime.now(timezone.utc) - start).total_seconds()) + 300
+    assert shift.work_seconds + shift.break_seconds + shift.lunch_seconds <= elapsed_limit + 5
+    assert shift.work_seconds > 0
+    assert shift.break_seconds > 0
     stored = json.loads(db.query(ShiftEvent).one().payload_json)
     assert stored["server_adjustments"]["seg_trabajado"]["reported"] == 999_999
+
+
+def test_idle_cannot_exceed_accepted_work_time(db, setup, client):
+    start = datetime.now(timezone.utc) - timedelta(minutes=20)
+    event = snapshot_event(
+        start,
+        [],
+        seg_trabajado=600,
+        telemetria={"seg_idle": 5_000, "muestras_recientes": []},
+    )
+
+    post_events(client, [event])
+    db.expire_all()
+    shift = db.query(Shift).one()
+    assert shift.idle_seconds == shift.work_seconds == 600
+    stored = json.loads(db.query(ShiftEvent).one().payload_json)
+    assert stored["server_adjustments"]["seg_idle"] == {"reported": 5_000, "accepted": 600}
 
 
 def test_future_or_stale_shift_start_is_ignored(db, setup, client):
@@ -231,6 +250,55 @@ def test_web_station_shift_start_does_not_require_extension(db, setup, client):
     assert body["rejected"] == []
     db.expire_all()
     assert db.query(AgentEventReceipt).count() == 1
+    assert db.query(Shift).count() == 1
+
+
+def test_new_shift_marks_older_unclosed_shift_incomplete(db, setup, client):
+    company, _department, _position, employee, device = setup
+    now = datetime.now(timezone.utc)
+    old_shift = Shift(
+        company_id=company.id,
+        employee_id=employee.id,
+        device_id=device.id,
+        shift_date=(now.astimezone(MANAGUA).date() - timedelta(days=1)).isoformat(),
+        status="open",
+        started_at=now - timedelta(days=1, hours=8),
+        work_seconds=3600,
+    )
+    db.add(old_shift)
+    db.commit()
+
+    event = snapshot_event(now - timedelta(minutes=5), [], web_station=True)
+    event["tipo"] = "shift_started"
+    body = post_events(client, [event])
+
+    assert body["rejected"] == []
+    db.expire_all()
+    stored_old = db.get(Shift, old_shift.id)
+    assert stored_old.status == "incomplete"
+    assert stored_old.ended_at is None
+    assert db.query(Shift).count() == 2
+    assert (
+        db.query(ShiftEvent)
+        .filter(ShiftEvent.shift_id == old_shift.id, ShiftEvent.event_type == "shift_marked_incomplete")
+        .count()
+        == 1
+    )
+
+
+def test_second_shift_start_for_same_employee_and_day_is_rejected(db, setup, client):
+    now = datetime.now(timezone.utc)
+    first = snapshot_event(now - timedelta(minutes=10), [], web_station=True)
+    first["tipo"] = "shift_started"
+    assert post_events(client, [first])["rejected"] == []
+
+    second = snapshot_event(now - timedelta(minutes=5), [], web_station=False)
+    second["tipo"] = "shift_started"
+    body = post_events(client, [second])
+
+    assert body["accepted"] == []
+    assert body["rejected"][0]["code"] == "shift_already_started"
+    db.expire_all()
     assert db.query(Shift).count() == 1
 
 

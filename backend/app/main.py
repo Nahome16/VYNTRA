@@ -1340,6 +1340,101 @@ def seconds_between(start: datetime | None, end: datetime | None) -> int:
     return int((end - start).total_seconds())
 
 
+def validated_shift_seconds(
+    started_at: datetime | None,
+    ended_at: datetime | None,
+    break_started_at: datetime | None,
+    break_ended_at: datetime | None,
+    lunch_started_at: datetime | None,
+    lunch_ended_at: datetime | None,
+) -> tuple[int, int, int]:
+    """Validate a corrected shift and return work, break and lunch seconds."""
+    if ended_at and not started_at:
+        raise HTTPException(status_code=400, detail="started_at is required when ended_at is present")
+    if started_at and ended_at and ended_at <= started_at:
+        raise HTTPException(status_code=400, detail="ended_at must be after started_at")
+
+    intervals = (
+        ("break", break_started_at, break_ended_at),
+        ("lunch", lunch_started_at, lunch_ended_at),
+    )
+    for label, interval_start, interval_end in intervals:
+        if interval_end and not interval_start:
+            raise HTTPException(status_code=400, detail=f"{label} start is required when its end is present")
+        if interval_start and interval_end and interval_end <= interval_start:
+            raise HTTPException(status_code=400, detail=f"{label} end must be after {label} start")
+        if ended_at and interval_start and not interval_end:
+            raise HTTPException(status_code=400, detail=f"{label} end is required for a closed shift")
+        if interval_start and (not started_at or interval_start < started_at):
+            raise HTTPException(status_code=400, detail=f"{label} must start within the shift")
+        if interval_end and ended_at and interval_end > ended_at:
+            raise HTTPException(status_code=400, detail=f"{label} must end within the shift")
+
+    if break_started_at and lunch_started_at:
+        if (
+            (break_ended_at is None or lunch_started_at < break_ended_at)
+            and (lunch_ended_at is None or break_started_at < lunch_ended_at)
+        ):
+            raise HTTPException(status_code=400, detail="break and lunch intervals cannot overlap")
+
+    break_seconds = seconds_between(break_started_at, break_ended_at)
+    lunch_seconds = seconds_between(lunch_started_at, lunch_ended_at)
+    work_baseline_end = ended_at
+    if started_at and not ended_at:
+        open_pause_starts = [
+            interval_start
+            for _label, interval_start, interval_end in intervals
+            if interval_start and not interval_end
+        ]
+        completed_pause_ends = [
+            interval_end
+            for _label, _interval_start, interval_end in intervals
+            if interval_end
+        ]
+        work_baseline_end = (
+            max(open_pause_starts)
+            if open_pause_starts
+            else max(completed_pause_ends, default=None)
+        )
+    elapsed_seconds = seconds_between(started_at, work_baseline_end)
+    work_seconds = max(0, elapsed_seconds - break_seconds - lunch_seconds)
+    return work_seconds, break_seconds, lunch_seconds
+
+
+def ensure_shift_does_not_overlap(
+    db: Session,
+    company_id: str,
+    employee_id: str,
+    started_at: datetime | None,
+    ended_at: datetime | None,
+    exclude_shift_id: str | None = None,
+):
+    if not started_at:
+        return
+    query = select(Shift).where(
+        Shift.company_id == company_id,
+        Shift.employee_id == employee_id,
+        Shift.started_at.is_not(None),
+    )
+    if exclude_shift_id:
+        query = query.where(Shift.id != exclude_shift_id)
+    for other in db.execute(query).scalars():
+        # An incomplete historical row has no trustworthy end. It remains
+        # visible for correction, but must not block a later valid shift.
+        if other.status == "incomplete" and not other.ended_at:
+            continue
+        other_start = _as_aware_utc(other.started_at)
+        other_end = _as_aware_utc(other.ended_at) if other.ended_at else None
+        candidate_start = _as_aware_utc(started_at)
+        candidate_end = _as_aware_utc(ended_at) if ended_at else None
+        overlaps = (
+            (candidate_end is None or other_start < candidate_end)
+            and (other_end is None or candidate_start < other_end)
+        )
+        if overlaps:
+            raise HTTPException(status_code=409, detail="Shift overlaps another shift for this employee")
+
+
 def first_event(events: list[ShiftEvent], event_type: str) -> ShiftEvent | None:
     return next((event for event in events if event.event_type == event_type), None)
 
@@ -1396,10 +1491,34 @@ def attendance_phase_from_events(shift: Shift, events: list[ShiftEvent]) -> str:
     return "TRABAJANDO" if shift.started_at else "FUERA"
 
 
-def attendance_seconds_for_shift(shift: Shift, events: list[ShiftEvent]) -> tuple[int, int, int, str]:
+def is_incomplete_shift(shift: Shift, company_today: str | None = None) -> bool:
+    """Return True when an older shift was never closed.
+
+    These rows need an explicit administrative correction.  Treating them as
+    live makes their duration grow every time the attendance view is opened.
+    """
+    if shift.status == "incomplete" and shift.started_at and not shift.ended_at:
+        return True
+    return bool(
+        company_today
+        and shift.started_at
+        and not shift.ended_at
+        and shift.status != "closed"
+        and shift.shift_date < company_today
+    )
+
+
+def attendance_seconds_for_shift(
+    shift: Shift,
+    events: list[ShiftEvent],
+    company_today: str | None = None,
+) -> tuple[int, int, int, str]:
     work_seconds = shift_work_seconds_for_attendance(shift)
     break_seconds = int(shift.break_seconds or 0)
     lunch_seconds = int(shift.lunch_seconds or 0)
+    if is_incomplete_shift(shift, company_today):
+        return work_seconds, break_seconds, lunch_seconds, "INCOMPLETA"
+
     phase = attendance_phase_from_events(shift, events)
 
     if shift.started_at and not shift.ended_at and phase in {"TRABAJANDO", "BREAK", "LUNCH"}:
@@ -1454,10 +1573,16 @@ def serialize_shift_for_attendance(
     shift: Shift,
     events_by_shift: dict[str, list[ShiftEvent]],
     justified_by_shift: dict[str, int] | None = None,
+    company_today: str | None = None,
 ) -> dict:
     justified_by_shift = justified_by_shift or {}
     events = events_by_shift.get(shift.id, [])
-    work_seconds, break_seconds, lunch_seconds, current_phase = attendance_seconds_for_shift(shift, events)
+    incomplete = is_incomplete_shift(shift, company_today)
+    work_seconds, break_seconds, lunch_seconds, current_phase = attendance_seconds_for_shift(
+        shift,
+        events,
+        company_today,
+    )
     return {
         "id": shift.id,
         "company_id": shift.company_id,
@@ -1465,6 +1590,8 @@ def serialize_shift_for_attendance(
         "device_id": shift.device_id,
         "shift_date": shift.shift_date,
         "status": shift.status,
+        "is_incomplete": incomplete,
+        "counts_toward_totals": not incomplete,
         "started_at": shift.started_at.isoformat() if shift.started_at else None,
         "ended_at": shift.ended_at.isoformat() if shift.ended_at else None,
         "current_phase": current_phase,
@@ -1616,30 +1743,88 @@ def row_metric(row, key: str) -> int | float:
     return getattr(row, key, 0) or 0
 
 
+def canonical_productivity_metrics(row: ProductivityBlock | dict) -> dict:
+    """Build one internally consistent set of productivity measurements.
+
+    ``active_seconds`` and ``total_seconds`` used to be stored alongside their
+    components.  Historical rows can therefore contain values calculated with
+    an older formula.  The components are the source of truth at read time so
+    every API consumer receives the same invariant:
+
+    active = productive + neutral + non-productive + uncategorized
+    observed = active + idle
+    total = observed + break + lunch
+    """
+    productive = int(row_metric(row, "productive_seconds"))
+    neutral = int(row_metric(row, "neutral_seconds"))
+    non_productive = int(row_metric(row, "non_productive_seconds"))
+    uncategorized = int(row_metric(row, "uncategorized_seconds"))
+    idle = int(row_metric(row, "idle_seconds"))
+    break_seconds = int(row_metric(row, "break_seconds"))
+    lunch_seconds = int(row_metric(row, "lunch_seconds"))
+    justified = int(row_metric(row, "justified_seconds"))
+    active = productive + neutral + non_productive + uncategorized
+    observed = active + idle
+    total = observed + break_seconds + lunch_seconds
+    return {
+        "total_seconds": total,
+        "active_seconds": active,
+        "observed_seconds": observed,
+        "productive_seconds": productive,
+        "neutral_seconds": neutral,
+        "non_productive_seconds": non_productive,
+        "uncategorized_seconds": uncategorized,
+        "idle_seconds": idle,
+        "break_seconds": break_seconds,
+        "lunch_seconds": lunch_seconds,
+        "break_lunch_seconds": break_seconds + lunch_seconds,
+        "justified_seconds": justified,
+        "productivity_pct": percent(productive + neutral, active),
+        "observed_productivity_pct": percent(productive + neutral, observed),
+        "acceptable_pct": percent(productive + neutral, active),
+        "non_productive_pct": percent(non_productive, active),
+        "neutral_pct": percent(neutral, active),
+        "uncategorized_pct": percent(uncategorized, active),
+        "idle_pct": percent(idle, observed),
+        "break_pct": percent(break_seconds, total),
+        "lunch_pct": percent(lunch_seconds, total),
+    }
+
+
 def productivity_totals(blocks: list[ProductivityBlock | dict]) -> dict:
+    canonical_blocks = [canonical_productivity_metrics(row) for row in blocks]
     totals = {
-        "total_seconds": sum(int(row_metric(row, "total_seconds")) for row in blocks),
-        "active_seconds": sum(int(row_metric(row, "active_seconds")) for row in blocks),
-        "productive_seconds": sum(int(row_metric(row, "productive_seconds")) for row in blocks),
-        "neutral_seconds": sum(int(row_metric(row, "neutral_seconds")) for row in blocks),
-        "non_productive_seconds": sum(int(row_metric(row, "non_productive_seconds")) for row in blocks),
-        "uncategorized_seconds": sum(int(row_metric(row, "uncategorized_seconds")) for row in blocks),
-        "idle_seconds": sum(int(row_metric(row, "idle_seconds")) for row in blocks),
-        "break_seconds": sum(int(row_metric(row, "break_seconds")) for row in blocks),
-        "lunch_seconds": sum(int(row_metric(row, "lunch_seconds")) for row in blocks),
-        "break_lunch_seconds": sum(int(row_metric(row, "break_lunch_seconds")) for row in blocks),
-        "justified_seconds": sum(int(row_metric(row, "justified_seconds")) for row in blocks),
+        key: sum(int(row[key]) for row in canonical_blocks)
+        for key in (
+            "total_seconds",
+            "active_seconds",
+            "observed_seconds",
+            "productive_seconds",
+            "neutral_seconds",
+            "non_productive_seconds",
+            "uncategorized_seconds",
+            "idle_seconds",
+            "break_seconds",
+            "lunch_seconds",
+            "break_lunch_seconds",
+            "justified_seconds",
+        )
     }
     active = totals["active_seconds"]
     total = totals["total_seconds"]
+    observed = totals["observed_seconds"]
     totals.update(
         {
             "productivity_pct": percent(totals["productive_seconds"] + totals["neutral_seconds"], active),
+            "observed_productivity_pct": percent(
+                totals["productive_seconds"] + totals["neutral_seconds"],
+                observed,
+            ),
             "acceptable_pct": percent(totals["productive_seconds"] + totals["neutral_seconds"], active),
             "non_productive_pct": percent(totals["non_productive_seconds"], active),
             "neutral_pct": percent(totals["neutral_seconds"], active),
             "uncategorized_pct": percent(totals["uncategorized_seconds"], active),
-            "idle_pct": percent(totals["idle_seconds"], total),
+            "idle_pct": percent(totals["idle_seconds"], observed),
             "break_pct": percent(totals["break_seconds"], total),
             "lunch_pct": percent(totals["lunch_seconds"], total),
         }
@@ -1654,25 +1839,7 @@ def serialize_productivity_block(row: ProductivityBlock) -> dict:
         "department_id": row.department_id_snapshot,
         "block_date": row.block_date,
         "block_start": row.block_start,
-        "total_seconds": row.total_seconds,
-        "active_seconds": row.active_seconds,
-        "productive_seconds": row.productive_seconds,
-        "neutral_seconds": row.neutral_seconds,
-        "non_productive_seconds": row.non_productive_seconds,
-        "uncategorized_seconds": row.uncategorized_seconds,
-        "idle_seconds": row.idle_seconds,
-        "break_seconds": row.break_seconds,
-        "lunch_seconds": row.lunch_seconds,
-        "break_lunch_seconds": row.break_lunch_seconds,
-        "justified_seconds": 0,
-        "productivity_pct": row.productivity_pct,
-        "acceptable_pct": row.acceptable_pct,
-        "non_productive_pct": row.non_productive_pct,
-        "neutral_pct": row.neutral_pct,
-        "uncategorized_pct": row.uncategorized_pct,
-        "idle_pct": row.idle_pct,
-        "break_pct": row.break_pct,
-        "lunch_pct": row.lunch_pct,
+        **canonical_productivity_metrics(row),
     }
 
 
@@ -1901,6 +2068,7 @@ def adjustment_virtual_blocks(
                     "block_start": block_start.strftime("%H:%M"),
                     "total_seconds": seconds,
                     "active_seconds": seconds,
+                    "observed_seconds": seconds,
                     "productive_seconds": 0,
                     "neutral_seconds": seconds,
                     "non_productive_seconds": 0,
@@ -1917,12 +2085,17 @@ def adjustment_virtual_blocks(
     for row in rows:
         active = row["active_seconds"]
         total = row["total_seconds"]
+        observed = row["active_seconds"] + row["idle_seconds"]
         row["productivity_pct"] = percent(row["productive_seconds"] + row["neutral_seconds"], active)
+        row["observed_productivity_pct"] = percent(
+            row["productive_seconds"] + row["neutral_seconds"],
+            observed,
+        )
         row["acceptable_pct"] = percent(row["productive_seconds"] + row["neutral_seconds"], active)
         row["non_productive_pct"] = percent(row["non_productive_seconds"], active)
         row["neutral_pct"] = percent(row["neutral_seconds"], active)
         row["uncategorized_pct"] = percent(row["uncategorized_seconds"], active)
-        row["idle_pct"] = percent(row["idle_seconds"], total)
+        row["idle_pct"] = percent(row["idle_seconds"], observed)
         row["break_pct"] = percent(row["break_seconds"], total)
         row["lunch_pct"] = percent(row["lunch_seconds"], total)
     return rows
@@ -2467,6 +2640,44 @@ def get_or_create_shift(
     return shift
 
 
+def mark_stale_open_shifts_incomplete(
+    db: Session,
+    device: Device,
+    new_shift_date: str,
+    occurred_at: datetime,
+) -> int:
+    """Freeze older unclosed shifts before a newer workday is started."""
+    if not device.employee_id:
+        return 0
+    stale_shifts = db.execute(
+        select(Shift).where(
+            Shift.company_id == device.company_id,
+            Shift.employee_id == device.employee_id,
+            Shift.started_at.is_not(None),
+            Shift.ended_at.is_(None),
+            Shift.status.in_(("open", "paused")),
+            Shift.shift_date < new_shift_date,
+        )
+    ).scalars().all()
+    for stale in stale_shifts:
+        stale.status = "incomplete"
+        stale.updated_at = occurred_at
+        db.add(
+            ShiftEvent(
+                shift_id=stale.id,
+                event_type="shift_marked_incomplete",
+                occurred_at=occurred_at,
+                payload_json=json_text(
+                    {
+                        "reason": "newer_shift_started",
+                        "new_shift_date": new_shift_date,
+                    }
+                ),
+            )
+        )
+    return len(stale_shifts)
+
+
 def _non_negative_int(value, fallback: int = 0) -> int:
     try:
         return max(0, int(value))
@@ -2510,6 +2721,9 @@ def apply_shift_snapshot(
     - seg_trabajado/seg_break/seg_lunch/seg_horas_extra y telemetria.seg_idle nunca
       superan el tiempo transcurrido desde el inicio conocido por el servidor
       (shift.started_at, o 24 h si no hay inicio) + 5 min de tolerancia.
+    - seg_trabajado + seg_break + seg_lunch tampoco supera ese intervalo; si un
+      snapshot es inconsistente, se conserva la proporcion reportada. El idle
+      aceptado nunca supera el trabajo aceptado.
     - seg_horas_extra se limita a los minutos autorizados (+5 min) cuando existe una
       autorizacion de horas extra activa.
 
@@ -2576,10 +2790,48 @@ def apply_shift_snapshot(
     telemetry = payload.get("telemetria") if isinstance(payload.get("telemetria"), dict) else {}
     idle = bounded("seg_idle", telemetry, elapsed_limit) if telemetry else None
 
-    shift.work_seconds = int(work or shift.work_seconds or 0)
-    shift.break_seconds = int(breaks or shift.break_seconds or 0)
-    shift.lunch_seconds = int(lunch or shift.lunch_seconds or 0)
-    shift.idle_seconds = int(idle or shift.idle_seconds or 0)
+    accepted_work = int(work if work is not None else shift.work_seconds or 0)
+    accepted_breaks = int(breaks if breaks is not None else shift.break_seconds or 0)
+    accepted_lunch = int(lunch if lunch is not None else shift.lunch_seconds or 0)
+
+    # A cumulative snapshot represents disjoint parts of the same elapsed
+    # interval.  Capping each counter independently still allowed their sum to
+    # be two or three times longer than the physical shift.
+    snapshot_parts = [accepted_work, accepted_breaks, accepted_lunch]
+    snapshot_total = sum(snapshot_parts)
+    if snapshot_total > elapsed_limit and snapshot_total > 0:
+        scaled_parts = [value * elapsed_limit // snapshot_total for value in snapshot_parts]
+        remainder = elapsed_limit - sum(scaled_parts)
+        fractional_order = sorted(
+            range(len(snapshot_parts)),
+            key=lambda index: (snapshot_parts[index] * elapsed_limit) % snapshot_total,
+            reverse=True,
+        )
+        for index in fractional_order[:remainder]:
+            if snapshot_parts[index] > 0:
+                scaled_parts[index] += 1
+        accepted_work, accepted_breaks, accepted_lunch = scaled_parts
+    for key, reported, accepted in (
+        ("seg_trabajado", work, accepted_work),
+        ("seg_break", breaks, accepted_breaks),
+        ("seg_lunch", lunch, accepted_lunch),
+    ):
+        if reported is not None and reported != accepted:
+            original_reported = adjustments.get(key, {}).get("reported", reported)
+            adjustments[key] = {"reported": original_reported, "accepted": accepted}
+            payload[key] = accepted
+
+    accepted_idle = int(idle if idle is not None else shift.idle_seconds or 0)
+    accepted_idle = min(accepted_idle, accepted_work)
+    if idle is not None and idle != accepted_idle:
+        original_reported = adjustments.get("seg_idle", {}).get("reported", idle)
+        adjustments["seg_idle"] = {"reported": original_reported, "accepted": accepted_idle}
+        telemetry["seg_idle"] = accepted_idle
+
+    shift.work_seconds = accepted_work
+    shift.break_seconds = accepted_breaks
+    shift.lunch_seconds = accepted_lunch
+    shift.idle_seconds = accepted_idle
     shift.updated_at = now_utc()
     if adjustments:
         payload["server_adjustments"] = adjustments
@@ -3257,14 +3509,25 @@ def samples_from_agent_event(event_type: str, payload: dict) -> list[dict]:
     return samples if isinstance(samples, list) else []
 
 
-def ensure_web_station_shift_can_start(db: Session, device: Device, payload: dict, tz: tzinfo | None = None):
-    if not payload.get("web_station") or not device.employee_id:
+def ensure_employee_shift_can_start(db: Session, device: Device, payload: dict, tz: tzinfo | None = None):
+    if not device.employee_id:
         return
 
-    existing = latest_shift_for_day(db, device, shift_date_for_payload(payload, tz))
+    shift_date = shift_date_for_payload(payload, tz)
+    existing = db.execute(
+        select(Shift)
+        .where(
+            Shift.company_id == device.company_id,
+            Shift.employee_id == device.employee_id,
+            Shift.shift_date == shift_date,
+            Shift.started_at.is_not(None),
+        )
+        .order_by(Shift.created_at.desc(), Shift.id.desc())
+        .limit(1)
+    ).scalars().first()
     if existing and existing.started_at:
         raise AgentEventRejected(
-            "La jornada de este dia ya fue activada. Ingresa codigo de reactivacion para reabrirla.",
+            "La jornada de este dia ya fue activada para este empleado. Usa el flujo de reactivacion para reabrirla.",
             "shift_already_started",
         )
 
@@ -3356,7 +3619,13 @@ def process_agent_event(
     ensure_web_station_password_changed(db, device, event_type, payload)
 
     if event_type == "shift_started":
-        ensure_web_station_shift_can_start(db, device, payload, tz)
+        ensure_employee_shift_can_start(db, device, payload, tz)
+        mark_stale_open_shifts_incomplete(
+            db,
+            device,
+            shift_date_for_payload(payload, tz),
+            received_at,
+        )
 
     if event_type in SHIFT_EVENT_TYPES or payload.get("estado"):
         shift = get_or_create_shift(db, device, payload, tz, received_at)
@@ -8262,9 +8531,15 @@ def productivity_dashboard(
     for day in by_day.values():
         day_active = day["active_seconds"]
         day_total = day["total_seconds"]
+        day_observed = day_active + day["idle_seconds"]
+        day["observed_seconds"] = day_observed
         day["productivity_pct"] = percent(day["productive_seconds"] + day["neutral_seconds"], day_active)
+        day["observed_productivity_pct"] = percent(
+            day["productive_seconds"] + day["neutral_seconds"],
+            day_observed,
+        )
         day["acceptable_pct"] = percent(day["productive_seconds"] + day["neutral_seconds"], day_active)
-        day["idle_pct"] = percent(day["idle_seconds"], day_total)
+        day["idle_pct"] = percent(day["idle_seconds"], day_observed)
         day["break_pct"] = percent(day["break_seconds"], day_total)
         day["lunch_pct"] = percent(day["lunch_seconds"], day_total)
         days.append(day)
@@ -8524,6 +8799,7 @@ def attendance_overview(
 ):
     require_permission(admin, "attendance:read")
     company = resolve_admin_company(db, admin, company_id)
+    company_today = now_utc().astimezone(company_zoneinfo(company)).date().isoformat()
     if company.status == "archived":
         return {
             "company": {"id": company.id, "name": company.name},
@@ -8626,7 +8902,15 @@ def attendance_overview(
             for employee in employees
         ],
         "time_adjustments": [serialize_time_adjustment(row) for row in adjustments],
-        "shifts": [serialize_shift_for_attendance(shift, events_by_shift, justified_by_shift) for shift in shifts],
+        "shifts": [
+            serialize_shift_for_attendance(
+                shift,
+                events_by_shift,
+                justified_by_shift,
+                company_today,
+            )
+            for shift in shifts
+        ],
     }
 
 
@@ -8784,12 +9068,22 @@ def update_attendance_shift(
     lunch_started_at = parse_optional_client_datetime(payload.get("lunch_started_at"))
     lunch_ended_at = parse_optional_client_datetime(payload.get("lunch_ended_at"))
 
-    if started_at and ended_at and ended_at <= started_at:
-        raise HTTPException(status_code=400, detail="ended_at must be after started_at")
-    if break_started_at and break_ended_at and break_ended_at <= break_started_at:
-        raise HTTPException(status_code=400, detail="break end must be after break start")
-    if lunch_started_at and lunch_ended_at and lunch_ended_at <= lunch_started_at:
-        raise HTTPException(status_code=400, detail="lunch end must be after lunch start")
+    work_seconds, break_seconds, lunch_seconds = validated_shift_seconds(
+        started_at,
+        ended_at,
+        break_started_at,
+        break_ended_at,
+        lunch_started_at,
+        lunch_ended_at,
+    )
+    ensure_shift_does_not_overlap(
+        db,
+        company.id,
+        employee.id,
+        started_at,
+        ended_at,
+        exclude_shift_id=shift.id,
+    )
 
     events = db.execute(
         select(ShiftEvent)
@@ -8803,9 +9097,9 @@ def update_attendance_shift(
     shift.status = "closed" if ended_at else "open"
     if (break_started_at and not break_ended_at) or (lunch_started_at and not lunch_ended_at):
         shift.status = "paused"
-    shift.work_seconds = seconds_between(started_at, ended_at)
-    shift.break_seconds = seconds_between(break_started_at, break_ended_at)
-    shift.lunch_seconds = seconds_between(lunch_started_at, lunch_ended_at)
+    shift.work_seconds = work_seconds
+    shift.break_seconds = break_seconds
+    shift.lunch_seconds = lunch_seconds
     shift.updated_at = now_utc()
 
     update_shift_event(db, shift, event_map, "shift_started", started_at)
@@ -8890,12 +9184,15 @@ def create_attendance_shift(
 
     if not started_at:
         raise HTTPException(status_code=400, detail="started_at is required")
-    if ended_at and ended_at <= started_at:
-        raise HTTPException(status_code=400, detail="ended_at must be after started_at")
-    if break_started_at and break_ended_at and break_ended_at <= break_started_at:
-        raise HTTPException(status_code=400, detail="break end must be after break start")
-    if lunch_started_at and lunch_ended_at and lunch_ended_at <= lunch_started_at:
-        raise HTTPException(status_code=400, detail="lunch end must be after lunch start")
+    work_seconds, break_seconds, lunch_seconds = validated_shift_seconds(
+        started_at,
+        ended_at,
+        break_started_at,
+        break_ended_at,
+        lunch_started_at,
+        lunch_ended_at,
+    )
+    ensure_shift_does_not_overlap(db, company.id, employee.id, started_at, ended_at)
 
     shift = Shift(
         company_id=company.id,
@@ -8905,9 +9202,9 @@ def create_attendance_shift(
         status="closed" if ended_at else "open",
         started_at=started_at,
         ended_at=ended_at,
-        work_seconds=seconds_between(started_at, ended_at),
-        break_seconds=seconds_between(break_started_at, break_ended_at),
-        lunch_seconds=seconds_between(lunch_started_at, lunch_ended_at),
+        work_seconds=work_seconds,
+        break_seconds=break_seconds,
+        lunch_seconds=lunch_seconds,
     )
     if (break_started_at and not break_ended_at) or (lunch_started_at and not lunch_ended_at):
         shift.status = "paused"

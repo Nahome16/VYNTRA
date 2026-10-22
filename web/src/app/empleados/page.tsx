@@ -115,10 +115,11 @@ export default function EmployeesPage() {
               productive: sum.productive + (block.productive_seconds || 0),
               nonProductive: sum.nonProductive + (block.non_productive_seconds || 0),
               neutral: sum.neutral + (block.neutral_seconds || 0),
+              uncategorized: sum.uncategorized + (block.uncategorized_seconds || 0),
               idle: sum.idle + (block.idle_seconds || 0),
               breakLunch: sum.breakLunch + (block.break_seconds || 0) + (block.lunch_seconds || 0),
             }),
-            { active: 0, productive: 0, nonProductive: 0, neutral: 0, idle: 0, breakLunch: 0 },
+            { active: 0, productive: 0, nonProductive: 0, neutral: 0, uncategorized: 0, idle: 0, breakLunch: 0 },
           );
           return {
             employee,
@@ -154,6 +155,8 @@ export default function EmployeesPage() {
       t("Nombre del empleado"),
       t("Equipo"),
       t("Ubicacion"),
+      `${t("Productividad activa")} [%]`,
+      `${t("Productividad observada")} [%]`,
       t("Actividad [h]"),
       t("Productivo [h]"),
       t("Improductivo [h]"),
@@ -165,6 +168,8 @@ export default function EmployeesPage() {
         row.employee.full_name,
         row.employee.employee_code,
         row.department,
+        percent(row.totals.productive + row.totals.neutral, row.totals.active),
+        percent(row.totals.productive + row.totals.neutral, row.totals.active + row.totals.idle),
         hours(row.totals.active),
         hours(row.totals.productive),
         hours(row.totals.nonProductive),
@@ -247,7 +252,7 @@ export default function EmployeesPage() {
                   <th>{t("Departamento")}</th>
                   <th>{t("Ahora")}</th>
                   <th>{t("Distribución")}</th>
-                  <th className="num">{t("Productividad")}</th>
+                  <th className="num">{t("Productividad activa")}</th>
                   <th className="num">{t("Actividad [h]")}</th>
                   <th aria-hidden />
                 </tr>
@@ -257,7 +262,10 @@ export default function EmployeesPage() {
                   const productivity = row.totals.active
                     ? Math.round(((row.totals.productive + row.totals.neutral) / row.totals.active) * 100)
                     : null;
-                  const activeTotal = row.totals.productive + row.totals.neutral + row.totals.nonProductive + row.totals.idle + row.totals.breakLunch;
+                  const observedTotal = row.totals.active + row.totals.idle;
+                  const observedProductivity = observedTotal
+                    ? percent(row.totals.productive + row.totals.neutral, observedTotal)
+                    : null;
                   const nowTone = row.employee.status !== "active" ? "plain" : row.totals.active ? "good" : "warn";
                   const nowLabel = row.employee.status !== "active"
                     ? t("Inactivo")
@@ -296,19 +304,19 @@ export default function EmployeesPage() {
                         <Chip tone={nowTone}>{nowLabel}</Chip>
                       </td>
                       <td>
-                        {activeTotal ? (
-                          <div className={styles.distribution} aria-label={`${t("Distribución")}: ${formatDuration(activeTotal)}`}>
-                            <span style={{ width: `${percent(row.totals.productive, activeTotal)}%` }} className={styles.segmentProductive} />
-                            <span style={{ width: `${percent(row.totals.neutral, activeTotal)}%` }} className={styles.segmentNeutral} />
-                            <span style={{ width: `${percent(row.totals.nonProductive, activeTotal)}%` }} className={styles.segmentBad} />
-                            <span style={{ width: `${percent(row.totals.idle, activeTotal)}%` }} className={styles.segmentIdle} />
-                            <span style={{ width: `${percent(row.totals.breakLunch, activeTotal)}%` }} className={styles.segmentBreak} />
+                        {observedTotal ? (
+                          <div className={styles.distribution} aria-label={`${t("Actividad observada")}: ${formatDuration(observedTotal)}`}>
+                            <span style={{ width: `${percent(row.totals.productive, observedTotal)}%` }} className={styles.segmentProductive} />
+                            <span style={{ width: `${percent(row.totals.neutral, observedTotal)}%` }} className={styles.segmentNeutral} />
+                            <span style={{ width: `${percent(row.totals.nonProductive, observedTotal)}%` }} className={styles.segmentBad} />
+                            <span style={{ width: `${percent(row.totals.uncategorized, observedTotal)}%` }} className={styles.segmentUncategorized} />
+                            <span style={{ width: `${percent(row.totals.idle, observedTotal)}%` }} className={styles.segmentIdle} />
                           </div>
                         ) : (
                           <span className={styles.muted}>—</span>
                         )}
                         <small className={styles.subline}>
-                          {activeTotal
+                          {observedTotal
                             ? `${t("Productivo")} ${formatDuration(row.totals.productive)} · ${t("Inactivo")} ${formatDuration(row.totals.idle)}`
                             : t("Sin actividad en el periodo")}
                         </small>
@@ -322,6 +330,7 @@ export default function EmployeesPage() {
                             <div className={`usage-bar ${productivity < 65 ? "bad" : productivity < 85 ? "warn" : ""}`} aria-hidden>
                               <i style={{ width: `${Math.min(100, productivity)}%` }} />
                             </div>
+                            <small className={styles.subline}>{t("Observada")} {observedProductivity}%</small>
                           </div>
                         )}
                       </td>

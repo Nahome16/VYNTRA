@@ -288,6 +288,15 @@ export function EmployeeProfile({
     [employeeDetail],
   );
   const detailTotal = employeeDetail?.totals.active_seconds || employeeDetail?.totals.total_seconds || 0;
+  const employeeObservedProductivityPct = employeeDetail
+    ? (employeeDetail.totals.observed_productivity_pct
+      ?? (employeeDetail.totals.observed_seconds > 0
+        ? Math.round(
+            ((employeeDetail.totals.productive_seconds + employeeDetail.totals.neutral_seconds)
+              / employeeDetail.totals.observed_seconds) * 10000,
+          ) / 100
+        : 0))
+    : 0;
   const selectedEvidence = useMemo(
     () => employeeDetail?.evidence.find((item) => item.id === selectedEvidenceId) || null,
     [employeeDetail?.evidence, selectedEvidenceId],
@@ -518,7 +527,7 @@ export function EmployeeProfile({
                     label: (
                       <>
                         <i className={`${styles.mk} ${styles.mk1}`} aria-hidden />
-                        {t("Productividad")}
+                        {t("Productividad activa")}
                       </>
                     ),
                     value: `${employeeDetail.totals.productivity_pct}%`,
@@ -529,7 +538,7 @@ export function EmployeeProfile({
                         : metricTone(employeeDetail.totals.productivity_pct) === "warn"
                           ? t("Aceptable")
                           : t("Bajo la meta"),
-                    detail: `${t("Meta")} 85%`,
+                    detail: `${t("Productividad observada")} ${employeeObservedProductivityPct}% · ${t("Meta")} 85%`,
                   },
                   {
                     key: "hours",

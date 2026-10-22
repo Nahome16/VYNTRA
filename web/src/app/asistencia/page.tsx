@@ -71,6 +71,7 @@ function mixTotal(mix: ShiftMix) {
 
 /** Segundos en horas extra a partir de los eventos overtime_started/overtime_finished. */
 function overtimeSeconds(shift: AttendanceShift) {
+  if (shift.is_incomplete) return 0;
   let total = 0;
   let openedAt: number | null = null;
   shift.events.forEach((event) => {
@@ -86,9 +87,13 @@ function overtimeSeconds(shift: AttendanceShift) {
   return Math.floor(total);
 }
 
+function countsTowardTotals(shift: AttendanceShift) {
+  return !shift.is_incomplete && shift.counts_toward_totals !== false;
+}
+
 /** Reparte la duracion de las jornadas en trabajo / break / lunch / inactivo / extra. */
 function addShiftToMix(mix: ShiftMix, shift: AttendanceShift) {
-  if (!shift.started_at) return mix;
+  if (!shift.started_at || !countsTowardTotals(shift)) return mix;
   const span = workedSeconds(shift);
   const breakSeconds = Math.max(0, shift.break_seconds || 0);
   const lunchSeconds = Math.max(0, shift.lunch_seconds || 0);
@@ -98,7 +103,7 @@ function addShiftToMix(mix: ShiftMix, shift: AttendanceShift) {
   mix.lunch += lunchSeconds;
   mix.idle += idleSeconds;
   mix.overtime += extraSeconds;
-  mix.work += Math.max(0, span - breakSeconds - lunchSeconds - idleSeconds - extraSeconds);
+  mix.work += Math.max(0, span - idleSeconds - extraSeconds);
   return mix;
 }
 
@@ -170,6 +175,7 @@ function percentOfDay(value: string | null) {
 
 function statusForShift(shift?: AttendanceShift) {
   if (!shift?.started_at) return { label: "Ausente", tone: "bad" as const };
+  if (shift.is_incomplete) return { label: "Incompleta", tone: "bad" as const };
   const phase = (shift.current_phase || "").toUpperCase();
   if (shift.ended_at || shift.status === "closed" || phase === "TERMINADO") return { label: "Finalizado", tone: "plain" as const };
   if (phase === "LUNCH") return { label: "Almuerzo", tone: "warn" as const };
@@ -182,10 +188,12 @@ function statusForShift(shift?: AttendanceShift) {
 
 function workedSeconds(shift?: AttendanceShift) {
   if (!shift?.started_at) return 0;
-  const startedAt = new Date(shift.started_at).getTime();
-  const endedAt = shift.ended_at ? new Date(shift.ended_at).getTime() : Date.now();
-  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt)) return 0;
-  return Math.max(0, Math.floor((endedAt - startedAt) / 1000));
+  return Math.max(0, Math.floor(shift.work_seconds || 0));
+}
+
+function shiftTotalSeconds(shift?: AttendanceShift) {
+  if (!shift || !countsTowardTotals(shift)) return 0;
+  return workedSeconds(shift) + Math.max(0, shift.break_seconds || 0) + Math.max(0, shift.lunch_seconds || 0);
 }
 
 function employeeLabel(employee: AttendanceEmployee | undefined, fallback: string) {
@@ -212,7 +220,8 @@ function isPunctual(shift: AttendanceShift, scheduleStart = "08:00") {
 
 /** Jornada de un dia anterior que quedo abierta (sin salida ni cierre). */
 function isUnclosed(shift: AttendanceShift, today: string) {
-  return Boolean(shift.started_at) && !shift.ended_at && shift.status !== "closed" && shift.shift_date < today;
+  return Boolean(shift.is_incomplete)
+    || (Boolean(shift.started_at) && !shift.ended_at && shift.status !== "closed" && shift.shift_date < today);
 }
 
 function eventTime(shift: AttendanceShift, eventType: string) {
@@ -229,6 +238,7 @@ function timelineSpan(start: string | null, end: string | null, minWidth = 0.5) 
 }
 
 function shiftTimelineEnd(shift: AttendanceShift) {
+  if (shift.is_incomplete) return shift.events.at(-1)?.occurred_at || shift.started_at;
   return shift.ended_at || (shift.started_at ? new Date().toISOString() : null);
 }
 
@@ -429,11 +439,13 @@ export default function AttendancePage() {
     const completed = selectedAssociateShifts.filter((shift) => shift.ended_at || shift.status === "closed").length;
     const punctual = selectedAssociateShifts.filter((shift) => isPunctual(shift, selectedAssociate?.schedule.start_time)).length;
     const tardy = selectedAssociateShifts.filter((shift) => shift.started_at && !isPunctual(shift, selectedAssociate?.schedule.start_time)).length;
-    const workSeconds = selectedAssociateShifts.reduce((sum, shift) => sum + workedSeconds(shift), 0);
-    const breakSeconds = selectedAssociateShifts.reduce((sum, shift) => sum + shift.break_seconds, 0);
-    const lunchSeconds = selectedAssociateShifts.reduce((sum, shift) => sum + shift.lunch_seconds, 0);
-    const justifiedSeconds = selectedAssociateShifts.reduce((sum, shift) => sum + (shift.justified_seconds || 0), 0);
-    return { completed, punctual, tardy, workSeconds, breakSeconds, lunchSeconds, justifiedSeconds };
+    const countedShifts = selectedAssociateShifts.filter(countsTowardTotals);
+    const workSeconds = countedShifts.reduce((sum, shift) => sum + workedSeconds(shift), 0);
+    const breakSeconds = countedShifts.reduce((sum, shift) => sum + shift.break_seconds, 0);
+    const lunchSeconds = countedShifts.reduce((sum, shift) => sum + shift.lunch_seconds, 0);
+    const justifiedSeconds = countedShifts.reduce((sum, shift) => sum + (shift.justified_seconds || 0), 0);
+    const totalSeconds = workSeconds + breakSeconds + lunchSeconds;
+    return { completed, punctual, tardy, totalSeconds, breakSeconds, lunchSeconds, justifiedSeconds };
   }, [selectedAssociate, selectedAssociateShifts]);
   const selectedAssociateMix = useMemo(() => shiftMix(selectedAssociateShifts), [selectedAssociateShifts]);
   const expectedBreakSeconds = parseMinutes(
@@ -509,7 +521,7 @@ export default function AttendancePage() {
           employee,
           todayShift,
           records,
-          hours: records.reduce((sum, shift) => sum + workedSeconds(shift), 0),
+          hours: records.reduce((sum, shift) => sum + shiftTotalSeconds(shift), 0),
           tardy: records.filter((shift) => !isPunctual(shift, employee.schedule.start_time)).length,
           lateToday: Boolean(todayShift?.started_at && !isPunctual(todayShift, employee.schedule.start_time)),
           unclosed: records.filter((shift) => isUnclosed(shift, companyToday)).length,
@@ -545,13 +557,19 @@ export default function AttendancePage() {
     const totalEmployees = employees.length;
     const started = shifts.filter((shift) => shift.started_at).length;
     const finished = shifts.filter((shift) => shift.ended_at || shift.status === "closed").length;
+    const incomplete = shifts.filter((shift) => shift.is_incomplete).length;
+    const open = shifts.filter(
+      (shift) => shift.started_at && !shift.ended_at && shift.status !== "closed" && !shift.is_incomplete,
+    ).length;
     const activeNow = employees.filter((employee) => statusForShift(latestTodayByEmployee.get(employee.id)).label === "Activo").length;
     const absentToday = employees.filter((employee) => !latestTodayByEmployee.get(employee.id)?.started_at).length;
-    const breakSeconds = shifts.reduce((sum, shift) => sum + shift.break_seconds, 0);
-    const lunchSeconds = shifts.reduce((sum, shift) => sum + shift.lunch_seconds, 0);
-    const justifiedSeconds = shifts.reduce((sum, shift) => sum + (shift.justified_seconds || 0), 0);
-    const workSeconds = shifts.reduce((sum, shift) => sum + workedSeconds(shift), 0);
-    return { totalEmployees, started, finished, activeNow, absentToday, breakSeconds, lunchSeconds, justifiedSeconds, workSeconds };
+    const countedShifts = shifts.filter(countsTowardTotals);
+    const breakSeconds = countedShifts.reduce((sum, shift) => sum + shift.break_seconds, 0);
+    const lunchSeconds = countedShifts.reduce((sum, shift) => sum + shift.lunch_seconds, 0);
+    const justifiedSeconds = countedShifts.reduce((sum, shift) => sum + (shift.justified_seconds || 0), 0);
+    const workSeconds = countedShifts.reduce((sum, shift) => sum + workedSeconds(shift), 0);
+    const totalSeconds = workSeconds + breakSeconds + lunchSeconds;
+    return { totalEmployees, started, finished, incomplete, open, activeNow, absentToday, breakSeconds, lunchSeconds, justifiedSeconds, totalSeconds };
   }, [employees, shifts, latestTodayByEmployee]);
   const rangeMix = useMemo(() => shiftMix(shifts), [shifts]);
 
@@ -561,9 +579,10 @@ export default function AttendancePage() {
       employees: number;
       started: number;
       finished: number;
+      incomplete: number;
       breakSeconds: number;
       lunchSeconds: number;
-      workSeconds: number;
+      totalSeconds: number;
       mix: ShiftMix;
     }>();
     employees.forEach((employee) => {
@@ -573,9 +592,10 @@ export default function AttendancePage() {
         employees: (rows.get(key)?.employees || 0) + 1,
         started: rows.get(key)?.started || 0,
         finished: rows.get(key)?.finished || 0,
+        incomplete: rows.get(key)?.incomplete || 0,
         breakSeconds: rows.get(key)?.breakSeconds || 0,
         lunchSeconds: rows.get(key)?.lunchSeconds || 0,
-        workSeconds: rows.get(key)?.workSeconds || 0,
+        totalSeconds: rows.get(key)?.totalSeconds || 0,
         mix: rows.get(key)?.mix || emptyMix(),
       });
     });
@@ -586,9 +606,12 @@ export default function AttendancePage() {
       if (!row) return;
       row.started += shift.started_at ? 1 : 0;
       row.finished += shift.ended_at || shift.status === "closed" ? 1 : 0;
-      row.breakSeconds += shift.break_seconds || 0;
-      row.lunchSeconds += shift.lunch_seconds || 0;
-      row.workSeconds += workedSeconds(shift);
+      row.incomplete += shift.is_incomplete ? 1 : 0;
+      if (countsTowardTotals(shift)) {
+        row.breakSeconds += shift.break_seconds || 0;
+        row.lunchSeconds += shift.lunch_seconds || 0;
+        row.totalSeconds += shiftTotalSeconds(shift);
+      }
       addShiftToMix(row.mix, shift);
     });
     return Array.from(rows.values()).sort((a, b) => a.department.localeCompare(b.department));
@@ -950,7 +973,7 @@ export default function AttendancePage() {
                             </span>
                             <span>
                               {t("Jornada")}
-                              <strong className="tabular">{formatDuration(workedSeconds(row.todayShift))}</strong>
+                              <strong className="tabular">{formatDuration(shiftTotalSeconds(row.todayShift))}</strong>
                             </span>
                           </div>
                           <div className={styles.liveBarRow}>
@@ -1055,6 +1078,7 @@ export default function AttendancePage() {
                           <th className="num">{t("Empleados")}</th>
                           <th className="num">{t("Jornadas")}</th>
                           <th className="num">{t("Finalizadas")}</th>
+                          <th className="num">{t("Incompletas")}</th>
                           <th className={styles.barCol}>{t("Jornada total")}</th>
                           <th className="num">{t("Break")}</th>
                           <th className="num">{t("Lunch")}</th>
@@ -1067,10 +1091,11 @@ export default function AttendancePage() {
                             <td className="num">{row.employees}</td>
                             <td className="num">{row.started}</td>
                             <td className="num">{row.finished}</td>
+                            <td className="num">{row.incomplete}</td>
                             <td className={styles.barCol}>
                               <div className={styles.barCell}>
                                 <ShiftBar mix={row.mix} />
-                                <span className="tabular">{formatDuration(row.workSeconds)}</span>
+                                <span className="tabular">{formatDuration(row.totalSeconds)}</span>
                               </div>
                             </td>
                             <td className="num">{formatDuration(row.breakSeconds)}</td>
@@ -1104,7 +1129,9 @@ export default function AttendancePage() {
                       <div><dt>{t("Empleados")}</dt><dd>{stats.totalEmployees}</dd></div>
                       <div><dt>{t("Jornadas iniciadas")}</dt><dd>{stats.started}</dd></div>
                       <div><dt>{t("Jornadas finalizadas")}</dt><dd>{stats.finished}</dd></div>
-                      <div><dt>{t("Jornada total")}</dt><dd>{formatDuration(stats.workSeconds)}</dd></div>
+                      <div><dt>{t("Jornadas incompletas")}</dt><dd>{stats.incomplete}</dd></div>
+                      <div><dt>{t("Jornadas abiertas")}</dt><dd>{stats.open}</dd></div>
+                      <div><dt>{t("Jornada total")}</dt><dd>{formatDuration(stats.totalSeconds)}</dd></div>
                       <div><dt>{t("Break total")}</dt><dd>{formatDuration(stats.breakSeconds)}</dd></div>
                       <div><dt>{t("Lunch total")}</dt><dd>{formatDuration(stats.lunchSeconds)}</dd></div>
                       <div><dt>{t("Justificado")}</dt><dd>{formatDuration(stats.justifiedSeconds)}</dd></div>
@@ -1191,7 +1218,7 @@ export default function AttendancePage() {
                   <button className={styles.metricButton} aria-pressed={metricDetailKey === "punctual"} type="button" onClick={() => setMetricDetailKey("punctual")}><span>{t("Puntuales")}</span><strong className={styles.valueGood}>{selectedAssociateStats.punctual}</strong></button>
                   <button className={styles.metricButton} aria-pressed={metricDetailKey === "tardy"} type="button" onClick={() => setMetricDetailKey("tardy")}><span>{t("Tardanzas")}</span><strong className={styles.valueBad}>{selectedAssociateStats.tardy}</strong></button>
                   <div className={styles.metricStatic}><span>{t("Jornadas")}</span><strong>{selectedAssociateStats.completed}</strong></div>
-                  <div className={styles.metricStatic}><span>{t("Jornada total")}</span><strong>{formatDuration(selectedAssociateStats.workSeconds)}</strong></div>
+                  <div className={styles.metricStatic}><span>{t("Jornada total")}</span><strong>{formatDuration(selectedAssociateStats.totalSeconds)}</strong></div>
                   <button className={styles.metricButton} aria-pressed={metricDetailKey === "justified"} type="button" onClick={() => setMetricDetailKey("justified")}><span>{t("Justificado")}</span><strong>{formatDuration(selectedAssociateStats.justifiedSeconds)}</strong></button>
                   <button className={styles.metricButton} aria-pressed={metricDetailKey === "break"} type="button" onClick={() => setMetricDetailKey("break")}><span>{t("Break")}</span><strong>{formatDuration(selectedAssociateStats.breakSeconds)}</strong></button>
                   <button className={styles.metricButton} aria-pressed={metricDetailKey === "lunch"} type="button" onClick={() => setMetricDetailKey("lunch")}><span>{t("Lunch")}</span><strong>{formatDuration(selectedAssociateStats.lunchSeconds)}</strong></button>
@@ -1251,7 +1278,7 @@ export default function AttendancePage() {
                       <div className={styles.dayHead}>
                         <div>
                           <strong>{shortDate(selectedDayShift.shift_date)}</strong>
-                          <span>{t("Total")}: {formatDuration(workedSeconds(selectedDayShift))}</span>
+                          <span>{t("Total")}: {formatDuration(shiftTotalSeconds(selectedDayShift))}</span>
                         </div>
                         <div className={styles.chips}>
                           <Chip tone={statusForShift(selectedDayShift).tone as Tone}>{t(statusForShift(selectedDayShift).label)}</Chip>

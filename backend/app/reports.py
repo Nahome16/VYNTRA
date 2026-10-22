@@ -66,6 +66,17 @@ def safe_text(value: object, fallback: str = "-") -> str:
 
 
 def workday_seconds(shift: dict, now: datetime | None = None) -> int:
+    if shift.get("is_incomplete") or shift.get("counts_toward_totals") is False:
+        return 0
+
+    serialized_total = (
+        int(shift.get("work_seconds") or 0)
+        + int(shift.get("break_seconds") or 0)
+        + int(shift.get("lunch_seconds") or 0)
+    )
+    if serialized_total:
+        return max(0, serialized_total)
+
     started_at = shift.get("started_at")
     if started_at:
         try:
@@ -80,12 +91,7 @@ def workday_seconds(shift: dict, now: datetime | None = None) -> int:
         except (TypeError, ValueError):
             pass
 
-    return max(
-        0,
-        int(shift.get("work_seconds") or 0)
-        + int(shift.get("break_seconds") or 0)
-        + int(shift.get("lunch_seconds") or 0),
-    )
+    return 0
 
 
 def tone_for_pct(value: int | float):
@@ -214,10 +220,10 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
     gap = 5 * mm
     card_w = (PAGE_W - 2 * MARGIN - 3 * gap) / 4
     cards = [
-        ("Productividad", fmt_pct(totals.get("productivity_pct")), "Productivo + neutral", tone_for_pct(totals.get("productivity_pct", 0))),
-        ("Neutral", fmt_pct(totals.get("neutral_pct")), fmt_duration(totals.get("neutral_seconds", 0)), BLUE),
+        ("Productividad activa", fmt_pct(totals.get("productivity_pct")), "Sobre tiempo activo", tone_for_pct(totals.get("productivity_pct", 0))),
+        ("Productividad observada", fmt_pct(totals.get("observed_productivity_pct")), "Incluye inactividad", tone_for_pct(totals.get("observed_productivity_pct", 0))),
         ("No productivo", fmt_pct(totals.get("non_productive_pct")), fmt_duration(totals.get("non_productive_seconds", 0)), BAD if totals.get("non_productive_pct", 0) > 12 else BLUE),
-        ("Idle", fmt_pct(totals.get("idle_pct")), fmt_duration(totals.get("idle_seconds", 0)), WARN if totals.get("idle_pct", 0) > 15 else BLUE),
+        ("Inactividad observada", fmt_pct(totals.get("idle_pct")), fmt_duration(totals.get("idle_seconds", 0)), WARN if totals.get("idle_pct", 0) > 15 else BLUE),
     ]
     for index, card in enumerate(cards):
         draw_card(pdf, MARGIN + index * (card_w + gap), card_y, card_w, 31 * mm, *card)
@@ -254,7 +260,7 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
             pdf.roundRect(x, y, slot * 0.52, bar_h, 1.2 * mm, fill=1, stroke=0)
         pdf.setFillColor(MUTED)
         pdf.setFont("Helvetica", 7)
-        pdf.drawString(chart_x + 4 * mm, chart_y + 2.5 * mm, "Productividad por dia")
+        pdf.drawString(chart_x + 4 * mm, chart_y + 2.5 * mm, "Productividad activa por dia")
 
     table_y = chart_y - 12 * mm
     draw_section_title(pdf, MARGIN, table_y, "Resumen diario", "Ultimos registros del periodo")
@@ -274,7 +280,7 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
         MARGIN,
         table_y - 5 * mm,
         [31 * mm, 34 * mm, 34 * mm, 42 * mm, 39 * mm, 38 * mm],
-        ["Fecha", "Activo", "Productividad", "No productivo", "Justificado", "Break/Lunch"],
+        ["Fecha", "Activo", "Prod. activa", "No productivo", "Justificado", "Break/Lunch"],
         day_rows or [["Sin datos", "-", "-", "-", "-", "-"]],
     )
     draw_footer(pdf)
@@ -288,12 +294,20 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
     shifts = attendance.get("shifts") or []
     started = [shift for shift in shifts if shift.get("started_at")]
     finished = [shift for shift in shifts if shift.get("ended_at") or shift.get("status") == "closed"]
+    incomplete = [shift for shift in shifts if shift.get("is_incomplete")]
     total_work = sum(workday_seconds(shift) for shift in shifts)
-    active_now = len([shift for shift in shifts if shift.get("started_at") and not shift.get("ended_at") and shift.get("status") != "closed"])
+    active_now = len([
+        shift
+        for shift in shifts
+        if shift.get("started_at")
+        and not shift.get("ended_at")
+        and shift.get("status") != "closed"
+        and not shift.get("is_incomplete")
+    ])
     attendance_cards = [
-        ("Empleados", str(len(employees)), "Incluidos en el filtro", BLUE),
         ("Jornadas", str(len(started)), "Con entrada registrada", GOOD),
         ("Finalizadas", str(len(finished)), "Con salida o cierre", BLUE),
+        ("Incompletas", str(len(incomplete)), "Requieren correccion", WARN if incomplete else BLUE),
         ("Activas", str(active_now), "Actualmente abiertas", WARN if active_now else BLUE),
     ]
     for index, card in enumerate(attendance_cards):
@@ -317,8 +331,9 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
         )
         row["shifts"] += 1 if shift.get("started_at") else 0
         row["work"] += workday_seconds(shift)
-        row["breaks"] += int(shift.get("break_seconds") or 0) + int(shift.get("lunch_seconds") or 0)
-        row["justified"] += int(shift.get("justified_seconds") or 0)
+        if not shift.get("is_incomplete") and shift.get("counts_toward_totals") is not False:
+            row["breaks"] += int(shift.get("break_seconds") or 0) + int(shift.get("lunch_seconds") or 0)
+            row["justified"] += int(shift.get("justified_seconds") or 0)
     top_employees = sorted(by_employee.values(), key=lambda row: row["work"], reverse=True)[:8]
     draw_table(
         pdf,
@@ -359,7 +374,7 @@ def build_operations_pdf(dashboard: dict, attendance: dict, generated_by: str) -
                 fmt_datetime(shift.get("started_at"))[-5:] if shift.get("started_at") else "-",
                 fmt_datetime(shift.get("ended_at"))[-5:] if shift.get("ended_at") else "-",
                 fmt_duration(workday_seconds(shift)),
-                safe_text(shift.get("status"), "-"),
+                "incomplete" if shift.get("is_incomplete") else safe_text(shift.get("status"), "-"),
             ]
         )
     draw_table(

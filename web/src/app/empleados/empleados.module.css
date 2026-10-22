@@ -151,6 +151,10 @@
   background: var(--chart-4);
 }
 
+.segmentUncategorized {
+  background: var(--chart-5);
+}
+
 .segmentBreak {
   background: var(--muted-soft);
 }
@@ -158,6 +162,11 @@
 .productivity .num {
   color: var(--ink);
   font-weight: 550;
+}
+
+.productivity .subline {
+  grid-column: 1 / -1;
+  text-align: right;
 }
 
 .metric {

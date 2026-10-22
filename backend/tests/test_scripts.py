@@ -9,6 +9,8 @@ from app.models import (
     EvidenceFile,
     LoginAttempt,
     ProductivityBlock,
+    Shift,
+    ShiftEvent,
     WindowTitleCatalog,
 )
 from scripts import purge_retention, run_productivity_etl
@@ -58,6 +60,70 @@ def test_etl_block_start_helper():
     start = run_productivity_etl.block_start_for(datetime(2026, 1, 1, 15, 47, tzinfo=timezone.utc), 30, tz)
     assert (start.hour, start.minute) == (9, 30)
     assert str(run_productivity_etl.company_zoneinfo("Invalid/Zone")) == "America/Managua"
+
+
+def test_etl_does_not_extend_historical_open_break_to_now(db):
+    company, _department, _position, employee, device = create_company_setup(db)
+    shift = Shift(
+        company_id=company.id,
+        employee_id=employee.id,
+        device_id=device.id,
+        shift_date="2026-10-01",
+        status="paused",
+        started_at=datetime(2026, 10, 1, 14, 0, tzinfo=timezone.utc),
+    )
+    db.add(shift)
+    db.flush()
+    db.add(
+        ShiftEvent(
+            shift_id=shift.id,
+            event_type="break_started",
+            occurred_at=datetime(2026, 10, 1, 16, 0, tzinfo=timezone.utc),
+        )
+    )
+    db.commit()
+
+    blocks = {}
+    run_productivity_etl.add_shift_pause_intervals(
+        db,
+        blocks,
+        [shift],
+        reference_now=datetime(2026, 10, 21, 18, 0, tzinfo=timezone.utc),
+    )
+
+    assert blocks == {}
+
+
+def test_etl_keeps_current_open_break_live(db):
+    company, _department, _position, employee, device = create_company_setup(db)
+    shift = Shift(
+        company_id=company.id,
+        employee_id=employee.id,
+        device_id=device.id,
+        shift_date="2026-10-21",
+        status="paused",
+        started_at=datetime(2026, 10, 21, 14, 0, tzinfo=timezone.utc),
+    )
+    db.add(shift)
+    db.flush()
+    db.add(
+        ShiftEvent(
+            shift_id=shift.id,
+            event_type="break_started",
+            occurred_at=datetime(2026, 10, 21, 17, 0, tzinfo=timezone.utc),
+        )
+    )
+    db.commit()
+
+    blocks = {}
+    run_productivity_etl.add_shift_pause_intervals(
+        db,
+        blocks,
+        [shift],
+        reference_now=datetime(2026, 10, 21, 18, 0, tzinfo=timezone.utc),
+    )
+
+    assert sum(block["break_seconds"] for block in blocks.values()) == 60 * 60
 
 
 def test_retention_dry_run_then_apply(db, storage_dir):

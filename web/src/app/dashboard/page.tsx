@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { AttentionItem, AttentionList, EmptyBlock, Panel, RefreshButton } from "@/components/ui";
 import { BarTrendChart, CompositionChart, CompositionSegment, swatchClass } from "@/components/charts";
@@ -159,6 +159,7 @@ export default function DashboardPage() {
   const { t } = usePreferences();
   const isSystemAdmin = user?.role === "system_admin";
   const effectiveCompanyId = isSystemAdmin ? activeCompanyId : "";
+  const requestGenerationRef = useRef(0);
 
   const currentParams = useMemo(
     () => buildParams({ dateFrom, dateTo, companyId: effectiveCompanyId, departmentId: selectedDepartment }),
@@ -212,11 +213,13 @@ export default function DashboardPage() {
     const scopedSuffix = scoped ? `&${scoped}` : "";
     const scopedQuery = scoped ? `?${scoped}` : "";
     const today = todayISO();
+    const requestGeneration = requestGenerationRef.current;
     const [incidentsResult, devicesResult, attendanceResult] = await Promise.allSettled([
       apiGet<IncidentResponse>(`/api/incidents?status_filter=pending${scopedSuffix}`),
       apiGet<DevicesResponse>(`/api/devices${scopedQuery}`),
       apiGet<AttendanceOverviewResponse>(`/api/attendance/overview?date_from=${today}&date_to=${today}${scopedSuffix}`),
     ]);
+    if (requestGenerationRef.current !== requestGeneration) return;
 
     const pendingIncidents = incidentsResult.status === "fulfilled"
       ? incidentsResult.value.incidents.filter((incident) => incident.status === "pending")
@@ -259,6 +262,7 @@ export default function DashboardPage() {
     }
     setLoading(true);
     setStatusText(t("Actualizando datos..."));
+    const requestGeneration = requestGenerationRef.current;
     const previous = previousRange(dateFrom, dateTo);
     const previousParams = buildParams({
       dateFrom: previous.dateFrom,
@@ -274,6 +278,7 @@ export default function DashboardPage() {
         apiGet<DashboardResponse>(`/api/productivity/dashboard?${previousParams.toString()}`),
         apiGet<CatalogsResponse>(`/api/productivity/catalogs${catalogQuery}`),
       ]);
+      if (requestGenerationRef.current !== requestGeneration) return;
       setDashboard(nextDashboard);
       setPreviousDashboard(nextPrevious);
       setCatalogs(nextCatalogs);
@@ -304,11 +309,13 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!isSystemAdmin) return;
+    requestGenerationRef.current += 1;
     const timer = window.setTimeout(() => {
       setSelectedDepartment("");
       setCatalogs(null);
       setDashboard(null);
       setPreviousDashboard(null);
+      setOperationsSnapshot(null);
     }, 0);
     return () => window.clearTimeout(timer);
   }, [activeCompanyId, isSystemAdmin]);
@@ -334,8 +341,18 @@ export default function DashboardPage() {
     }
   }
 
-  const hasPrevious = Boolean(previousTotals && previousTotals.total_seconds > 0);
+  const hasPrevious = Boolean(
+    previousTotals
+      && (previousTotals.observed_seconds ?? (previousTotals.active_seconds + previousTotals.idle_seconds)) > 0,
+  );
   const comparisonNote = t("vs periodo anterior");
+  const observedSeconds = totals?.observed_seconds ?? ((totals?.active_seconds || 0) + (totals?.idle_seconds || 0));
+  const observedProductivityPct = totals
+    ? (totals.observed_productivity_pct
+      ?? (observedSeconds > 0
+        ? Math.round(((totals.productive_seconds + totals.neutral_seconds) / observedSeconds) * 10000) / 100
+        : 0))
+    : 0;
 
   const composition: CompositionSegment[] = totals
     ? [
@@ -501,7 +518,7 @@ export default function DashboardPage() {
           {/* 1. Resumen en una frase: lo primero que lee un jefe. */}
           <p className={styles.summary}>
             {t("El equipo registró")} <strong>{formatDuration(totals.active_seconds)}</strong> {t("de tiempo activo con")}{" "}
-            <strong>{totals.productivity_pct}%</strong> {t("de productividad")}
+            <strong>{totals.productivity_pct}%</strong> {t("de productividad activa")}
             {productivityDelta ? (
               <>
                 {" "}
@@ -530,9 +547,9 @@ export default function DashboardPage() {
 
           {/* 3. El indicador principal, con meta y comparacion; a su lado, el estado en vivo. */}
           <section className={styles.heroGrid}>
-            <article className={styles.hero} aria-label={t("Productividad del equipo")}>
+            <article className={styles.hero} aria-label={t("Productividad activa del equipo")}>
               <header className={styles.heroHead}>
-                <span>{t("Productividad del equipo")}</span>
+                <span>{t("Productividad activa del equipo")}</span>
                 <span className={`${styles.statusChip} ${styles[productivityStatus]}`}>{statusLabel}</span>
               </header>
               <div className={styles.heroValueRow}>
@@ -550,7 +567,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className={styles.bullet} role="img" aria-label={`${t("Productividad")} ${totals.productivity_pct}%, ${t("meta")} ${PRODUCTIVITY_TARGET}%`}>
+              <div className={styles.bullet} role="img" aria-label={`${t("Productividad activa")} ${totals.productivity_pct}%, ${t("meta")} ${PRODUCTIVITY_TARGET}%`}>
                 <div className={styles.bulletTrack}>
                   <span className={styles.bulletZoneBad} style={{ width: `${PRODUCTIVITY_ACCEPTABLE}%` }} />
                   <span className={styles.bulletZoneWarn} style={{ width: `${PRODUCTIVITY_TARGET - PRODUCTIVITY_ACCEPTABLE}%` }} />
@@ -571,6 +588,7 @@ export default function DashboardPage() {
               <div className={styles.heroSplit}>
                 <span className={styles.heroSplitTitle}>{t("En qué se fue el tiempo")}</span>
                 <CompositionChart segments={composition} emptyLabel={t("Sin actividad registrada en el periodo.")} />
+                <small>{t("Productividad calculada sobre tiempo activo; inactividad calculada sobre tiempo observado.")}</small>
               </div>
             </article>
 
@@ -622,11 +640,16 @@ export default function DashboardPage() {
           {/* 4. Indicadores de apoyo, con menos peso visual. */}
           <section className={styles.kpiStrip} aria-label={t("Indicadores")}>
             <div className={styles.kpi}>
+              <span>{t("Productividad observada")}</span>
+              <strong>{observedProductivityPct}%</strong>
+              <small>{t("productivo y neutral sobre activo más inactivo")}</small>
+            </div>
+            <div className={styles.kpi}>
               <span>{t("Tiempo activo")}</span>
               <strong>{formatDuration(totals.active_seconds)}</strong>
               <small>
                 {activeDelta ? <DeltaChip delta={activeDelta} compact /> : null}
-                {t("de")} {formatDuration(totals.total_seconds)} {t("registradas")}
+                {t("de")} {formatDuration(observedSeconds)} {t("observadas")}
               </small>
             </div>
             <div className={styles.kpi}>
@@ -644,7 +667,7 @@ export default function DashboardPage() {
             </div>
             <div className={styles.kpi}>
               <span>
-                <i className={swatchClass(4)} aria-hidden /> {t("Inactivo")}
+                <i className={swatchClass(4)} aria-hidden /> {t("Inactividad observada")}
               </span>
               <strong>{totals.idle_pct}%</strong>
               <small>
@@ -660,13 +683,13 @@ export default function DashboardPage() {
           {/* 5. Detalle: tendencia y personas que requieren seguimiento. */}
           <section className={styles.charts}>
             <Panel
-              title={t("Tendencia de productividad")}
+              title={t("Tendencia de productividad activa")}
               meta={`${t("Últimos")} ${trendPoints.length} ${trendPoints.length === 1 ? t("día") : t("días")}`}
             >
               <BarTrendChart
                 points={trendPoints}
                 emptyLabel={t("Sin datos suficientes para graficar.")}
-                seriesLabel={t("Productividad diaria")}
+                seriesLabel={t("Productividad activa diaria")}
                 averageLabel={t("Promedio")}
                 target={PRODUCTIVITY_TARGET}
                 targetLabel={t("Meta")}
